@@ -2,93 +2,104 @@ import AppKit
 import QuotariCore
 import SwiftUI
 
-/// The popover shown from the menu bar: a titled header with a live usage
-/// summary, a scrollable list of provider cards, and a compact icon footer.
 struct DashboardView: View {
     @Environment(UsageStore.self) private var store
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            ScrollView { sectionStack }
             Divider()
-            ScrollView {
-                LazyVStack(spacing: 10) {
-                    ForEach(store.providers, id: \.id) { descriptor in
-                        ProviderCardView(
-                            descriptor: descriptor,
-                            snapshot: store.snapshots[descriptor.id],
-                            sourceLabel: store.sourceLabels[descriptor.id],
-                            error: store.errors[descriptor.id])
-                    }
-                }
-                .padding(14)
-            }
-            Divider()
-            footer
+            actionRows
         }
-        .frame(width: 340)
+        .frame(width: 300)
         .frame(maxHeight: 560)
+        .background(MenuVibrancyBackground())
     }
 
-    // MARK: Header
-
-    private var header: some View {
-        HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Quotari").font(.headline)
-                Text(summaryText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .contentTransition(.numericText())
-            }
-            Spacer()
-            if store.isRefreshing {
-                ProgressView().controlSize(.small).frame(width: 22, height: 22)
-            } else {
-                Button {
-                    Task { await store.refresh() }
-                } label: {
-                    Image(systemName: "arrow.clockwise").frame(width: 22, height: 22)
+    private var sectionStack: some View {
+        VStack(spacing: 0) {
+            let providers = store.providers
+            ForEach(Array(providers.enumerated()), id: \.element.id) { index, descriptor in
+                ProviderCardView(
+                    descriptor: descriptor,
+                    snapshot: store.snapshots[descriptor.id],
+                    sourceLabel: store.sourceLabels[descriptor.id],
+                    error: store.errors[descriptor.id])
+                if index < providers.count - 1 {
+                    Divider().padding(.leading, 14)
                 }
-                .buttonStyle(.borderless)
-                .help("Refresh now")
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
     }
 
-    private var summaryText: String {
-        let count = store.providers.count
-        guard !store.snapshots.isEmpty else { return "\(count) providers · loading…" }
-        return "\(count) providers · peak \(UsageFormatter.percent(store.highestUsedPercent))"
-    }
-
-    // MARK: Footer
-
-    private var footer: some View {
-        HStack(spacing: 12) {
-            if let last = store.lastRefresh {
-                Label(last.formatted(date: .omitted, time: .shortened), systemImage: "clock")
-                    .labelStyle(.titleAndIcon)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+    private var actionRows: some View {
+        VStack(spacing: 1) {
+            MenuActionRow(icon: "arrow.clockwise", title: "Refresh", shortcut: "⌘R",
+                          busy: store.isRefreshing) {
+                Task { await store.refresh() }
             }
-            Spacer()
-            Button { openSettings() } label: {
-                Image(systemName: "gearshape")
-            }
-            .buttonStyle(.borderless)
-            .help("Settings")
+            .keyboardShortcut("r")
 
-            Button { NSApplication.shared.terminate(nil) } label: {
-                Image(systemName: "power")
+            MenuActionRow(icon: "gearshape", title: "Settings…", shortcut: "⌘,") {
+                openSettings()
             }
-            .buttonStyle(.borderless)
-            .help("Quit Quotari")
+            .keyboardShortcut(",")
+
+            MenuActionRow(icon: "power", title: "Quit Quotari", shortcut: "⌘Q") {
+                NSApplication.shared.terminate(nil)
+            }
+            .keyboardShortcut("q")
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 6)
+    }
+}
+
+private struct MenuVibrancyBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .menu
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
+
+private struct MenuActionRow: View {
+    let icon: String
+    let title: String
+    let shortcut: String?
+    var busy: Bool = false
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                if busy {
+                    ProgressView().controlSize(.small).frame(width: 16, height: 16)
+                } else {
+                    Image(systemName: icon).frame(width: 16)
+                }
+                Text(title)
+                Spacer()
+                if let shortcut {
+                    Text(shortcut).foregroundStyle(hovering ? Color.white.opacity(0.8) : Color.secondary)
+                }
+            }
+            .font(.body)
+            .foregroundStyle(hovering ? Color.white : Color.primary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
+            .background(hovering ? Color.accentColor : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }

@@ -1,6 +1,5 @@
 import Foundation
 
-/// Static display/branding data for a provider (no behavior).
 public struct ProviderMetadata: Sendable {
     public let displayName: String
     public let accent: RGB
@@ -18,8 +17,6 @@ public struct ProviderMetadata: Sendable {
     }
 }
 
-/// A provider = static metadata + a fetch pipeline. All UI lives in the app;
-/// this stays UI-agnostic so the same descriptor works for a CLI later.
 public struct ProviderDescriptor: Sendable {
     public let id: UsageProvider
     public let metadata: ProviderMetadata
@@ -36,8 +33,6 @@ public struct ProviderDescriptor: Sendable {
     }
 }
 
-/// The one list the app iterates over. Add a descriptor here for every
-/// `UsageProvider` case — `isComplete` verifies you didn't miss one.
 public enum ProviderRegistry {
     public static let all: [ProviderDescriptor] = MockProviders.descriptors
 
@@ -51,7 +46,7 @@ public enum ProviderRegistry {
         return descriptor
     }
 
-    /// Every enum case must have a descriptor. Assert this at startup.
+    /// Every UsageProvider case must have a descriptor; asserted at startup.
     public static var isComplete: Bool {
         UsageProvider.allCases.allSatisfy { byID[$0] != nil }
     }

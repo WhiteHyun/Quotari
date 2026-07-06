@@ -7,6 +7,16 @@ struct PreferencesView: View {
 
     var body: some View {
         Form {
+            Section("Menu Bar") {
+                Picker("Icon", selection: Binding(
+                    get: { store.iconStyle },
+                    set: { store.iconStyle = $0 }))
+                {
+                    ForEach(MenuBarIconStyle.allCases, id: \.self) { style in
+                        Text(style.label).tag(style)
+                    }
+                }
+            }
             Section("Refresh") {
                 Slider(value: $intervalMinutes, in: 1...30, step: 1) {
                     Text("Interval")
@@ -25,7 +35,7 @@ struct PreferencesView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 380, height: 260)
+        .frame(width: 380, height: 300)
         .onAppear { intervalMinutes = store.refreshInterval / 60 }
         .onChange(of: intervalMinutes) { _, newValue in
             store.refreshInterval = newValue * 60

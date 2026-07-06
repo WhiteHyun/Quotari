@@ -21,6 +21,10 @@ let package = Package(
         .testTarget(
             name: "QuotariCoreTests",
             dependencies: ["QuotariCore"]),
+        // macOS-only: renders the SwiftUI dashboard to PNGs for visual review.
+        .testTarget(
+            name: "QuotariAppTests",
+            dependencies: ["Quotari", "QuotariCore"]),
     ],
     // Swift 6 language mode: full data-race safety enforced at compile time.
     swiftLanguageModes: [.v6])

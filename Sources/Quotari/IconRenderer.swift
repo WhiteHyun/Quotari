@@ -1,45 +1,76 @@
 import AppKit
 
-/// Draws the menu-bar gauge as an `NSImage` with Core Graphics. This is the one
-/// piece rendered by hand — everything inside the popover is SwiftUI. Severity
-/// colors come from `Theme` so the bar and the cards always agree.
+enum MenuBarIconStyle: String, CaseIterable, Sendable {
+    case gauge
+    case gaugeAndPercent
+
+    var label: String {
+        switch self {
+        case .gauge: "Gauge only"
+        case .gaugeAndPercent: "Gauge + percent"
+        }
+    }
+}
+
+/// Monochrome template menu-bar image; the system tints it to the menu bar.
 enum IconRenderer {
-    private static let size = NSSize(width: 26, height: 18)
+    private static let height: CGFloat = 18
+    private static let gaugeWidth: CGFloat = 24
 
-    static func gaugeIcon(usedPercent: Double, loading: Bool) -> NSImage {
-        let image = NSImage(size: size)
+    static func gaugeIcon(usedPercent: Double, loading: Bool, style: MenuBarIconStyle) -> NSImage {
+        let showText = style == .gaugeAndPercent && !loading
+        let textFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        let textAttributes: [NSAttributedString.Key: Any] = [
+            .font: textFont,
+            .foregroundColor: NSColor.black,
+        ]
+        // Fixed field for "100%" so the item never shifts width as digits grow.
+        let fieldWidth: CGFloat = showText
+            ? ceil(("100%" as NSString).size(withAttributes: textAttributes).width)
+            : 0
+        let gap: CGFloat = showText ? 4 : 0
+        let totalWidth = gaugeWidth + gap + fieldWidth
+
+        let image = NSImage(size: NSSize(width: totalWidth, height: height))
         image.lockFocus()
-        defer { image.unlockFocus() }
+        drawGauge(usedPercent: usedPercent, loading: loading,
+                  in: CGRect(x: 0, y: 0, width: gaugeWidth, height: height))
+        if showText {
+            let text = "\(Int(usedPercent.rounded()))%" as NSString
+            let size = text.size(withAttributes: textAttributes)
+            text.draw(at: CGPoint(x: gaugeWidth + gap, y: (height - size.height) / 2),
+                      withAttributes: textAttributes)
+        }
+        image.unlockFocus()
+        image.isTemplate = true
+        return image
+    }
 
+    private static func drawGauge(usedPercent: Double, loading: Bool, in bounds: CGRect) {
         let inset: CGFloat = 2
-        let trackRect = CGRect(x: inset, y: 4, width: size.width - inset * 2, height: 10)
+        let trackRect = CGRect(
+            x: bounds.minX + inset, y: bounds.minY + 4,
+            width: bounds.width - inset * 2, height: 10)
         let radius = trackRect.height / 2
 
-        // Track outline.
-        let track = NSBezierPath(roundedRect: trackRect, xRadius: radius, yRadius: radius)
-        NSColor.tertiaryLabelColor.setStroke()
-        track.lineWidth = 1
-        track.stroke()
+        NSColor.black.withAlphaComponent(0.28).setFill()
+        NSBezierPath(roundedRect: trackRect, xRadius: radius, yRadius: radius).fill()
 
         guard !loading else {
-            // Pulse dot while we have no data yet.
-            NSColor.secondaryLabelColor.setFill()
-            NSBezierPath(ovalIn: CGRect(x: trackRect.midX - 2, y: trackRect.midY - 2, width: 4, height: 4)).fill()
-            return image
+            NSColor.black.withAlphaComponent(0.55).setFill()
+            let bar = CGRect(x: trackRect.midX - 5, y: trackRect.midY - 1.5, width: 10, height: 3)
+            NSBezierPath(roundedRect: bar, xRadius: 1.5, yRadius: 1.5).fill()
+            return
         }
 
-        // Fill proportional to usage, colored by severity.
         let fraction = min(1, max(0, usedPercent / 100))
-        let fillWidth = (trackRect.width - 2) * fraction
-        if fillWidth > 0.5 {
+        if fraction > 0 {
+            let fillWidth = max(3, (trackRect.width - 2) * fraction)
             let fillRect = CGRect(
-                x: trackRect.minX + 1,
-                y: trackRect.minY + 1,
-                width: fillWidth,
-                height: trackRect.height - 2)
-            Theme.severityNSColor(usedPercent).setFill()
+                x: trackRect.minX + 1, y: trackRect.minY + 1,
+                width: fillWidth, height: trackRect.height - 2)
+            NSColor.black.withAlphaComponent(0.9).setFill()
             NSBezierPath(roundedRect: fillRect, xRadius: radius - 1, yRadius: radius - 1).fill()
         }
-        return image
     }
 }

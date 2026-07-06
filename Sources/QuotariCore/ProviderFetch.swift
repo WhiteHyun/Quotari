@@ -1,15 +1,13 @@
 import Foundation
 
-/// How a strategy actually gets its data. Recorded on results for diagnostics.
 public enum ProviderFetchKind: String, Sendable {
     case api, oauth, web, cli, mock
 }
 
-/// Everything a strategy needs, passed by value so fetches run off the main actor.
 public struct ProviderFetchContext: Sendable {
     public let provider: UsageProvider
     public let now: Date
-    public let credential: String?   // API key / token, resolved by the app layer
+    public let credential: String?
 
     public init(provider: UsageProvider, now: Date, credential: String? = nil) {
         self.provider = provider
@@ -40,9 +38,7 @@ public enum ProviderFetchError: LocalizedError, Sendable {
     }
 }
 
-/// The one behavior each data source implements. Kept intentionally small: a
-/// strategy knows how to check availability and fetch, and whether a failure
-/// should fall through to the next strategy.
+/// One data source: availability check, fetch, and whether to fall back on error.
 public protocol ProviderFetchStrategy: Sendable {
     var id: String { get }
     var kind: ProviderFetchKind { get }
@@ -56,8 +52,7 @@ extension ProviderFetchStrategy {
     public func shouldFallback(on error: Error) -> Bool { true }
 }
 
-/// Runs strategies in priority order: the first available one that succeeds
-/// wins; on error it falls back to the next (if allowed). Cancellation-aware.
+/// Tries strategies in order; first available success wins, else falls back.
 public struct ProviderFetchPipeline: Sendable {
     public let resolveStrategies: @Sendable (ProviderFetchContext) -> [any ProviderFetchStrategy]
 
