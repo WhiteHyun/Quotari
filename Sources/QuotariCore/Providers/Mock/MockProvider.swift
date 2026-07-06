@@ -1,9 +1,7 @@
 import Foundation
 
-/// A deterministic mock strategy: returns fixed fake usage so the whole
-/// pipeline + UI runs with no network. This is the reference implementation of
-/// `ProviderFetchStrategy` — replace it (or add alongside it) with real
-/// API/OAuth/web/CLI strategies as you build them.
+/// Reference `ProviderFetchStrategy` returning deterministic fake usage with no
+/// network. Replace with real API/OAuth/web/CLI strategies.
 struct MockFetchStrategy: ProviderFetchStrategy {
     let id: String
     let kind: ProviderFetchKind = .mock
@@ -12,8 +10,7 @@ struct MockFetchStrategy: ProviderFetchStrategy {
     let sessionResetInMinutes: Int
 
     func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
-        // Simulate latency so the loading state is observable in the UI.
-        try? await Task.sleep(for: .milliseconds(250))
+        try? await Task.sleep(for: .milliseconds(250))   // simulate latency
 
         let primary = RateWindow(
             kind: .session,
@@ -37,30 +34,25 @@ struct MockFetchStrategy: ProviderFetchStrategy {
     }
 }
 
-/// Three demo providers with different usage levels so the dashboard and the
-/// menu-bar gauge have realistic variety to design against:
-///   - cortex: near limit (red gauge)
-///   - nimbus: mid usage
-///   - loom:   low usage, no weekly window
 public enum MockProviders {
     public static let descriptors: [ProviderDescriptor] = [
         ProviderDescriptor(
-            id: .cortex,
-            metadata: .init(displayName: "Cortex", accent: .init(0.40, 0.45, 0.95), supportsWeekly: true),
+            id: .codex,
+            metadata: .init(displayName: "Codex", accent: .init(0.063, 0.639, 0.498), supportsWeekly: true),  // OpenAI #10A37F
             pipeline: .init { _ in
-                [MockFetchStrategy(id: "cortex.mock", sessionUsed: 82, weeklyUsed: 46, sessionResetInMinutes: 185)]
+                [MockFetchStrategy(id: "codex.mock", sessionUsed: 82, weeklyUsed: 46, sessionResetInMinutes: 185)]
             }),
         ProviderDescriptor(
-            id: .nimbus,
-            metadata: .init(displayName: "Nimbus", accent: .init(0.95, 0.55, 0.25), supportsWeekly: true),
+            id: .claude,
+            metadata: .init(displayName: "Claude", accent: .init(0.851, 0.467, 0.341), supportsWeekly: true),  // Anthropic #D97757
             pipeline: .init { _ in
-                [MockFetchStrategy(id: "nimbus.mock", sessionUsed: 31, weeklyUsed: 63, sessionResetInMinutes: 62)]
+                [MockFetchStrategy(id: "claude.mock", sessionUsed: 31, weeklyUsed: 63, sessionResetInMinutes: 62)]
             }),
         ProviderDescriptor(
-            id: .loom,
-            metadata: .init(displayName: "Loom", accent: .init(0.25, 0.80, 0.55), supportsWeekly: false),
+            id: .glm,
+            metadata: .init(displayName: "GLM", accent: .init(0.25, 0.80, 0.55), supportsWeekly: false),
             pipeline: .init { _ in
-                [MockFetchStrategy(id: "loom.mock", sessionUsed: 6, weeklyUsed: nil, sessionResetInMinutes: 300)]
+                [MockFetchStrategy(id: "glm.mock", sessionUsed: 6, weeklyUsed: nil, sessionResetInMinutes: 300)]
             }),
     ]
 }

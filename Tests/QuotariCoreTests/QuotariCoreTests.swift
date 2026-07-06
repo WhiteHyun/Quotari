@@ -11,7 +11,7 @@ import Testing
     }
 
     @Test func mockPipelineReturnsUsage() async throws {
-        let descriptor = ProviderRegistry.descriptor(for: .cortex)
+        let descriptor = ProviderRegistry.descriptor(for: .codex)
         let result = await descriptor.fetch(now: Date())
         let value = try result.get()
         #expect(value.usage.primary?.usedPercent == 82)
