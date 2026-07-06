@@ -51,7 +51,7 @@ import Testing
     /// draws the real view tree, including SF Symbols and vibrancy-less content).
     private static func renderPNG(store: UsageStore, appearance: NSAppearance) -> Data {
         let hosting = NSHostingView(rootView:
-            DashboardView()
+            DashboardContent()
                 .environment(store)
                 .background(Color(nsColor: .windowBackgroundColor)))
         hosting.appearance = appearance

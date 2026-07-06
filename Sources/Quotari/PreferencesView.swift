@@ -13,7 +13,8 @@ struct PreferencesView: View {
                     set: { store.iconStyle = $0 }))
                 {
                     ForEach(MenuBarIconStyle.allCases, id: \.self) { style in
-                        Text(style.label).tag(style)
+                        Text(style.label)
+                            .tag(style)
                     }
                 }
             }

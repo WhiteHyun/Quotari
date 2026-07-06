@@ -16,10 +16,10 @@ final class UsageStore {
         didSet { startTimer() }
     }
 
-    var iconStyle: MenuBarIconStyle =
-        MenuBarIconStyle(rawValue: UserDefaults.standard.string(forKey: UsageStore.iconStyleKey) ?? "") ?? .gauge
-    {
-        didSet { UserDefaults.standard.set(iconStyle.rawValue, forKey: Self.iconStyleKey) }
+    var iconStyle: MenuBarIconStyle = MenuBarIconStyle(rawValue: UserDefaults.standard.string(forKey: UsageStore.iconStyleKey) ?? "") ?? .gauge {
+        didSet {
+            UserDefaults.standard.set(iconStyle.rawValue, forKey: Self.iconStyleKey)
+        }
     }
 
     private static let iconStyleKey = "menuBarIconStyle"
