@@ -13,19 +13,14 @@ let package = Package(
     ],
     targets: [
         // Domain logic: models, provider abstraction, mock fetch. UI-agnostic.
-        .target(
-            name: "QuotariCore",
-            swiftSettings: [.enableUpcomingFeature("StrictConcurrency")]),
+        .target(name: "QuotariCore"),
         // The menu-bar app (SwiftUI MenuBarExtra + a hand-rendered CG icon).
         .executableTarget(
             name: "Quotari",
-            dependencies: ["QuotariCore"],
-            swiftSettings: [.enableUpcomingFeature("StrictConcurrency")]),
+            dependencies: ["QuotariCore"]),
         .testTarget(
             name: "QuotariCoreTests",
-            dependencies: ["QuotariCore"],
-            swiftSettings: [.enableUpcomingFeature("StrictConcurrency")]),
+            dependencies: ["QuotariCore"]),
     ],
-    // Approachable migration: language mode 5 + StrictConcurrency as warnings,
-    // mirroring the app this is modeled after. Flip to .v6 when you're ready.
-    swiftLanguageModes: [.v5])
+    // Swift 6 language mode: full data-race safety enforced at compile time.
+    swiftLanguageModes: [.v6])
