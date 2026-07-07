@@ -33,10 +33,19 @@ struct PreferencesView: View {
       Section("About") {
         LabeledContent("App", value: "Quotari")
         LabeledContent("Providers", value: "\(store.providers.count) (mock)")
+        LabeledContent("Updates") {
+          Button("Check for Updates…") { UpdaterController.shared.checkForUpdates() }
+            .disabled(!UpdaterController.shared.isAvailable)
+        }
+        if !UpdaterController.shared.isAvailable {
+          Text("Automatic updates are available in packaged releases.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
       }
     }
     .formStyle(.grouped)
-    .frame(width: 380, height: 300)
+    .frame(width: 380, height: 340)
     .onAppear { intervalMinutes = store.refreshInterval / 60 }
     .onChange(of: intervalMinutes) { _, newValue in
       store.refreshInterval = newValue * 60
