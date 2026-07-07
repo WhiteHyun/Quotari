@@ -3,12 +3,21 @@ import QuotariCore
 import SwiftUI
 
 struct DashboardView: View {
+  /// The menu bar window resolves flexible height ranges to their minimum, so
+  /// the window height must be a single measured value, not a min/max span.
+  @State private var contentHeight: CGFloat = 100
+
   var body: some View {
     ScrollView {
       DashboardContent()
+        .onGeometryChange(for: CGFloat.self) { proxy in
+          proxy.size.height
+        } action: { height in
+          contentHeight = height
+        }
     }
     .frame(width: 300)
-    .frame(maxHeight: 560)
+    .frame(height: min(max(contentHeight, 100), 560))
     .background(MenuVibrancyBackground())
   }
 }
