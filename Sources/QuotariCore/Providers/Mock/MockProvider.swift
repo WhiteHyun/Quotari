@@ -51,6 +51,31 @@ public enum MockProviders {
     )
   }
 
+  /// Deterministic 30-day cost series: a calm baseline with a couple of spikes,
+  /// varied by `seed` so providers differ. Costs roughly $2000/M tokens.
+  private static func cost(seed: Double, now: Date) -> CostSummary {
+    let calendar = Calendar(identifier: .gregorian)
+    let today = calendar.startOfDay(for: now)
+    var daily: [DailyCost] = []
+    for offset in stride(from: 29, through: 0, by: -1) {
+      guard let day = calendar.date(byAdding: .day, value: -offset, to: today) else { continue }
+      let phase = Double(29 - offset)
+      let base = 8 + 6 * sin(phase / 3 + seed)
+      let spike = (Int(phase + seed) % 9 == 0) ? 30.0 : 0
+      let spend = max(0.5, base + spike)
+      daily.append(DailyCost(date: day, spend: spend, tokens: Int(spend * 1_060_000)))
+    }
+    let month = daily.reduce(0) { $0 + $1.spend }
+    return CostSummary(
+      todaySpend: daily.last?.spend ?? 0,
+      monthSpend: month,
+      monthTokens: daily.reduce(0) { $0 + $1.tokens },
+      latestTokens: daily.last?.tokens ?? 0,
+      topModel: seed < 1 ? "gpt-5.5" : "claude-opus-4",
+      daily: daily
+    )
+  }
+
   private static let codex: @Sendable (UsageProvider, Date) -> UsageSnapshot = { provider, now in
     UsageSnapshot(
       provider: provider,
@@ -68,6 +93,7 @@ public enum MockProviders {
           window: window(.custom, used: 1, resetInMinutes: 4260, durationMinutes: 10080, now: now)
         ),
       ],
+      cost: cost(seed: 0.3, now: now),
       updatedAt: now
     )
   }
@@ -89,6 +115,7 @@ public enum MockProviders {
           window: window(.custom, used: 100, resetInMinutes: 853, durationMinutes: 10080, now: now)
         ),
       ],
+      cost: cost(seed: 2.1, now: now),
       updatedAt: now
     )
   }

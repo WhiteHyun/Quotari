@@ -65,4 +65,28 @@ struct FormatterTests {
     let future = now.addingTimeInterval(3 * 3600 + 5 * 60)
     #expect(UsageFormatter.resetCountdown(to: future, now: now)?.hasPrefix("in 3h") == true)
   }
+
+  @Test func currencyAndTokens() {
+    #expect(UsageFormatter.currency(30.47) == "$30.47")
+    #expect(UsageFormatter.tokens(952_000_000) == "952M")
+    #expect(UsageFormatter.tokens(32000) == "32K")
+    #expect(UsageFormatter.tokens(1_200_000_000) == "1.2B")
+    #expect(UsageFormatter.tokens(500) == "500")
+  }
+}
+
+struct CostTests {
+  @Test func mockCostSummaryIsPopulated() async throws {
+    let result = await ProviderRegistry.descriptor(for: .codex).fetch(now: Date())
+    let cost = try #require(try result.get().usage.cost)
+    #expect(cost.daily.count == 30)
+    #expect(cost.monthSpend > 0)
+    #expect(cost.peakSpend >= cost.todaySpend)
+    #expect(cost.topModel == "gpt-5.5")
+  }
+
+  @Test func freePlanHasNoCost() async throws {
+    let result = await ProviderRegistry.descriptor(for: .glm).fetch(now: Date())
+    #expect(try result.get().usage.cost == nil)
+  }
 }

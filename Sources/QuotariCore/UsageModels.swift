@@ -55,6 +55,7 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
   public var primary: RateWindow? // session window
   public var secondary: RateWindow? // weekly window
   public var extraWindows: [NamedWindow]
+  public var cost: CostSummary?
   public var updatedAt: Date
 
   public init(
@@ -64,6 +65,7 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
     primary: RateWindow? = nil,
     secondary: RateWindow? = nil,
     extraWindows: [NamedWindow] = [],
+    cost: CostSummary? = nil,
     updatedAt: Date
   ) {
     self.provider = provider
@@ -72,6 +74,7 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
     self.primary = primary
     self.secondary = secondary
     self.extraWindows = extraWindows
+    self.cost = cost
     self.updatedAt = updatedAt
   }
 
