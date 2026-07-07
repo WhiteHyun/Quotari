@@ -29,11 +29,13 @@ public struct ProviderFetchResult: Sendable {
 public enum ProviderFetchError: LocalizedError, Sendable {
   case noStrategyAvailable(UsageProvider)
   case missingCredential(UsageProvider)
+  case emptyUsage(UsageProvider)
 
   public var errorDescription: String? {
     switch self {
     case let .noStrategyAvailable(p): "No available fetch strategy for \(p.rawValue)."
     case let .missingCredential(p): "Missing credential for \(p.rawValue)."
+    case let .emptyUsage(p): "No usage windows returned for \(p.rawValue)."
     }
   }
 }

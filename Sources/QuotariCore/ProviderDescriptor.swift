@@ -36,7 +36,7 @@ public struct ProviderDescriptor: Sendable {
 }
 
 public enum ProviderRegistry {
-  public static let all: [ProviderDescriptor] = MockProviders.descriptors
+  public static let all: [ProviderDescriptor] = ProviderCatalog.descriptors
 
   private static let byID: [UsageProvider: ProviderDescriptor] =
     Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })

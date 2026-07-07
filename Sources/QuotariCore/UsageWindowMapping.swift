@@ -52,6 +52,11 @@ public enum UsageWindowMapper {
       self.secondary = secondary
       self.extraWindows = extraWindows
     }
+
+    /// No window was recognized — the payload carried no usable usage rows.
+    public var isEmpty: Bool {
+      primary == nil && secondary == nil && extraWindows.isEmpty
+    }
   }
 
   public static func map(_ raw: [RawUsageWindow]) -> Mapped {
