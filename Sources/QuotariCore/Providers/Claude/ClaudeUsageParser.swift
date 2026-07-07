@@ -17,7 +17,7 @@ public enum ClaudeUsageParser {
     let rawWindows: [RawUsageWindow] = windowsContainer.compactMap { key, value in
       guard !nonWindowKeys.contains(key), let fields = value as? [String: Any] else { return nil }
       return rawWindow(key: key, fields: fields, now: now)
-    }
+    } + scopedLimitWindows(from: root)
     let mapped = UsageWindowMapper.map(rawWindows)
     // A 200 with no recognizable windows is a failure, not an empty success —
     // otherwise it would suppress the mock fallback and render an empty card.
@@ -35,6 +35,42 @@ public enum ClaudeUsageParser {
       extraWindows: mapped.extraWindows,
       updatedAt: now
     )
+  }
+
+  /// Model-scoped weekly limits (e.g. a Fable-only promotional window) arrive
+  /// in the `limits` array rather than as root window objects. Only
+  /// `group: weekly` + `kind: weekly_scoped` entries become windows — other
+  /// kinds mirror the root session/weekly objects and would duplicate them.
+  /// `is_active` is deliberately not a filter: enforced scoped limits have
+  /// been observed reporting false.
+  private static func scopedLimitWindows(from root: [String: Any]) -> [RawUsageWindow] {
+    guard let entries = root["limits"] as? [[String: Any]] else { return [] }
+    var seenModels = Set<String>()
+    return entries.compactMap { entry in
+      guard string(entry["group"]) == "weekly",
+            string(entry["kind"]) == "weekly_scoped",
+            let percent = number(entry["percent"]), percent.isFinite
+      else { return nil }
+      let model = (entry["scope"] as? [String: Any])?["model"] as? [String: Any]
+      guard let name = string(model?["display_name"]) ?? string(model?["id"]),
+            seenModels.insert(name).inserted
+      else { return nil }
+
+      var resetsAt: Date?
+      if let iso = string(entry["resets_at"]) {
+        resetsAt = ISO8601DateFormatter().date(from: iso)
+      } else if let epoch = number(entry["resets_at"]) {
+        resetsAt = Date(timeIntervalSince1970: epoch)
+      }
+      let title = "\(name) only"
+      return RawUsageWindow(
+        key: title,
+        usedPercent: percent,
+        resetsAt: resetsAt,
+        duration: 7 * 24 * 3600,
+        label: title
+      )
+    }
   }
 
   private static func rawWindow(key: String, fields: [String: Any], now: Date) -> RawUsageWindow? {
