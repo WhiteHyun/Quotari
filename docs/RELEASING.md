@@ -1,0 +1,84 @@
+# Releasing Quotari
+
+Quotari ships outside the App Store: a signed + notarized `.app` on GitHub
+Releases, installable directly or via a Homebrew tap, with Sparkle keeping
+direct-download users up to date.
+
+## One-time setup
+
+1. **Developer ID certificate** — an Apple Developer Program membership with a
+   "Developer ID Application" certificate in your keychain.
+2. **Sparkle EdDSA keys** — generate once and keep the private key safe
+   (it lands in your keychain):
+
+   ```sh
+   $(find .build -name generate_keys -type f | head -1)
+   ```
+
+   Record the printed public key; it goes into every build as `SPARKLE_PUBLIC_KEY`.
+3. **Notarization profile** — store credentials once:
+
+   ```sh
+   xcrun notarytool store-credentials quotari-notary \
+     --apple-id you@example.com --team-id TEAMID --password <app-specific>
+   ```
+
+## Cutting a release
+
+```sh
+# 1. Build, bundle, and sign
+VERSION=0.1.0 \
+CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+SPARKLE_PUBLIC_KEY="<public key from setup>" \
+Scripts/package-app.sh
+
+# 2. Notarize and staple
+xcrun notarytool submit dist/Quotari-0.1.0.zip --keychain-profile quotari-notary --wait
+xcrun stapler staple dist/Quotari.app
+ditto -c -k --keepParent dist/Quotari.app dist/Quotari-0.1.0.zip   # re-zip stapled app
+
+# 3. Generate the Sparkle appcast (signs the zip with your private key)
+$(find .build -name generate_appcast -type f | head -1) dist/
+
+# 4. Publish
+gh release create v0.1.0 dist/Quotari-0.1.0.zip dist/appcast.xml \
+  --title "Quotari 0.1.0" --notes "..."
+```
+
+The app's feed URL points at
+`releases/latest/download/appcast.xml`, so attaching `appcast.xml` to the
+latest release is what makes older installs see the update.
+
+## Homebrew tap
+
+Create a `WhiteHyun/homebrew-tap` repository once, then add/update
+`Casks/quotari.rb` per release:
+
+```ruby
+cask "quotari" do
+  version "0.1.0"
+  sha256 "<shasum -a 256 dist/Quotari-0.1.0.zip>"
+
+  url "https://github.com/WhiteHyun/Quotari/releases/download/v#{version}/Quotari-#{version}.zip"
+  name "Quotari"
+  desc "Menu-bar usage, limits, and reset times for AI coding subscriptions"
+  homepage "https://github.com/WhiteHyun/Quotari"
+
+  app "Quotari.app"
+end
+```
+
+Users then install with `brew install --cask whitehyun/tap/quotari`. Homebrew
+manages updates for tap installs; Sparkle covers direct downloads. (If both are
+active the two won't conflict — Sparkle only replaces the app it runs from —
+but consider disabling the feed for cask builds later.)
+
+## Notes
+
+- Without `SPARKLE_PUBLIC_KEY`, `package-app.sh` omits the Sparkle feed keys and
+  the app runs with updates disabled — useful for local packaging tests.
+- Without `CODESIGN_IDENTITY`, the script ad-hoc signs; fine locally, but
+  Gatekeeper will block it on other machines. Real releases must be signed and
+  notarized.
+- Builds are arm64-only for now; add `--arch x86_64 --arch arm64` to the build
+  step for universal binaries when needed.
