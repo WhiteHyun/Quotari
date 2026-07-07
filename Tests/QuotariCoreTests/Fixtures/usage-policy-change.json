@@ -1,0 +1,7 @@
+{
+  "windows": [
+    { "key": "seven_day", "used_percent": 76 },
+    { "key": "seven_day_fable", "used_percent": 100, "label": "Fable only" },
+    { "key": "seven_day_haiku", "used_percent": 5 }
+  ]
+}

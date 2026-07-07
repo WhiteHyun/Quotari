@@ -1,0 +1,8 @@
+{
+  "windows": [
+    { "key": "five_hour", "used_percent": 27, "resets_at": 1767744000 },
+    { "key": "seven_day", "used_percent": 34 },
+    { "key": "seven_day_opus", "used_percent": 12 },
+    { "key": "daily_routines", "remaining_percent": 100 }
+  ]
+}
