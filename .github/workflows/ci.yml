@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A self-hosted runner reuses its workspace across jobs; cancel superseded runs.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    # mise lives in ~/.local/bin, which is only on PATH in a login shell.
+    shell: zsh -l {0}
+
+jobs:
+  build-test:
+    runs-on: [self-hosted, macOS, quotari]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+      - run: swift build
+      - run: swift test
+
+  lint:
+    runs-on: [self-hosted, macOS, quotari]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+      - run: mise install
+      - run: mise run lint
