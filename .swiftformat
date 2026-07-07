@@ -1,0 +1,9 @@
+--swiftversion 6.0
+--indent 2
+--maxwidth 120
+--wraparguments before-first
+--wrapparameters before-first
+--wrapcollections before-first
+--self remove
+--stripunusedargs closure-only
+--exclude .build,Snapshots

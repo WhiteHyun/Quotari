@@ -1,0 +1,25 @@
+excluded:
+  - .build
+  - Snapshots
+
+# SwiftFormat owns whitespace/brace/comma style; disable the SwiftLint rules
+# that conflict with it so the two tools don't fight.
+disabled_rules:
+  - trailing_comma
+  - opening_brace
+
+opt_in_rules:
+  - closure_spacing
+  - collection_alignment
+  - empty_count
+
+line_length:
+  warning: 120
+  error: 200
+
+identifier_name:
+  min_length: 1
+  excluded: [r, g, b, id, x, y, h, m, s]
+
+type_name:
+  min_length: 2

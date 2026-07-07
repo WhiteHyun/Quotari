@@ -1,0 +1,10 @@
+#!/bin/sh
+# Format and lint staged Swift files before committing. Requires mise.
+set -e
+
+files=$(git diff --cached --name-only --diff-filter=ACM | grep '\.swift$' || true)
+[ -z "$files" ] && exit 0
+
+mise exec -- swiftformat $files
+git add $files
+mise exec -- swiftlint lint --quiet $files
