@@ -1,43 +1,44 @@
 import Foundation
 
-/// Fetches Claude usage over OAuth using a token from the environment
-/// (`QUOTARI_CLAUDE_OAUTH_TOKEN`). Keychain-based credential discovery is a
-/// planned follow-up; until then this strategy is unavailable without the env
-/// token, so the pipeline falls through cleanly.
+/// Fetches Claude usage over OAuth using credentials discovered from the
+/// environment, the Claude Code keychain item, or `~/.claude/.credentials.json`.
+/// Not available when no credentials are found, so the pipeline falls through.
 public struct ClaudeUsageStrategy: ProviderFetchStrategy {
   public let id = "claude.oauth"
   public let kind: ProviderFetchKind = .oauth
 
-  public static let tokenEnvKey = "QUOTARI_CLAUDE_OAUTH_TOKEN"
-
   private let transport: any ProviderHTTPTransport
   private let usageURL: URL
-  private let token: @Sendable () -> String?
+  private let loadCredentials: @Sendable () throws -> ClaudeCredentials
 
   public init(
     transport: any ProviderHTTPTransport = URLSession.shared,
     usageURL: URL = URL(string: "https://api.anthropic.com/api/oauth/usage")!,
-    token: @escaping @Sendable () -> String? = { ProcessInfo.processInfo.environment[tokenEnvKey] }
+    loadCredentials: @escaping @Sendable () throws -> ClaudeCredentials = { try ClaudeCredentialsStore.load() }
   ) {
     self.transport = transport
     self.usageURL = usageURL
-    self.token = token
+    self.loadCredentials = loadCredentials
   }
 
   public func isAvailable(_: ProviderFetchContext) async -> Bool {
-    token()?.isEmpty == false
+    (try? loadCredentials()) != nil
   }
 
   public func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
-    guard let token = token(), !token.isEmpty else {
-      throw ProviderFetchError.missingCredential(context.provider)
-    }
+    let credentials = try loadCredentials()
     let data = try await transport.getJSON(
       url: usageURL,
-      bearer: token,
+      bearer: credentials.accessToken,
       headers: ["anthropic-beta": "oauth-2025-04-20"]
     )
-    let usage = try ClaudeUsageParser.parse(data, provider: context.provider, now: context.now)
+    var usage = try ClaudeUsageParser.parse(data, provider: context.provider, now: context.now)
+    if usage.plan == nil {
+      usage.plan = PlanLabel.claude(
+        subscriptionType: credentials.subscriptionType,
+        rateLimitTier: credentials.rateLimitTier
+      )
+    }
     return ProviderFetchResult(usage: usage, sourceLabel: "Claude")
   }
 

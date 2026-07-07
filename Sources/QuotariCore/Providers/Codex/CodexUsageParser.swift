@@ -28,7 +28,7 @@ public enum CodexUsageParser {
 
     return UsageSnapshot(
       provider: provider,
-      plan: string(root["plan"]) ?? string(root["plan_type"]),
+      plan: PlanLabel.codex(string(root["plan"]) ?? string(root["plan_type"])),
       account: string(root["account_email"]) ?? string(root["email"]),
       primary: mapped.primary,
       secondary: mapped.secondary,

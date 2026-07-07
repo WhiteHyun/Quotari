@@ -11,7 +11,7 @@ import Testing
 struct DashboardSnapshotTests {
   @Test func renderDashboardSnapshots() async throws {
     _ = NSApplication.shared
-    let store = UsageStore()
+    let store = UsageStore(providers: MockProviders.descriptors)
     for _ in 0 ..< 100 {
       if store.snapshots.count >= ProviderRegistry.all.count { break }
       try? await Task.sleep(for: .milliseconds(50))

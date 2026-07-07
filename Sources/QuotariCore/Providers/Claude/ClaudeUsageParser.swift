@@ -25,7 +25,10 @@ public enum ClaudeUsageParser {
 
     return UsageSnapshot(
       provider: provider,
-      plan: string(root["subscription_type"]) ?? string(root["rate_limit_tier"]),
+      plan: PlanLabel.claude(
+        subscriptionType: string(root["subscription_type"]),
+        rateLimitTier: string(root["rate_limit_tier"])
+      ),
       account: string(root["email"]) ?? string(root["account_email"]),
       primary: mapped.primary,
       secondary: mapped.secondary,

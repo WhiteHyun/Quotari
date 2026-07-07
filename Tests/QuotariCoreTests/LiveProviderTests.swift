@@ -82,7 +82,7 @@ struct CodexUsageTests {
     )
     let result = try await strategy.fetch(ProviderFetchContext(provider: .codex, now: Date()))
 
-    #expect(result.usage.plan == "pro")
+    #expect(result.usage.plan == "Pro 20x")
     #expect(result.usage.account == "dev@example.com")
     #expect(result.usage.primary?.usedPercent == 73)
     #expect(result.usage.primary?.duration == TimeInterval(5 * 3600))
@@ -195,19 +195,74 @@ struct ClaudeUsageTests {
   @Test func parsesUsageWithRenamedModelWindow() async throws {
     let strategy = ClaudeUsageStrategy(
       transport: StubTransport(json: claudeJSON),
-      token: { "env-token" }
+      loadCredentials: {
+        ClaudeCredentials(
+          accessToken: "tok",
+          subscriptionType: "max",
+          rateLimitTier: "default_claude_max_20x"
+        )
+      }
     )
     let result = try await strategy.fetch(ProviderFetchContext(provider: .claude, now: Date()))
 
+    #expect(result.usage.plan == "Max 20x")
     #expect(result.usage.primary?.usedPercent == 32)
     #expect(result.usage.secondary?.usedPercent == 76)
     // `seven_day_fable` humanizes to "Fable"; `extra_usage` must not become a window.
     #expect(result.usage.extraWindows.map(\.title) == ["Fable"])
   }
 
-  @Test func unavailableWithoutToken() async {
-    let strategy = ClaudeUsageStrategy(transport: StubTransport(json: "{}"), token: { nil })
+  @Test func unavailableWithoutCredentials() async {
+    let strategy = ClaudeUsageStrategy(
+      transport: StubTransport(json: "{}"),
+      loadCredentials: { throw ClaudeCredentialsError.notFound }
+    )
     #expect(await strategy.isAvailable(ProviderFetchContext(provider: .claude, now: Date())) == false)
+  }
+}
+
+struct ClaudeCredentialsTests {
+  @Test func parsesKeychainPayload() throws {
+    let json = Data("""
+    {
+      "claudeAiOauth": {
+        "accessToken": "tok",
+        "refreshToken": "ref",
+        "expiresAt": 1767744000000,
+        "scopes": ["user:inference"],
+        "subscriptionType": "max",
+        "rateLimitTier": "default_claude_max_5x"
+      }
+    }
+    """.utf8)
+    let credentials = try ClaudeCredentialsStore.parse(json)
+    #expect(credentials.accessToken == "tok")
+    #expect(credentials.subscriptionType == "max")
+    #expect(credentials.rateLimitTier == "default_claude_max_5x")
+  }
+
+  @Test func rejectsPayloadWithoutToken() {
+    #expect(throws: ClaudeCredentialsError.self) {
+      try ClaudeCredentialsStore.parse(Data(#"{"claudeAiOauth":{}}"#.utf8))
+    }
+  }
+}
+
+struct PlanLabelTests {
+  @Test func codexTiers() {
+    #expect(PlanLabel.codex("pro") == "Pro 20x")
+    #expect(PlanLabel.codex("pro_lite") == "Pro 5x")
+    #expect(PlanLabel.codex("plus") == "Plus")
+    #expect(PlanLabel.codex("free_workspace") == "Free Workspace")
+    #expect(PlanLabel.codex(nil) == nil)
+  }
+
+  @Test func claudeTiers() {
+    #expect(PlanLabel.claude(subscriptionType: "max", rateLimitTier: "default_claude_max_20x") == "Max 20x")
+    #expect(PlanLabel.claude(subscriptionType: nil, rateLimitTier: "default_claude_max_5x") == "Max 5x")
+    #expect(PlanLabel.claude(subscriptionType: "pro", rateLimitTier: nil) == "Pro")
+    #expect(PlanLabel.claude(subscriptionType: "team", rateLimitTier: "default") == "Team")
+    #expect(PlanLabel.claude(subscriptionType: nil, rateLimitTier: nil) == nil)
   }
 }
 

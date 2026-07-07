@@ -105,7 +105,7 @@ public enum MockProviders {
   private static let claude: @Sendable (UsageProvider, Date) -> UsageSnapshot = { provider, now in
     UsageSnapshot(
       provider: provider,
-      plan: "Team",
+      plan: "Max 20x",
       account: "team@example.com",
       primary: window(.session, used: 32, resetInMinutes: 223, durationMinutes: 300, now: now),
       secondary: window(.weekly, used: 76, resetInMinutes: 853, durationMinutes: 10080, now: now),
