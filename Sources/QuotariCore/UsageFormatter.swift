@@ -44,4 +44,34 @@ public enum UsageFormatter {
     }
     return "Lasts until reset"
   }
+
+  /// "$30.47" — fixed en_US formatting for consistent width regardless of locale.
+  public static func currency(_ amount: Double, code: String = "USD") -> String {
+    let formatter = NumberFormatter()
+    formatter.numberStyle = .currency
+    formatter.currencyCode = code
+    formatter.locale = Locale(identifier: "en_US")
+    return formatter.string(from: amount as NSNumber) ?? "\(amount)"
+  }
+
+  /// "952M", "32K", "1.2B" tokens.
+  public static func tokens(_ count: Int) -> String {
+    let value = Double(count)
+    switch value {
+    case 1_000_000_000...:
+      return "\(trimmed(value / 1_000_000_000))B"
+    case 1_000_000...:
+      return "\(trimmed(value / 1_000_000))M"
+    case 1000...:
+      return "\(trimmed(value / 1000))K"
+    default:
+      return "\(count)"
+    }
+  }
+
+  private static func trimmed(_ value: Double) -> String {
+    value < 10
+      ? String(format: "%.1f", value)
+      : "\(Int(value.rounded()))"
+  }
 }

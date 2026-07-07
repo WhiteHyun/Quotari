@@ -22,6 +22,10 @@ struct ProviderCardView: View {
         if let primary = snapshot.primary { windowRow("Session", primary) }
         if let secondary = snapshot.secondary { windowRow("Weekly", secondary) }
         ForEach(snapshot.extraWindows) { named in windowRow(named.title, named.window) }
+        if let cost = snapshot.cost {
+          Divider().padding(.vertical, 2)
+          CostSectionView(cost: cost, accent: accent)
+        }
       } else if let error {
         Text(error)
           .font(.footnote)
