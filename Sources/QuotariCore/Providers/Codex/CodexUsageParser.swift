@@ -6,7 +6,7 @@ import Foundation
 ///
 /// The payload is undocumented. The observed shape nests the plan windows as
 /// `rate_limit: { primary_window, secondary_window }` (each `{ used_percent,
-/// reset_at, limit_window_seconds }`) with model-specific limits in
+/// reset_at/reset_after_seconds, limit_window_seconds }`) with model-specific limits in
 /// `additional_rate_limits: [ { limit_name, rate_limit } ]`. A flat
 /// `rate_limits` list or dict is kept as a fallback shape.
 public enum CodexUsageParser {
@@ -111,25 +111,30 @@ public enum CodexUsageParser {
       ?? number(fields["window_minutes"]).map { $0 * 60 }
       ?? number(fields["window_seconds"])
 
-    var resetsAt: Date?
-    if let epoch = number(fields["reset_at"]) {
-      resetsAt = Date(timeIntervalSince1970: epoch)
-    } else if let seconds = number(fields["resets_in_seconds"]) {
-      resetsAt = now.addingTimeInterval(seconds)
-    } else if let epoch = number(fields["resets_at"]) {
-      resetsAt = Date(timeIntervalSince1970: epoch)
-    } else if let iso = string(fields["resets_at"]) {
-      resetsAt = ISO8601DateFormatter().date(from: iso)
-    }
-
     return RawUsageWindow(
       key: key,
       usedPercent: number(fields["used_percent"]),
       remainingPercent: number(fields["remaining_percent"]),
-      resetsAt: resetsAt,
+      resetsAt: resetDate(from: fields, now: now),
       duration: duration,
       label: string(fields["label"])
     )
+  }
+
+  private static func resetDate(from fields: [String: Any], now: Date) -> Date? {
+    if let seconds = number(fields["resets_in_seconds"])
+      ?? number(fields["reset_in_seconds"])
+      ?? number(fields["reset_after_seconds"])
+    {
+      return now.addingTimeInterval(seconds)
+    }
+
+    for key in ["reset_at", "resets_at", "resetAt", "resetsAt", "reset_time", "resetTime"] {
+      if let date = LenientDateParser.parse(fields[key]) {
+        return date
+      }
+    }
+    return nil
   }
 
   // MARK: - Lenient scalar readers

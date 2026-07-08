@@ -44,7 +44,7 @@ private let codexJSON = """
     {
       "limit_name": "GPT-5.3-Codex-Spark",
       "rate_limit": {
-        "primary_window": { "used_percent": 1, "reset_at": 1767744000, "limit_window_seconds": 18000 },
+        "primary_window": { "used_percent": 1, "reset_after_seconds": 18000, "limit_window_seconds": 18000 },
         "secondary_window": { "used_percent": 2, "reset_at": 1768262400, "limit_window_seconds": 604800 }
       }
     }
@@ -66,16 +66,16 @@ private let codexLegacyJSON = """
 
 private let claudeJSON = """
 {
-  "five_hour": { "utilization": 32, "resets_at": "2026-01-07T00:00:00Z" },
-  "seven_day": { "utilization": 76, "resets_at": "2026-01-12T00:00:00Z" },
+  "five_hour": { "utilization": 32, "resets_at": "2026-01-07T00:00:00.573174+00:00" },
+  "seven_day": { "utilization": 76, "resets_at": "2026-01-12T00:00:00.573208+00:00" },
   "extra_usage": { "is_enabled": true, "monthly_limit": 100, "used_credits": 12.5, "utilization": 12.5 },
   "limits": [
-    { "kind": "weekly", "group": "weekly", "percent": 76, "resets_at": "2026-01-12T00:00:00Z", "is_active": true },
+    { "kind": "weekly", "group": "weekly", "percent": 76, "resets_at": "2026-01-12T00:00:00.573208+00:00", "is_active": true },
     {
       "kind": "weekly_scoped",
       "group": "weekly",
       "percent": 12,
-      "resets_at": "2026-01-12T00:00:00Z",
+      "reset_after_seconds": 3600,
       "is_active": false,
       "scope": { "model": { "id": "claude-fable-5", "display_name": "Fable" } }
     }
@@ -100,6 +100,7 @@ struct CodexUsageTests {
     #expect(result.usage.extraWindows.map(\.title) == [
       "GPT-5.3-Codex-Spark 5-hour", "GPT-5.3-Codex-Spark Weekly",
     ])
+    #expect(result.usage.extraWindows.first?.window.resetsAt != nil)
     #expect(result.sourceLabel == "Codex")
 
     let request = try #require(recorder.requests.first)
@@ -213,16 +214,20 @@ struct ClaudeUsageTests {
         )
       }
     )
-    let result = try await strategy.fetch(ProviderFetchContext(provider: .claude, now: Date()))
+    let now = Date(timeIntervalSince1970: 1_767_744_000)
+    let result = try await strategy.fetch(ProviderFetchContext(provider: .claude, now: now))
 
     #expect(result.usage.plan == "Max 20x")
     #expect(result.usage.primary?.usedPercent == 32)
+    #expect(result.usage.primary?.resetsAt != nil)
     #expect(result.usage.secondary?.usedPercent == 76)
+    #expect(result.usage.secondary?.resetsAt != nil)
     // The scoped weekly limit surfaces (despite is_active false); the unscoped
     // limits entry and extra_usage must not become windows.
     #expect(result.usage.extraWindows.map(\.title) == ["Fable only"])
     let fable = try #require(result.usage.extraWindows.first?.window)
     #expect(fable.usedPercent == 12)
+    #expect(fable.resetsAt == now.addingTimeInterval(3600))
     #expect(fable.duration == TimeInterval(7 * 24 * 3600))
   }
 

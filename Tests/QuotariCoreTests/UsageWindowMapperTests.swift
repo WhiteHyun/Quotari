@@ -73,6 +73,18 @@ struct UsageWindowContractTests {
   }
 }
 
+struct LenientDateParserTests {
+  @Test func parsesCommonProviderDateFormats() throws {
+    let expected = Date(timeIntervalSince1970: 1_767_744_000)
+    #expect(LenientDateParser.parse(1_767_744_000) == expected)
+    #expect(LenientDateParser.parse("1767744000000") == expected)
+    #expect(LenientDateParser.parse("2026-01-07T00:00:00Z") == expected)
+
+    let fractional = try #require(LenientDateParser.parse("2026-01-07T00:00:00.573174+00:00"))
+    #expect(abs(fractional.timeIntervalSince1970 - 1_767_744_000.573_174) < 0.001)
+  }
+}
+
 struct UsageWindowMapperUnitTests {
   @Test func humanizedTitles() {
     #expect(UsageWindowMapper.humanizedTitle(for: "seven_day_fable") == "Fable")
