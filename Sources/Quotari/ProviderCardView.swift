@@ -67,7 +67,7 @@ struct ProviderCardView: View {
     let pace = UsagePace.compute(window: window, now: Date())
     VStack(alignment: .leading, spacing: 5) {
       Text(title).font(.subheadline)
-      bar(window.usedPercent)
+      bar(window.remainingPercent)
       HStack(spacing: 6) {
         Text("\(UsageFormatter.percent(window.remainingPercent)) left")
           .font(.footnote)
@@ -107,9 +107,10 @@ struct ProviderCardView: View {
     return value
   }
 
-  private func bar(_ used: Double) -> some View {
+  /// Battery-style: the fill is what's left, matching the "% left" label.
+  private func bar(_ remaining: Double) -> some View {
     GeometryReader { geo in
-      let fraction = min(1, max(0, used / 100))
+      let fraction = min(1, max(0, remaining / 100))
       ZStack(alignment: .leading) {
         Capsule()
           .fill(Theme.usageTrack)
