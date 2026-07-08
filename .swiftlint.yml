@@ -14,7 +14,7 @@ opt_in_rules:
   - empty_count
 
 line_length:
-  warning: 120
+  warning: 140
   error: 200
 
 identifier_name:
