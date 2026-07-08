@@ -75,7 +75,7 @@ private let claudeJSON = """
       "kind": "weekly_scoped",
       "group": "weekly",
       "percent": 12,
-      "resets_at": "2026-01-12T00:00:00.573673+00:00",
+      "reset_after_seconds": 3600,
       "is_active": false,
       "scope": { "model": { "id": "claude-fable-5", "display_name": "Fable" } }
     }
@@ -214,7 +214,8 @@ struct ClaudeUsageTests {
         )
       }
     )
-    let result = try await strategy.fetch(ProviderFetchContext(provider: .claude, now: Date()))
+    let now = Date(timeIntervalSince1970: 1_767_744_000)
+    let result = try await strategy.fetch(ProviderFetchContext(provider: .claude, now: now))
 
     #expect(result.usage.plan == "Max 20x")
     #expect(result.usage.primary?.usedPercent == 32)
@@ -226,7 +227,7 @@ struct ClaudeUsageTests {
     #expect(result.usage.extraWindows.map(\.title) == ["Fable only"])
     let fable = try #require(result.usage.extraWindows.first?.window)
     #expect(fable.usedPercent == 12)
-    #expect(fable.resetsAt != nil)
+    #expect(fable.resetsAt == now.addingTimeInterval(3600))
     #expect(fable.duration == TimeInterval(7 * 24 * 3600))
   }
 

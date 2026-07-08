@@ -17,7 +17,7 @@ public enum ClaudeUsageParser {
     let rawWindows: [RawUsageWindow] = windowsContainer.compactMap { key, value in
       guard !nonWindowKeys.contains(key), let fields = value as? [String: Any] else { return nil }
       return rawWindow(key: key, fields: fields, now: now)
-    } + scopedLimitWindows(from: root)
+    } + scopedLimitWindows(from: root, now: now)
     let mapped = UsageWindowMapper.map(rawWindows)
     // A 200 with no recognizable windows is a failure, not an empty success —
     // otherwise it would suppress the mock fallback and render an empty card.
@@ -43,7 +43,7 @@ public enum ClaudeUsageParser {
   /// kinds mirror the root session/weekly objects and would duplicate them.
   /// `is_active` is deliberately not a filter: enforced scoped limits have
   /// been observed reporting false.
-  private static func scopedLimitWindows(from root: [String: Any]) -> [RawUsageWindow] {
+  private static func scopedLimitWindows(from root: [String: Any], now: Date) -> [RawUsageWindow] {
     guard let entries = root["limits"] as? [[String: Any]] else { return [] }
     var seenModels = Set<String>()
     return entries.compactMap { entry in
@@ -56,7 +56,7 @@ public enum ClaudeUsageParser {
             seenModels.insert(name).inserted
       else { return nil }
 
-      let resetsAt = resetDate(from: entry)
+      let resetsAt = resetDate(from: entry, now: now)
       let title = "\(name) only"
       return RawUsageWindow(
         key: title,
