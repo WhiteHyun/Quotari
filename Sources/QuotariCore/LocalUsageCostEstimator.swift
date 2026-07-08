@@ -211,9 +211,10 @@ struct LocalUsageCostScanner {
 
   private func parseClaudeFile(_ url: URL, range: DayRange) -> [LocalTokenRecord] {
     guard let lines = lines(in: url) else { return [] }
-    var records: [LocalTokenRecord] = []
+    var records: [PendingClaudeTokenRecord] = []
+    var keyedRecords: [String: PendingClaudeTokenRecord] = [:]
 
-    for line in lines {
+    for (lineNumber, line) in lines.enumerated() {
       guard let object = jsonObject(from: line),
             object["type"] as? String == "assistant",
             let timestamp = timestamp(from: object),
@@ -230,9 +231,19 @@ struct LocalUsageCostScanner {
         output: int(usage["output_tokens"])
       )
       guard tokens.total > 0 else { continue }
-      records.append(LocalTokenRecord(day: day, model: model, tokens: tokens))
+      let record = PendingClaudeTokenRecord(
+        lineNumber: lineNumber,
+        record: LocalTokenRecord(day: day, model: model, tokens: tokens)
+      )
+      if let key = claudeUsageKey(from: object, message: message) {
+        keyedRecords[key] = record
+      } else {
+        records.append(record)
+      }
     }
-    return records
+    return (records + keyedRecords.values)
+      .sorted { $0.lineNumber < $1.lineNumber }
+      .map(\.record)
   }
 
   private func lines(in url: URL) -> [Substring]? {
@@ -254,13 +265,29 @@ struct LocalUsageCostScanner {
   private func tokenTotals(from value: Any?) -> TokenTotals? {
     guard let fields = value as? [String: Any] else { return nil }
     let cacheRead = int(fields["cached_input_tokens"] ?? fields["cache_read_input_tokens"])
+    let output = int(fields["output_tokens"]) + int(fields["reasoning_output_tokens"])
     let totals = TokenTotals(
       input: max(0, int(fields["input_tokens"]) - cacheRead),
       cacheRead: cacheRead,
       cacheWrite: int(fields["cache_creation_input_tokens"]),
-      output: int(fields["output_tokens"])
+      output: output
     )
     return totals.total > 0 ? totals : nil
+  }
+
+  private func claudeUsageKey(from object: [String: Any], message: [String: Any]) -> String? {
+    for value in [
+      object["requestId"],
+      object["request_id"],
+      message["id"],
+      object["messageId"],
+      object["message_id"],
+    ] {
+      if let key = string(value) {
+        return key
+      }
+    }
+    return nil
   }
 
   private func int(_ value: Any?) -> Int {
@@ -287,4 +314,9 @@ struct LocalUsageCostScanner {
     }
     return result
   }
+}
+
+private struct PendingClaudeTokenRecord {
+  let lineNumber: Int
+  let record: LocalTokenRecord
 }

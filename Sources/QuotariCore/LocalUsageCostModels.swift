@@ -75,13 +75,19 @@ struct LocalModelPricing {
   }
 
   private func rates(provider: UsageProvider, model: String?) -> Rates {
-    let normalized = model?.lowercased() ?? ""
+    let normalized = normalizedModelID(model)
     switch provider {
     case .codex:
       if normalized.contains("mini") { return Rates(input: 0.25, cacheRead: 0.025, output: 2.00) }
       if normalized.contains("nano") { return Rates(input: 0.05, cacheRead: 0.005, output: 0.40) }
       return Rates(input: 1.25, cacheRead: 0.125, output: 10.00)
     case .claude:
+      if claudeVersion(in: normalized, family: "opus").isAtLeast(major: 4, minor: 5) {
+        return Rates(input: 5.00, cacheRead: 0.50, output: 25.00)
+      }
+      if claudeVersion(in: normalized, family: "haiku").isAtLeast(major: 4, minor: 5) {
+        return Rates(input: 1.00, cacheRead: 0.10, output: 5.00)
+      }
       if normalized.contains("opus") { return Rates(input: 15.00, cacheRead: 1.50, output: 75.00) }
       if normalized.contains("haiku") { return Rates(input: 0.80, cacheRead: 0.08, output: 4.00) }
       return Rates(input: 3.00, cacheRead: 0.30, output: 15.00)
@@ -102,6 +108,40 @@ struct LocalModelPricing {
       cacheWritePerMillion = cacheWrite ?? input * 1.25
       outputPerMillion = output
     }
+  }
+}
+
+private func normalizedModelID(_ model: String?) -> String {
+  model?
+    .lowercased()
+    .replacingOccurrences(of: "_", with: "-")
+    .replacingOccurrences(of: ".", with: "-") ?? ""
+}
+
+private func claudeVersion(in model: String, family: String) -> ClaudeModelVersion? {
+  guard let range = model.range(of: "\(family)-") else { return nil }
+  let suffix = model[range.upperBound...]
+  let parts = suffix.split(separator: "-", omittingEmptySubsequences: true)
+  guard parts.count >= 2,
+        let major = Int(parts[0]),
+        let minor = Int(parts[1])
+  else { return nil }
+  return ClaudeModelVersion(major: major, minor: minor)
+}
+
+private struct ClaudeModelVersion {
+  let major: Int
+  let minor: Int
+
+  func isAtLeast(major targetMajor: Int, minor targetMinor: Int) -> Bool {
+    major > targetMajor || (major == targetMajor && minor >= targetMinor)
+  }
+}
+
+private extension ClaudeModelVersion? {
+  func isAtLeast(major: Int, minor: Int) -> Bool {
+    guard let version = self else { return false }
+    return version.isAtLeast(major: major, minor: minor)
   }
 }
 
