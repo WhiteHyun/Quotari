@@ -30,9 +30,17 @@ struct PreferencesView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
+      Section("Accounts") {
+        ForEach(store.providers, id: \.id) { descriptor in
+          accountPicker(for: descriptor)
+        }
+        Button("Scan Accounts") {
+          Task { await store.reloadAccounts() }
+        }
+      }
       Section("About") {
         LabeledContent("App", value: "Quotari")
-        LabeledContent("Providers", value: "\(store.providers.count) (mock)")
+        LabeledContent("Providers", value: "\(store.providers.count)")
         LabeledContent("Updates") {
           Button("Check for Updates…") { UpdaterController.shared.checkForUpdates() }
             .disabled(!UpdaterController.shared.isAvailable)
@@ -45,10 +53,41 @@ struct PreferencesView: View {
       }
     }
     .formStyle(.grouped)
-    .frame(width: 380, height: 340)
+    .frame(width: 420, height: 430)
     .onAppear { intervalMinutes = store.refreshInterval / 60 }
     .onChange(of: intervalMinutes) { _, newValue in
       store.refreshInterval = newValue * 60
     }
+  }
+
+  private func accountPicker(for descriptor: ProviderDescriptor) -> some View {
+    let provider = descriptor.id
+    var accounts = store.accounts[provider] ?? []
+    if let selected = store.selectedAccounts[provider],
+       !accounts.contains(where: { $0.id == selected.id })
+    {
+      accounts.append(selected)
+    }
+    let selection = Binding<String>(
+      get: { store.selectedAccounts[provider]?.id ?? "" },
+      set: { store.selectAccount(id: $0.isEmpty ? nil : $0, for: provider) }
+    )
+
+    return Picker(descriptor.metadata.displayName, selection: selection) {
+      Text("Automatic")
+        .tag("")
+      ForEach(accounts) { account in
+        Text(accountLabel(account))
+          .tag(account.id)
+      }
+    }
+    .disabled(accounts.isEmpty)
+  }
+
+  private func accountLabel(_ account: ProviderAccount) -> String {
+    guard let detail = account.detail, !detail.isEmpty else {
+      return account.displayName
+    }
+    return "\(account.displayName) (\(detail))"
   }
 }

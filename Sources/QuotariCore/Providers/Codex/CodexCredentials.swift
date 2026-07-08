@@ -50,6 +50,11 @@ public enum CodexCredentialsStore {
     return try parse(data)
   }
 
+  public static func load(source: ProviderCredentialSource) throws -> CodexCredentials {
+    guard case let .codexAuthFile(path) = source else { throw CodexCredentialsError.notFound }
+    return try load(url: URL(fileURLWithPath: path))
+  }
+
   static func parse(_ data: Data) throws -> CodexCredentials {
     guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let tokens = root["tokens"] as? [String: Any],

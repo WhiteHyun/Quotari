@@ -8,11 +8,18 @@ public struct ProviderFetchContext: Sendable {
   public let provider: UsageProvider
   public let now: Date
   public let credential: String?
+  public let account: ProviderAccount?
 
-  public init(provider: UsageProvider, now: Date, credential: String? = nil) {
+  public init(
+    provider: UsageProvider,
+    now: Date,
+    credential: String? = nil,
+    account: ProviderAccount? = nil
+  ) {
     self.provider = provider
     self.now = now
     self.credential = credential
+    self.account = account
   }
 }
 
@@ -35,12 +42,15 @@ public struct ProviderFetchResult: Sendable {
 public enum ProviderFetchError: LocalizedError, Sendable {
   case noStrategyAvailable(UsageProvider)
   case missingCredential(UsageProvider)
+  case selectedCredentialUnavailable(UsageProvider)
   case emptyUsage(UsageProvider)
 
   public var errorDescription: String? {
     switch self {
     case let .noStrategyAvailable(p): "No available fetch strategy for \(p.rawValue)."
     case let .missingCredential(p): "Missing credential for \(p.rawValue)."
+    case let .selectedCredentialUnavailable(p):
+      "The selected \(p.rawValue) credential is missing or invalid."
     case let .emptyUsage(p): "No usage windows returned for \(p.rawValue)."
     }
   }

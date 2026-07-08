@@ -128,6 +128,73 @@ struct LocalUsageCostEstimatorTests {
     #expect(cached == summary)
   }
 
+  @Test func selectedCodexAccountScopesLogsAndCacheToCredentialSource() async throws {
+    let env = try LocalCostTestEnvironment()
+    defer { env.cleanup() }
+
+    let defaultHome = env.root.appendingPathComponent(".codex", isDirectory: true)
+    let customHome = env.root.appendingPathComponent("custom-codex", isDirectory: true)
+    let defaultSessions = defaultHome.appendingPathComponent("sessions", isDirectory: true)
+    let customSessions = customHome.appendingPathComponent("sessions", isDirectory: true)
+    let cache = env.root.appendingPathComponent("cost-cache", isDirectory: true)
+    try env.createDirectory(defaultSessions)
+    try env.createDirectory(customSessions)
+    try env.writeJSONL(
+      defaultSessions.appendingPathComponent("usage.jsonl"),
+      [Self.codexTotalLine(timestamp: "2026-07-08T09:00:00Z", input: 100, cached: 0, output: 0)]
+    )
+    try env.writeJSONL(
+      customSessions.appendingPathComponent("usage.jsonl"),
+      [Self.codexTotalLine(timestamp: "2026-07-08T09:00:00Z", input: 1000, cached: 0, output: 0)]
+    )
+    let defaultAccount = ProviderAccount(
+      provider: .codex,
+      displayName: "Default",
+      detail: "Default",
+      credentialSource: .codexAuthFile(path: defaultHome.appendingPathComponent("auth.json").path)
+    )
+    let customAccount = ProviderAccount(
+      provider: .codex,
+      displayName: "Custom",
+      detail: "CODEX_HOME",
+      credentialSource: .codexAuthFile(path: customHome.appendingPathComponent("auth.json").path)
+    )
+    let estimator = LocalUsageCostEstimator(
+      environment: ["CODEX_HOME": customHome.path],
+      homeDirectory: env.root,
+      cacheDirectory: cache
+    )
+
+    let defaultSummary = try #require(await estimator.costSummary(
+      provider: .codex,
+      account: defaultAccount,
+      now: env.now,
+      historyDays: 30
+    ))
+    let customSummary = try #require(await estimator.costSummary(
+      provider: .codex,
+      account: customAccount,
+      now: env.now,
+      historyDays: 30
+    ))
+
+    #expect(defaultSummary.monthTokens == 100)
+    #expect(customSummary.monthTokens == 1000)
+    #expect(defaultSummary.sourceDescription == "Estimated from selected account's local Codex logs")
+    #expect(estimator.cachedCostSummary(
+      provider: .codex,
+      account: defaultAccount,
+      now: env.now,
+      historyDays: 30
+    )?.monthTokens == 100)
+    #expect(estimator.cachedCostSummary(
+      provider: .codex,
+      account: customAccount,
+      now: env.now,
+      historyDays: 30
+    )?.monthTokens == 1000)
+  }
+
   @Test func codexUnknownModelDoesNotExposeProviderNameAsTopModel() async throws {
     let env = try LocalCostTestEnvironment()
     defer { env.cleanup() }

@@ -5,7 +5,8 @@ enum LocalCostSummaryBuilder {
     provider: UsageProvider,
     records: [LocalTokenRecord],
     range: DayRange,
-    pricing: LocalModelPricing
+    pricing: LocalModelPricing,
+    sourceDescription: String? = nil
   ) -> CostSummary? {
     guard !records.isEmpty else { return nil }
 
@@ -47,7 +48,7 @@ enum LocalCostSummaryBuilder {
       monthTokens: monthTokens,
       latestTokens: daily.last(where: { $0.tokens > 0 })?.tokens ?? 0,
       topModel: topModel,
-      sourceDescription: sourceDescription(for: provider),
+      sourceDescription: sourceDescription ?? Self.sourceDescription(for: provider),
       daily: daily
     )
   }
