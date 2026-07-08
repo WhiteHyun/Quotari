@@ -16,7 +16,8 @@ public struct DailyCost: Codable, Equatable, Sendable, Identifiable {
   }
 }
 
-/// Estimated cost/token usage for a provider, derived from local logs.
+/// Cost/token usage for a provider, either estimated locally or reported by a
+/// live provider endpoint.
 public struct CostSummary: Codable, Equatable, Sendable {
   public var currencyCode: String
   public var todaySpend: Double
@@ -24,6 +25,9 @@ public struct CostSummary: Codable, Equatable, Sendable {
   public var monthTokens: Int
   public var latestTokens: Int
   public var topModel: String?
+  public var todaySpendLabel: String
+  public var monthSpendLabel: String
+  public var sourceDescription: String
   /// Chronological, one entry per day (oldest first).
   public var daily: [DailyCost]
 
@@ -34,6 +38,9 @@ public struct CostSummary: Codable, Equatable, Sendable {
     monthTokens: Int,
     latestTokens: Int,
     topModel: String? = nil,
+    todaySpendLabel: String = "Today",
+    monthSpendLabel: String = "30d cost",
+    sourceDescription: String = "Estimated from local logs",
     daily: [DailyCost] = []
   ) {
     self.currencyCode = currencyCode
@@ -42,10 +49,17 @@ public struct CostSummary: Codable, Equatable, Sendable {
     self.monthTokens = monthTokens
     self.latestTokens = latestTokens
     self.topModel = topModel
+    self.todaySpendLabel = todaySpendLabel
+    self.monthSpendLabel = monthSpendLabel
+    self.sourceDescription = sourceDescription
     self.daily = daily
   }
 
   public var peakSpend: Double {
     daily.map(\.spend).max() ?? 0
+  }
+
+  public var hasTokenMetrics: Bool {
+    monthTokens > 0 || latestTokens > 0 || daily.contains { $0.tokens > 0 }
   }
 }
