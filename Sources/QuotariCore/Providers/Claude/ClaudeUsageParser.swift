@@ -56,12 +56,7 @@ public enum ClaudeUsageParser {
             seenModels.insert(name).inserted
       else { return nil }
 
-      var resetsAt: Date?
-      if let iso = string(entry["resets_at"]) {
-        resetsAt = ISO8601DateFormatter().date(from: iso)
-      } else if let epoch = number(entry["resets_at"]) {
-        resetsAt = Date(timeIntervalSince1970: epoch)
-      }
+      let resetsAt = resetDate(from: entry)
       let title = "\(name) only"
       return RawUsageWindow(
         key: title,
@@ -79,21 +74,31 @@ public enum ClaudeUsageParser {
     let remaining = number(fields["remaining_percent"])
     guard used != nil || remaining != nil else { return nil }
 
-    var resetsAt: Date?
-    if let epoch = number(fields["resets_at"]) {
-      resetsAt = Date(timeIntervalSince1970: epoch)
-    } else if let iso = string(fields["resets_at"]) {
-      resetsAt = ISO8601DateFormatter().date(from: iso)
-    }
-
     return RawUsageWindow(
       key: key,
       usedPercent: used,
       remainingPercent: remaining,
-      resetsAt: resetsAt,
+      resetsAt: resetDate(from: fields, now: now),
       duration: number(fields["window_seconds"]),
       label: string(fields["label"])
     )
+  }
+
+  private static func resetDate(from fields: [String: Any], now: Date? = nil) -> Date? {
+    if let now,
+       let seconds = number(fields["resets_in_seconds"])
+       ?? number(fields["reset_in_seconds"])
+       ?? number(fields["reset_after_seconds"])
+    {
+      return now.addingTimeInterval(seconds)
+    }
+
+    for key in ["resets_at", "reset_at", "resetsAt", "resetAt", "reset_time", "resetTime"] {
+      if let date = LenientDateParser.parse(fields[key]) {
+        return date
+      }
+    }
+    return nil
   }
 
   private static func number(_ value: Any?) -> Double? {
