@@ -1,19 +1,23 @@
 import Foundation
 
-/// Reference `ProviderFetchStrategy` returning deterministic fake usage with no
-/// network. Replace with real API/OAuth/web/CLI strategies.
-struct MockFetchStrategy: ProviderFetchStrategy {
-  let id: String
-  let kind: ProviderFetchKind = .mock
+/// A `ProviderFetchStrategy` returning deterministic fake usage with no
+/// network — used as demo/fallback data when no real credentials are present.
+public struct MockFetchStrategy: ProviderFetchStrategy {
+  public let id: String
+  public let kind: ProviderFetchKind = .mock
   let make: @Sendable (UsageProvider, Date) -> UsageSnapshot
 
-  func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
+  public func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
     try? await Task.sleep(for: .milliseconds(250)) // simulate latency
     return ProviderFetchResult(usage: make(context.provider, context.now), sourceLabel: "Mock")
   }
 }
 
 public enum MockProviders {
+  public static let codexStrategy = MockFetchStrategy(id: "codex.mock", make: codex)
+  public static let claudeStrategy = MockFetchStrategy(id: "claude.mock", make: claude)
+  public static let glmStrategy = MockFetchStrategy(id: "glm.mock", make: glm)
+
   public static let descriptors: [ProviderDescriptor] = [
     ProviderDescriptor(
       id: .codex,
@@ -22,7 +26,7 @@ public enum MockProviders {
         accent: .init(0.063, 0.639, 0.498),
         supportsWeekly: true
       ), // OpenAI #10A37F
-      pipeline: .init { _ in [MockFetchStrategy(id: "codex.mock", make: codex)] }
+      pipeline: .init { _ in [codexStrategy] }
     ),
     ProviderDescriptor(
       id: .claude,
@@ -31,12 +35,12 @@ public enum MockProviders {
         accent: .init(0.851, 0.467, 0.341),
         supportsWeekly: true
       ), // Anthropic #D97757
-      pipeline: .init { _ in [MockFetchStrategy(id: "claude.mock", make: claude)] }
+      pipeline: .init { _ in [claudeStrategy] }
     ),
     ProviderDescriptor(
       id: .glm,
       metadata: .init(displayName: "GLM", accent: .init(0.25, 0.55, 0.90), supportsWeekly: false),
-      pipeline: .init { _ in [MockFetchStrategy(id: "glm.mock", make: glm)] }
+      pipeline: .init { _ in [glmStrategy] }
     ),
   ]
 
@@ -101,7 +105,7 @@ public enum MockProviders {
   private static let claude: @Sendable (UsageProvider, Date) -> UsageSnapshot = { provider, now in
     UsageSnapshot(
       provider: provider,
-      plan: "Team",
+      plan: "Max 20x",
       account: "team@example.com",
       primary: window(.session, used: 32, resetInMinutes: 223, durationMinutes: 300, now: now),
       secondary: window(.weekly, used: 76, resetInMinutes: 853, durationMinutes: 10080, now: now),

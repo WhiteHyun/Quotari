@@ -11,9 +11,10 @@ struct RegistryTests {
   }
 
   @Test func mockPipelineReturnsUsage() async throws {
-    let descriptor = ProviderRegistry.descriptor(for: .codex)
-    let result = await descriptor.fetch(now: Date())
-    let value = try result.get()
+    // Exercise the mock strategy directly so the result doesn't depend on
+    // whether real credentials happen to exist in the test environment.
+    let value = try await MockProviders.codexStrategy
+      .fetch(ProviderFetchContext(provider: .codex, now: Date()))
     #expect(value.usage.primary?.usedPercent == 73)
     #expect(value.usage.plan == "Pro 5x")
     #expect(!value.usage.extraWindows.isEmpty)
@@ -77,8 +78,9 @@ struct FormatterTests {
 
 struct CostTests {
   @Test func mockCostSummaryIsPopulated() async throws {
-    let result = await ProviderRegistry.descriptor(for: .codex).fetch(now: Date())
-    let cost = try #require(try result.get().usage.cost)
+    let result = try await MockProviders.codexStrategy
+      .fetch(ProviderFetchContext(provider: .codex, now: Date()))
+    let cost = try #require(result.usage.cost)
     #expect(cost.daily.count == 30)
     #expect(cost.monthSpend > 0)
     #expect(cost.peakSpend >= cost.todaySpend)
@@ -86,7 +88,8 @@ struct CostTests {
   }
 
   @Test func freePlanHasNoCost() async throws {
-    let result = await ProviderRegistry.descriptor(for: .glm).fetch(now: Date())
-    #expect(try result.get().usage.cost == nil)
+    let result = try await MockProviders.glmStrategy
+      .fetch(ProviderFetchContext(provider: .glm, now: Date()))
+    #expect(result.usage.cost == nil)
   }
 }

@@ -26,12 +26,15 @@ final class UsageStore {
 
   private static let iconStyleKey = "menuBarIconStyle"
 
-  let providers: [ProviderDescriptor] = ProviderRegistry.all
+  let providers: [ProviderDescriptor]
 
   private var timerTask: Task<Void, Never>?
 
-  init() {
+  /// Tests inject mock descriptors so results don't depend on credentials
+  /// present on the machine running them.
+  init(providers: [ProviderDescriptor] = ProviderRegistry.all) {
     assert(ProviderRegistry.isComplete, "Every UsageProvider case needs a descriptor")
+    self.providers = providers
     startTimer()
   }
 
