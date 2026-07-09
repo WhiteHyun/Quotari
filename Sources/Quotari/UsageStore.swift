@@ -129,7 +129,7 @@ final class UsageStore {
   }
 
   private nonisolated static func shouldCarryForwardCost(_ cost: CostSummary) -> Bool {
-    !shouldUseLocalCost(existing: cost) || cost.sourceDescription.localizedCaseInsensitiveContains("local")
+    cost.sourceDescription.localizedCaseInsensitiveContains("local")
   }
 
   private nonisolated static func shouldHideProviderCost(

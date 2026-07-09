@@ -122,6 +122,48 @@ struct UsageStoreLocalCostReviewTests {
     #expect(estimator.invalidationCount >= 1)
   }
 
+  @Test func freshLocalCostReplacesPreviousProviderChartAfterSparseRefresh() async throws {
+    let providerCost = Self.costSummary(
+      todaySpend: 3.70,
+      monthSpend: 5.20,
+      monthTokens: 2000,
+      latestTokens: 500,
+      sourceDescription: "Reported by provider",
+      daily: Self.dailySeries(tokens: 2000)
+    )
+    let sparseCost = CostSummary(
+      todaySpend: 0,
+      monthSpend: 0,
+      monthTokens: 0,
+      latestTokens: 0,
+      sourceDescription: "Reported by provider",
+      daily: [DailyCost(date: Self.day, spend: 0, tokens: 0)]
+    )
+    let localCost = Self.costSummary(
+      todaySpend: 1.25,
+      monthSpend: 2.50,
+      monthTokens: 1000,
+      latestTokens: 200,
+      daily: Self.dailySeries(tokens: 1000)
+    )
+    let strategy = ReviewSequenceUsageStrategy(costs: [providerCost, sparseCost])
+    let descriptor = ProviderDescriptor(
+      id: .codex,
+      metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
+      pipeline: ProviderFetchPipeline { _ in [strategy] }
+    )
+    let store = UsageStore(
+      providers: [descriptor],
+      costEstimator: ReviewStubCostEstimator(cost: localCost)
+    )
+
+    _ = try await Self.waitForCost(in: store, matching: providerCost)
+    await store.refresh()
+    let updated = try await Self.waitForCost(in: store, matching: localCost)
+
+    #expect(updated.cost == localCost)
+  }
+
   private static let day = Date(timeIntervalSince1970: 1_783_478_400)
 
   private static func descriptor(cost: CostSummary, kind: ProviderFetchKind = .api) -> ProviderDescriptor {
@@ -242,6 +284,30 @@ private struct ReviewUsageStrategy: ProviderFetchStrategy {
 
   func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
     ProviderFetchResult(
+      usage: UsageSnapshot(
+        provider: context.provider,
+        plan: "Test",
+        primary: RateWindow(kind: .session, usedPercent: 10),
+        cost: cost,
+        updatedAt: context.now
+      ),
+      sourceLabel: "Stub"
+    )
+  }
+}
+
+private actor ReviewSequenceUsageStrategy: ProviderFetchStrategy {
+  nonisolated let id = "review-sequence-usage"
+  nonisolated let kind = ProviderFetchKind.api
+  private var costs: [CostSummary]
+
+  init(costs: [CostSummary]) {
+    self.costs = costs
+  }
+
+  func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
+    let cost = costs.count > 1 ? costs.removeFirst() : costs[0]
+    return ProviderFetchResult(
       usage: UsageSnapshot(
         provider: context.provider,
         plan: "Test",

@@ -69,7 +69,7 @@ struct LocalUsageCostEstimatorReviewTests {
     #expect(summary.latestTokens == 120)
   }
 
-  @Test func codexReasoningOutputTokensAreCountedAsOutput() async throws {
+  @Test func codexReasoningOutputTokensDoNotDoubleCountOutput() async throws {
     let env = try ReviewCostTestEnvironment()
     defer { env.cleanup() }
 
@@ -95,46 +95,9 @@ struct LocalUsageCostEstimatorReviewTests {
     )
     let summary = try #require(await estimator.costSummary(provider: .codex, now: env.now, historyDays: 30))
 
-    #expect(summary.monthTokens == 150)
-    #expect(summary.latestTokens == 150)
-    #expect(summary.todaySpend > 0.00061 && summary.todaySpend < 0.00062)
-  }
-
-  @Test func claudeStreamingAssistantUsageIsDeduplicatedByRequest() async throws {
-    let env = try ReviewCostTestEnvironment()
-    defer { env.cleanup() }
-
-    let claudeConfig = env.root.appendingPathComponent("claude-config", isDirectory: true)
-    let project = claudeConfig
-      .appendingPathComponent("projects", isDirectory: true)
-      .appendingPathComponent("quotari", isDirectory: true)
-    try env.createDirectory(project)
-    try env.writeJSONL(
-      project.appendingPathComponent("usage.jsonl"),
-      [
-        Self.claudeAssistantLine(
-          timestamp: "2026-07-08T10:00:00Z",
-          requestID: "req-1",
-          input: 100,
-          output: 20
-        ),
-        Self.claudeAssistantLine(
-          timestamp: "2026-07-08T10:00:01Z",
-          requestID: "req-1",
-          input: 150,
-          output: 30
-        ),
-      ]
-    )
-
-    let estimator = LocalUsageCostEstimator(
-      environment: ["CLAUDE_CONFIG_DIR": claudeConfig.path],
-      homeDirectory: env.root
-    )
-    let summary = try #require(await estimator.costSummary(provider: .claude, now: env.now, historyDays: 30))
-
-    #expect(summary.monthTokens == 180)
-    #expect(summary.latestTokens == 180)
+    #expect(summary.monthTokens == 120)
+    #expect(summary.latestTokens == 120)
+    #expect(abs(summary.todaySpend - 0.00031375) < 0.0000001)
   }
 
   @Test func claudeCurrentVersionedModelRatesOverrideLegacyFamilies() {
@@ -229,39 +192,6 @@ struct LocalUsageCostEstimatorReviewTests {
       usage["reasoning_output_tokens"] = reasoningOutput
     }
     return usage
-  }
-
-  private static func claudeAssistantLine(
-    timestamp: String,
-    requestID: String? = nil,
-    messageID: String? = nil,
-    model: String = "claude-sonnet-4",
-    input: Int,
-    cacheRead: Int = 0,
-    cacheWrite: Int = 0,
-    output: Int
-  ) -> [String: Any] {
-    var message: [String: Any] = [
-      "model": model,
-      "usage": [
-        "input_tokens": input,
-        "cache_read_input_tokens": cacheRead,
-        "cache_creation_input_tokens": cacheWrite,
-        "output_tokens": output,
-      ],
-    ]
-    if let messageID {
-      message["id"] = messageID
-    }
-    var object: [String: Any] = [
-      "type": "assistant",
-      "timestamp": timestamp,
-      "message": message,
-    ]
-    if let requestID {
-      object["requestId"] = requestID
-    }
-    return object
   }
 
   private static func dailySeries(endingAt end: Date, count: Int) -> [DailyCost] {

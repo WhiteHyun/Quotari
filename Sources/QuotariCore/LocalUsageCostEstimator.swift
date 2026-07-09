@@ -232,13 +232,7 @@ struct LocalUsageCostScanner {
             let usage = message["usage"] as? [String: Any]
       else { continue }
 
-      let tokens = TokenTotals(
-        input: int(usage["input_tokens"]),
-        cacheRead: int(usage["cache_read_input_tokens"]),
-        cacheWrite: int(usage["cache_creation_input_tokens"]),
-        output: int(usage["output_tokens"])
-      )
-      guard tokens.total > 0 else { continue }
+      guard let tokens = claudeTokenTotals(from: usage) else { continue }
       let record = PendingClaudeTokenRecord(
         lineNumber: lineNumber,
         record: LocalTokenRecord(day: day, model: model, tokens: tokens)
@@ -273,12 +267,22 @@ struct LocalUsageCostScanner {
   private func tokenTotals(from value: Any?) -> TokenTotals? {
     guard let fields = value as? [String: Any] else { return nil }
     let cacheRead = int(fields["cached_input_tokens"] ?? fields["cache_read_input_tokens"])
-    let output = int(fields["output_tokens"]) + int(fields["reasoning_output_tokens"])
     let totals = TokenTotals(
       input: max(0, int(fields["input_tokens"]) - cacheRead),
       cacheRead: cacheRead,
       cacheWrite: int(fields["cache_creation_input_tokens"]),
-      output: output
+      output: int(fields["output_tokens"])
+    )
+    return totals.total > 0 ? totals : nil
+  }
+
+  private func claudeTokenTotals(from usage: [String: Any]) -> TokenTotals? {
+    // Claude assistant JSONL rows currently expose placeholder input/output counts.
+    let totals = TokenTotals(
+      input: 0,
+      cacheRead: int(usage["cache_read_input_tokens"]),
+      cacheWrite: int(usage["cache_creation_input_tokens"]),
+      output: 0
     )
     return totals.total > 0 ? totals : nil
   }

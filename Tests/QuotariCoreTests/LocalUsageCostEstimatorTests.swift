@@ -187,14 +187,14 @@ struct LocalUsageCostEstimatorTests {
     let summary = try #require(await estimator.costSummary(provider: .claude, now: env.now, historyDays: 30))
 
     #expect(summary.daily.count == 30)
-    #expect(summary.todaySpend > 0.55 && summary.todaySpend < 0.56)
-    #expect(summary.monthTokens == 185_000)
-    #expect(summary.latestTokens == 185_000)
+    #expect(abs(summary.todaySpend - 0.10875) < 0.0001)
+    #expect(summary.monthTokens == 75000)
+    #expect(summary.latestTokens == 75000)
     #expect(summary.topModel == "claude-sonnet-4")
-    #expect(summary.sourceDescription == "Estimated from local Claude logs")
+    #expect(summary.sourceDescription == "Estimated from local Claude cache logs")
   }
 
-  @Test func claudeDesktopLogsProduceCostSummary() async throws {
+  @Test func claudeDesktopPlaceholderUsageWithoutCacheIsIgnored() async throws {
     let env = try LocalCostTestEnvironment()
     defer { env.cleanup() }
 
@@ -220,11 +220,7 @@ struct LocalUsageCostEstimatorTests {
     )
 
     let estimator = LocalUsageCostEstimator(environment: [:], homeDirectory: env.root)
-    let summary = try #require(await estimator.costSummary(provider: .claude, now: env.now, historyDays: 30))
-
-    #expect(summary.monthTokens == 1250)
-    #expect(summary.latestTokens == 1250)
-    #expect(summary.topModel == "claude-sonnet-4")
+    #expect(await estimator.costSummary(provider: .claude, now: env.now, historyDays: 30) == nil)
   }
 
   private static func codexTotalLine(timestamp: String, input: Int, cached: Int, output: Int) -> [String: Any] {

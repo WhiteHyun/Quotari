@@ -23,6 +23,8 @@ struct LocalUsageCostEstimatorSymlinkTests {
         Self.claudeAssistantLine(
           timestamp: "2026-07-08T10:00:00Z",
           input: 100,
+          cacheRead: 100,
+          cacheWrite: 20,
           output: 20
         ),
       ]
@@ -38,7 +40,13 @@ struct LocalUsageCostEstimatorSymlinkTests {
     #expect(summary.latestTokens == 120)
   }
 
-  private static func claudeAssistantLine(timestamp: String, input: Int, output: Int) -> [String: Any] {
+  private static func claudeAssistantLine(
+    timestamp: String,
+    input: Int,
+    cacheRead: Int,
+    cacheWrite: Int,
+    output: Int
+  ) -> [String: Any] {
     [
       "type": "assistant",
       "timestamp": timestamp,
@@ -46,6 +54,8 @@ struct LocalUsageCostEstimatorSymlinkTests {
         "model": "claude-sonnet-4",
         "usage": [
           "input_tokens": input,
+          "cache_read_input_tokens": cacheRead,
+          "cache_creation_input_tokens": cacheWrite,
           "output_tokens": output,
         ],
       ],

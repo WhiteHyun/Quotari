@@ -57,7 +57,7 @@ enum LocalCostSummaryBuilder {
     case .codex:
       "Estimated from local Codex logs"
     case .claude:
-      "Estimated from local Claude logs"
+      "Estimated from local Claude cache logs"
     case .glm:
       "Estimated from local logs"
     }
