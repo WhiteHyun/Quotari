@@ -29,17 +29,15 @@ struct UsageStoreCostThrottleTests {
     let estimator = CountingCachedThrottleCostEstimator(cachedCost: cachedCost, freshCost: freshCost)
     let store = UsageStore(
       providers: [Self.descriptor(cost: reportedCost)],
-      costEstimator: estimator,
-      startsAutomatically: false
+      costEstimator: estimator
     )
 
-    await store.refresh()
     _ = try await Self.waitForCost(in: store, matching: freshCost)
     await store.refresh()
     try await Task.sleep(for: .milliseconds(50))
 
     #expect(estimator.callCount == 1)
-    #expect(store.snapshots[.codex]?.cost == freshCost)
+    #expect(store.snapshots[UsageProvider.codex]?.cost == freshCost)
   }
 
   private static let day = Date(timeIntervalSince1970: 1_783_478_400)
