@@ -3,12 +3,15 @@ import Foundation
 public protocol UsageCostEstimating: Sendable {
   func cachedCostSummary(provider: UsageProvider, now: Date, historyDays: Int) -> CostSummary?
   func costSummary(provider: UsageProvider, now: Date, historyDays: Int) async -> CostSummary?
+  func invalidateCachedCostSummary(provider: UsageProvider, historyDays: Int)
 }
 
 public extension UsageCostEstimating {
   func cachedCostSummary(provider: UsageProvider, now: Date, historyDays: Int) -> CostSummary? {
     nil
   }
+
+  func invalidateCachedCostSummary(provider: UsageProvider, historyDays: Int) {}
 }
 
 public struct LocalUsageCostEstimator: UsageCostEstimating {
@@ -47,6 +50,11 @@ public struct LocalUsageCostEstimator: UsageCostEstimating {
       }
       return summary
     }.value
+  }
+
+  public func invalidateCachedCostSummary(provider: UsageProvider, historyDays: Int = 30) {
+    LocalUsageCostCache(cacheDirectory: cacheDirectory)
+      .remove(provider: provider, historyDays: historyDays)
   }
 }
 

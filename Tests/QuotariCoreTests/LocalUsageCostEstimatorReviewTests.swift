@@ -142,9 +142,22 @@ struct LocalUsageCostEstimatorReviewTests {
     let tokens = TokenTotals(input: 1_000_000, cacheRead: 0, cacheWrite: 0, output: 1_000_000)
 
     #expect(abs(pricing.costUSD(provider: .claude, model: "claude-opus-4-5", tokens: tokens) - 30) < 0.0001)
+    #expect(abs(pricing.costUSD(provider: .claude, model: "claude-opus-4-5-20251101", tokens: tokens) - 30) < 0.0001)
     #expect(abs(pricing.costUSD(provider: .claude, model: "claude_opus_4_8", tokens: tokens) - 30) < 0.0001)
     #expect(abs(pricing.costUSD(provider: .claude, model: "claude-haiku-4-5", tokens: tokens) - 6) < 0.0001)
     #expect(abs(pricing.costUSD(provider: .claude, model: "claude-opus-4-1", tokens: tokens) - 90) < 0.0001)
+    #expect(abs(pricing.costUSD(provider: .claude, model: "claude-opus-4-20250514", tokens: tokens) - 90) < 0.0001)
+    #expect(abs(pricing.costUSD(provider: .claude, model: "claude-fable-5", tokens: tokens) - 60) < 0.0001)
+  }
+
+  @Test func codexCurrentModelRatesOverrideLegacyFallback() {
+    let pricing = LocalModelPricing()
+    let tokens = TokenTotals(input: 1_000_000, cacheRead: 1_000_000, cacheWrite: 0, output: 1_000_000)
+
+    #expect(abs(pricing.costUSD(provider: .codex, model: "gpt-5.5", tokens: tokens) - 35.50) < 0.0001)
+    #expect(abs(pricing.costUSD(provider: .codex, model: "gpt-5.4", tokens: tokens) - 17.75) < 0.0001)
+    #expect(abs(pricing.costUSD(provider: .codex, model: "gpt-5.4-mini", tokens: tokens) - 5.325) < 0.0001)
+    #expect(abs(pricing.costUSD(provider: .codex, model: "gpt-5.4-nano", tokens: tokens) - 1.47) < 0.0001)
   }
 
   @Test func cachedCostSummaryRejectsPreviousDayWindows() throws {

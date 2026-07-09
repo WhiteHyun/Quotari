@@ -66,82 +66,115 @@ enum LocalCostSummaryBuilder {
 
 struct LocalModelPricing {
   func costUSD(provider: UsageProvider, model: String?, tokens: TokenTotals) -> Double {
-    let rates = rates(provider: provider, model: model)
+    let rates = ModelPricingCatalog.rates(provider: provider, model: model)
     let input = Double(tokens.input) * rates.inputPerMillion / 1_000_000
     let cacheRead = Double(tokens.cacheRead) * rates.cacheReadPerMillion / 1_000_000
     let cacheWrite = Double(tokens.cacheWrite) * rates.cacheWritePerMillion / 1_000_000
     let output = Double(tokens.output) * rates.outputPerMillion / 1_000_000
     return input + cacheRead + cacheWrite + output
   }
+}
 
-  private func rates(provider: UsageProvider, model: String?) -> Rates {
+private enum ModelPricingCatalog {
+  private static let codexRules: [ModelPricingRule] = [
+    .exact("gpt-5.5", rates: .init(input: 5.00, cacheRead: 0.50, output: 30.00)),
+    .exact("gpt-5.4-mini", rates: .init(input: 0.75, cacheRead: 0.075, output: 4.50)),
+    .exact("gpt-5.4-nano", rates: .init(input: 0.20, cacheRead: 0.02, output: 1.25)),
+    .exact("gpt-5.4", rates: .init(input: 2.50, cacheRead: 0.25, output: 15.00)),
+    .exact("gpt-5.3-codex", rates: .init(input: 1.75, cacheRead: 0.175, output: 14.00)),
+  ]
+
+  private static let claudeRules: [ModelPricingRule] = [
+    .exactOrDated("claude-fable-5", rates: .init(input: 10.00, cacheRead: 1.00, output: 50.00)),
+    .exactOrDated("claude-opus-4-8", rates: .init(input: 5.00, cacheRead: 0.50, output: 25.00)),
+    .exactOrDated("claude-opus-4-7", rates: .init(input: 5.00, cacheRead: 0.50, output: 25.00)),
+    .exactOrDated("claude-opus-4-6", rates: .init(input: 5.00, cacheRead: 0.50, output: 25.00)),
+    .exactOrDated("claude-opus-4-5", rates: .init(input: 5.00, cacheRead: 0.50, output: 25.00)),
+    .exactOrDated("claude-haiku-4-5", rates: .init(input: 1.00, cacheRead: 0.10, output: 5.00)),
+    .exactOrDated("claude-sonnet-5", rates: .init(input: 3.00, cacheRead: 0.30, output: 15.00)),
+  ]
+
+  static func rates(provider: UsageProvider, model: String?) -> ModelRates {
     let normalized = normalizedModelID(model)
     switch provider {
     case .codex:
-      if normalized.contains("mini") { return Rates(input: 0.25, cacheRead: 0.025, output: 2.00) }
-      if normalized.contains("nano") { return Rates(input: 0.05, cacheRead: 0.005, output: 0.40) }
-      return Rates(input: 1.25, cacheRead: 0.125, output: 10.00)
+      return codexRules.first { $0.matches(normalized) }?.rates
+        ?? .init(input: 1.25, cacheRead: 0.125, output: 10.00)
     case .claude:
-      if claudeVersion(in: normalized, family: "opus").isAtLeast(major: 4, minor: 5) {
-        return Rates(input: 5.00, cacheRead: 0.50, output: 25.00)
-      }
-      if claudeVersion(in: normalized, family: "haiku").isAtLeast(major: 4, minor: 5) {
-        return Rates(input: 1.00, cacheRead: 0.10, output: 5.00)
-      }
-      if normalized.contains("opus") { return Rates(input: 15.00, cacheRead: 1.50, output: 75.00) }
-      if normalized.contains("haiku") { return Rates(input: 0.80, cacheRead: 0.08, output: 4.00) }
-      return Rates(input: 3.00, cacheRead: 0.30, output: 15.00)
+      return claudeRules.first { $0.matches(normalized) }?.rates
+        ?? legacyClaudeRates(model: normalized)
     case .glm:
-      return Rates(input: 0, cacheRead: 0, output: 0)
+      return .init(input: 0, cacheRead: 0, output: 0)
     }
   }
 
-  private struct Rates {
-    let inputPerMillion: Double
-    let cacheReadPerMillion: Double
-    let cacheWritePerMillion: Double
-    let outputPerMillion: Double
+  private static func legacyClaudeRates(model: String) -> ModelRates {
+    if model.contains("-opus-") { return .init(input: 15.00, cacheRead: 1.50, output: 75.00) }
+    if model.contains("-haiku-") { return .init(input: 0.80, cacheRead: 0.08, output: 4.00) }
+    return .init(input: 3.00, cacheRead: 0.30, output: 15.00)
+  }
+}
 
-    init(input: Double, cacheRead: Double, cacheWrite: Double? = nil, output: Double) {
-      inputPerMillion = input
-      cacheReadPerMillion = cacheRead
-      cacheWritePerMillion = cacheWrite ?? input * 1.25
-      outputPerMillion = output
+private struct ModelPricingRule {
+  let matcher: ModelMatcher
+  let rates: ModelRates
+
+  static func exact(_ modelID: String, rates: ModelRates) -> ModelPricingRule {
+    ModelPricingRule(matcher: .exact(modelID), rates: rates)
+  }
+
+  static func exactOrDated(_ modelID: String, rates: ModelRates) -> ModelPricingRule {
+    ModelPricingRule(matcher: .exactOrDated(modelID), rates: rates)
+  }
+
+  func matches(_ model: String) -> Bool {
+    matcher.matches(model)
+  }
+}
+
+private enum ModelMatcher {
+  case exact(String)
+  case exactOrDated(String)
+
+  func matches(_ model: String) -> Bool {
+    switch self {
+    case let .exact(modelID):
+      model == modelID
+    case let .exactOrDated(modelID):
+      model == modelID || model.datedSuffix(after: modelID) != nil
     }
+  }
+}
+
+private struct ModelRates {
+  let inputPerMillion: Double
+  let cacheReadPerMillion: Double
+  let cacheWritePerMillion: Double
+  let outputPerMillion: Double
+
+  init(input: Double, cacheRead: Double, cacheWrite: Double? = nil, output: Double) {
+    inputPerMillion = input
+    cacheReadPerMillion = cacheRead
+    cacheWritePerMillion = cacheWrite ?? input * 1.25
+    outputPerMillion = output
   }
 }
 
 private func normalizedModelID(_ model: String?) -> String {
   model?
     .lowercased()
-    .replacingOccurrences(of: "_", with: "-")
-    .replacingOccurrences(of: ".", with: "-") ?? ""
+    .replacingOccurrences(of: "_", with: "-") ?? ""
 }
 
-private func claudeVersion(in model: String, family: String) -> ClaudeModelVersion? {
-  guard let range = model.range(of: "\(family)-") else { return nil }
-  let suffix = model[range.upperBound...]
-  let parts = suffix.split(separator: "-", omittingEmptySubsequences: true)
-  guard parts.count >= 2,
-        let major = Int(parts[0]),
-        let minor = Int(parts[1])
-  else { return nil }
-  return ClaudeModelVersion(major: major, minor: minor)
-}
-
-private struct ClaudeModelVersion {
-  let major: Int
-  let minor: Int
-
-  func isAtLeast(major targetMajor: Int, minor targetMinor: Int) -> Bool {
-    major > targetMajor || (major == targetMajor && minor >= targetMinor)
-  }
-}
-
-private extension ClaudeModelVersion? {
-  func isAtLeast(major: Int, minor: Int) -> Bool {
-    guard let version = self else { return false }
-    return version.isAtLeast(major: major, minor: minor)
+private extension String {
+  func datedSuffix(after modelID: String) -> String? {
+    let prefix = "\(modelID)-"
+    guard hasPrefix(prefix) else { return nil }
+    let suffix = dropFirst(prefix.count)
+    guard suffix.count == 8,
+          suffix.allSatisfy(\.isNumber)
+    else { return nil }
+    return String(suffix)
   }
 }
 

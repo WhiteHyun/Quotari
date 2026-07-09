@@ -153,6 +153,7 @@ final class UsageStore {
   private func finishCostRefresh(_ cost: CostSummary?, provider: UsageProvider) {
     costTasks[provider] = nil
     guard let cost else {
+      costEstimator.invalidateCachedCostSummary(provider: provider, historyDays: 30)
       clearLocalCost(provider: provider)
       return
     }

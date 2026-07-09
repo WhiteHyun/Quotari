@@ -34,6 +34,10 @@ struct LocalUsageCostCache {
     try? data.write(to: cacheURL(provider: provider, historyDays: historyDays), options: [.atomic])
   }
 
+  func remove(provider: UsageProvider, historyDays: Int) {
+    try? fileManager.removeItem(at: cacheURL(provider: provider, historyDays: historyDays))
+  }
+
   private func cacheURL(provider: UsageProvider, historyDays: Int) -> URL {
     cacheDirectory.appendingPathComponent("\(provider.rawValue)-\(historyDays).json", isDirectory: false)
   }

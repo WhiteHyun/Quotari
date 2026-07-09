@@ -60,6 +60,37 @@ struct UsageStoreLocalCostReviewTests {
     #expect(snapshot.cost == nil)
   }
 
+  @Test func emptyLocalCostScanInvalidatesCachedLocalChart() async throws {
+    let cachedCost = Self.costSummary(
+      todaySpend: 1.25,
+      monthSpend: 2.50,
+      monthTokens: 1000,
+      latestTokens: 200,
+      daily: Self.dailySeries(tokens: 1000)
+    )
+    let reportedCost = CostSummary(
+      todaySpend: 0,
+      monthSpend: 0,
+      monthTokens: 0,
+      latestTokens: 0,
+      sourceDescription: "Reported by provider",
+      daily: [DailyCost(date: Self.day, spend: 0, tokens: 0)]
+    )
+    let estimator = ReviewInvalidatingCostEstimator(cachedCost: cachedCost, delay: .milliseconds(100))
+    let store = UsageStore(
+      providers: [Self.descriptor(cost: reportedCost)],
+      costEstimator: estimator
+    )
+
+    _ = try await Self.waitForCost(in: store, matching: cachedCost)
+    let cleared = try await Self.waitForCostCleared(in: store)
+    await store.refresh()
+
+    #expect(cleared.cost == nil)
+    #expect(store.snapshots[.codex]?.cost == nil)
+    #expect(estimator.invalidationCount >= 1)
+  }
+
   private static let day = Date(timeIntervalSince1970: 1_783_478_400)
 
   private static func descriptor(cost: CostSummary, kind: ProviderFetchKind = .api) -> ProviderDescriptor {
@@ -145,6 +176,31 @@ private actor ReviewSequenceCostEstimator: UsageCostEstimating {
   func costSummary(provider: UsageProvider, now: Date, historyDays: Int) async -> CostSummary? {
     guard !costs.isEmpty else { return nil }
     return costs.removeFirst()
+  }
+}
+
+private final class ReviewInvalidatingCostEstimator: @unchecked Sendable, UsageCostEstimating {
+  private var cachedCost: CostSummary?
+  private let delay: Duration
+  private(set) var invalidationCount = 0
+
+  init(cachedCost: CostSummary, delay: Duration) {
+    self.cachedCost = cachedCost
+    self.delay = delay
+  }
+
+  func cachedCostSummary(provider: UsageProvider, now: Date, historyDays: Int) -> CostSummary? {
+    cachedCost
+  }
+
+  func costSummary(provider: UsageProvider, now: Date, historyDays: Int) async -> CostSummary? {
+    try? await Task.sleep(for: delay)
+    return nil
+  }
+
+  func invalidateCachedCostSummary(provider: UsageProvider, historyDays: Int) {
+    cachedCost = nil
+    invalidationCount += 1
   }
 }
 
