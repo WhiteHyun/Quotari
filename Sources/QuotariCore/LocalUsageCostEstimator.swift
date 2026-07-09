@@ -207,6 +207,11 @@ struct LocalUsageCostScanner {
     if let model = string(payload["model"]) {
       return model
     }
+    if let info = payload["info"] as? [String: Any],
+       let model = string(info["model"])
+    {
+      return model
+    }
     for key in ["item", "message", "response"] {
       if let nested = payload[key] as? [String: Any],
          let model = string(nested["model"])

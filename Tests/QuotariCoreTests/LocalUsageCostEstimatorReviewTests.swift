@@ -100,6 +100,32 @@ struct LocalUsageCostEstimatorReviewTests {
     #expect(abs(summary.todaySpend - 0.00031375) < 0.0000001)
   }
 
+  @Test func codexInfoModelCarriesIntoLaterTokenCounts() async throws {
+    let env = try ReviewCostTestEnvironment()
+    defer { env.cleanup() }
+
+    let codexHome = env.root.appendingPathComponent("codex", isDirectory: true)
+    let sessions = codexHome.appendingPathComponent("sessions", isDirectory: true)
+    try env.createDirectory(sessions)
+    try env.writeJSONL(
+      sessions.appendingPathComponent("usage.jsonl"),
+      [
+        Self.codexTotalLine(timestamp: "2026-06-01T09:00:00Z", input: 100, cached: 10, output: 20, model: "gpt-5.5"),
+        Self.codexTotalLine(timestamp: "2026-07-08T09:00:00Z", input: 150, cached: 15, output: 35, model: nil),
+      ]
+    )
+
+    let estimator = LocalUsageCostEstimator(
+      environment: ["CODEX_HOME": codexHome.path],
+      homeDirectory: env.root
+    )
+    let summary = try #require(await estimator.costSummary(provider: .codex, now: env.now, historyDays: 30))
+
+    #expect(summary.monthTokens == 65)
+    #expect(summary.latestTokens == 65)
+    #expect(summary.topModel == "gpt-5.5")
+  }
+
   @Test func claudeCurrentVersionedModelRatesOverrideLegacyFamilies() {
     let pricing = LocalModelPricing()
     let tokens = TokenTotals(input: 1_000_000, cacheRead: 0, cacheWrite: 0, output: 1_000_000)
@@ -150,13 +176,13 @@ struct LocalUsageCostEstimatorReviewTests {
     cached: Int,
     output: Int,
     reasoningOutput: Int = 0,
+    model: String? = "gpt-5",
     lastInput: Int? = nil,
     lastCached: Int? = nil,
     lastOutput: Int? = nil,
     lastReasoningOutput: Int = 0
   ) -> [String: Any] {
     var info: [String: Any] = [
-      "model": "gpt-5",
       "total_token_usage": tokenUsage(
         input: input,
         cached: cached,
@@ -164,6 +190,9 @@ struct LocalUsageCostEstimatorReviewTests {
         reasoningOutput: reasoningOutput
       ),
     ]
+    if let model {
+      info["model"] = model
+    }
     if let lastInput, let lastCached, let lastOutput {
       info["last_token_usage"] = tokenUsage(
         input: lastInput,

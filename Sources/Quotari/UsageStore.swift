@@ -25,12 +25,14 @@ final class UsageStore {
   }
 
   private static let iconStyleKey = "menuBarIconStyle"
+  private static let localCostScanThrottle: TimeInterval = 15 * 60
 
   let providers: [ProviderDescriptor]
   private let costEstimator: any UsageCostEstimating
 
   private var timerTask: Task<Void, Never>?
   private var costTasks: [UsageProvider: Task<Void, Never>] = [:]
+  private var lastCostScans: [UsageProvider: Date] = [:]
 
   /// Tests inject mock descriptors so results don't depend on credentials
   /// present on the machine running them.
@@ -87,7 +89,12 @@ final class UsageStore {
       sourceLabels[provider] = value.sourceLabel
       errors[provider] = nil
       if needsLocalCost {
-        refreshCost(provider: provider, now: value.usage.updatedAt, reportedCostFallback: reportedCostFallback)
+        refreshCost(
+          provider: provider,
+          now: value.usage.updatedAt,
+          reportedCostFallback: reportedCostFallback,
+          cacheHit: cachedCost != nil
+        )
       } else {
         costTasks[provider]?.cancel()
         costTasks[provider] = nil
@@ -155,8 +162,20 @@ final class UsageStore {
     return cost
   }
 
-  private func refreshCost(provider: UsageProvider, now: Date, reportedCostFallback: CostSummary?) {
+  private func refreshCost(
+    provider: UsageProvider,
+    now: Date,
+    reportedCostFallback: CostSummary?,
+    cacheHit: Bool
+  ) {
     guard costTasks[provider] == nil else { return }
+    if cacheHit,
+       let lastCostScan = lastCostScans[provider],
+       now.timeIntervalSince(lastCostScan) < Self.localCostScanThrottle
+    {
+      return
+    }
+    lastCostScans[provider] = now
     let costEstimator = costEstimator
     costTasks[provider] = Task { [weak self] in
       let cost = await costEstimator.costSummary(provider: provider, now: now, historyDays: 30)
@@ -214,7 +233,9 @@ final class UsageStore {
       }
     }
   }
+}
 
+extension UsageStore {
   var highestUsedPercent: Double {
     snapshots.values.map(\.highestUsedPercent).max() ?? 0
   }
