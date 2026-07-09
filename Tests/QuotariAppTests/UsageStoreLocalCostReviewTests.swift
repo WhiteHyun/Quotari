@@ -91,6 +91,37 @@ struct UsageStoreLocalCostReviewTests {
     #expect(estimator.invalidationCount >= 1)
   }
 
+  @Test func emptyLocalCostScanRestoresNonzeroReportedSpendAfterCachedLocalChart() async throws {
+    let cachedCost = Self.costSummary(
+      todaySpend: 1.25,
+      monthSpend: 2.50,
+      monthTokens: 1000,
+      latestTokens: 200,
+      daily: Self.dailySeries(tokens: 1000)
+    )
+    let reportedCost = CostSummary(
+      todaySpend: 3.70,
+      monthSpend: 3.70,
+      monthTokens: 0,
+      latestTokens: 0,
+      todaySpendLabel: "Reported",
+      monthSpendLabel: "Period cost",
+      sourceDescription: "Reported by provider",
+      daily: [DailyCost(date: Self.day, spend: 3.70, tokens: 0)]
+    )
+    let estimator = ReviewInvalidatingCostEstimator(cachedCost: cachedCost, delay: .milliseconds(100))
+    let store = UsageStore(
+      providers: [Self.descriptor(cost: reportedCost)],
+      costEstimator: estimator
+    )
+
+    _ = try await Self.waitForCost(in: store, matching: cachedCost)
+    let restored = try await Self.waitForCost(in: store, matching: reportedCost)
+
+    #expect(restored.cost == reportedCost)
+    #expect(estimator.invalidationCount >= 1)
+  }
+
   private static let day = Date(timeIntervalSince1970: 1_783_478_400)
 
   private static func descriptor(cost: CostSummary, kind: ProviderFetchKind = .api) -> ProviderDescriptor {

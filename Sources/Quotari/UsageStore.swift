@@ -64,6 +64,11 @@ final class UsageStore {
   private func apply(provider: UsageProvider, result: Result<ProviderFetchResult, Error>) {
     switch result {
     case let .success(value):
+      let hidesProviderCost = Self.shouldHideProviderCost(provider: provider, sourceKind: value.sourceKind)
+      let reportedCostFallback = Self.reportedCostFallback(
+        from: value.usage.cost,
+        hidesProviderCost: hidesProviderCost
+      )
       let needsLocalCost = Self.shouldUseLocalCost(
         provider: provider,
         existing: value.usage.cost,
@@ -77,12 +82,12 @@ final class UsageStore {
         previous: snapshots[provider],
         cachedCost: cachedCost,
         prefersLocalCost: needsLocalCost,
-        hidesProviderCost: Self.shouldHideProviderCost(provider: provider, sourceKind: value.sourceKind)
+        hidesProviderCost: hidesProviderCost
       )
       sourceLabels[provider] = value.sourceLabel
       errors[provider] = nil
       if needsLocalCost {
-        refreshCost(provider: provider, now: value.usage.updatedAt)
+        refreshCost(provider: provider, now: value.usage.updatedAt, reportedCostFallback: reportedCostFallback)
       } else {
         costTasks[provider]?.cancel()
         costTasks[provider] = nil
@@ -138,23 +143,39 @@ final class UsageStore {
     !cost.hasTokenMetrics && cost.daily.count <= 1 && cost.monthSpend == 0 && cost.todaySpend == 0
   }
 
-  private func refreshCost(provider: UsageProvider, now: Date) {
+  private nonisolated static func reportedCostFallback(
+    from cost: CostSummary?,
+    hidesProviderCost: Bool
+  ) -> CostSummary? {
+    guard !hidesProviderCost,
+          let cost,
+          !cost.sourceDescription.localizedCaseInsensitiveContains("local"),
+          !shouldHideSparseReportedCost(cost)
+    else { return nil }
+    return cost
+  }
+
+  private func refreshCost(provider: UsageProvider, now: Date, reportedCostFallback: CostSummary?) {
     guard costTasks[provider] == nil else { return }
     let costEstimator = costEstimator
     costTasks[provider] = Task { [weak self] in
       let cost = await costEstimator.costSummary(provider: provider, now: now, historyDays: 30)
       guard !Task.isCancelled else { return }
       await MainActor.run {
-        self?.finishCostRefresh(cost, provider: provider)
+        self?.finishCostRefresh(cost, provider: provider, reportedCostFallback: reportedCostFallback)
       }
     }
   }
 
-  private func finishCostRefresh(_ cost: CostSummary?, provider: UsageProvider) {
+  private func finishCostRefresh(
+    _ cost: CostSummary?,
+    provider: UsageProvider,
+    reportedCostFallback: CostSummary?
+  ) {
     costTasks[provider] = nil
     guard let cost else {
       costEstimator.invalidateCachedCostSummary(provider: provider, historyDays: 30)
-      clearLocalCost(provider: provider)
+      clearLocalCost(provider: provider, reportedCostFallback: reportedCostFallback)
       return
     }
     applyCost(cost, provider: provider)
@@ -168,12 +189,12 @@ final class UsageStore {
     snapshots[provider] = snapshot
   }
 
-  private func clearLocalCost(provider: UsageProvider) {
+  private func clearLocalCost(provider: UsageProvider, reportedCostFallback: CostSummary?) {
     guard var snapshot = snapshots[provider],
           let cost = snapshot.cost,
           cost.sourceDescription.localizedCaseInsensitiveContains("local")
     else { return }
-    snapshot.cost = nil
+    snapshot.cost = reportedCostFallback
     snapshots[provider] = snapshot
   }
 
