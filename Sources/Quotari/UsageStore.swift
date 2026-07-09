@@ -25,16 +25,30 @@ final class UsageStore {
   }
 
   private static let iconStyleKey = "menuBarIconStyle"
+  private static let localCostScanThrottle: TimeInterval = 15 * 60
 
   let providers: [ProviderDescriptor]
+  private let costEstimator: any UsageCostEstimating
 
   private var timerTask: Task<Void, Never>?
+  private var costTasks: [UsageProvider: Task<Void, Never>] = [:]
+  private var lastCostScans: [UsageProvider: Date] = [:]
+  private var lastEmptyCostScans: [UsageProvider: Date] = [:]
+  private var latestReportedCostFallbacks: [UsageProvider: ReportedCostFallback] = [:]
+
+  private struct ReportedCostFallback {
+    let cost: CostSummary?
+  }
 
   /// Tests inject mock descriptors so results don't depend on credentials
   /// present on the machine running them.
-  init(providers: [ProviderDescriptor] = ProviderRegistry.all) {
+  init(
+    providers: [ProviderDescriptor] = ProviderRegistry.all,
+    costEstimator: any UsageCostEstimating = LocalUsageCostEstimator()
+  ) {
     assert(ProviderRegistry.isComplete, "Every UsageProvider case needs a descriptor")
     self.providers = providers
+    self.costEstimator = costEstimator
     startTimer()
   }
 
@@ -58,12 +72,170 @@ final class UsageStore {
   private func apply(provider: UsageProvider, result: Result<ProviderFetchResult, Error>) {
     switch result {
     case let .success(value):
-      snapshots[provider] = value.usage
+      let hidesProviderCost = Self.shouldHideProviderCost(provider: provider, sourceKind: value.sourceKind)
+      let reportedCostFallback = Self.reportedCostFallback(
+        from: value.usage.cost,
+        hidesProviderCost: hidesProviderCost
+      )
+      let needsLocalCost = Self.shouldUseLocalCost(
+        provider: provider,
+        existing: value.usage.cost,
+        sourceKind: value.sourceKind
+      )
+      let cachedCost = needsLocalCost
+        ? costEstimator.cachedCostSummary(provider: provider, now: value.usage.updatedAt, historyDays: 30)
+        : nil
+      snapshots[provider] = Self.displaySnapshot(
+        from: value.usage,
+        previous: snapshots[provider],
+        cachedCost: cachedCost,
+        prefersLocalCost: needsLocalCost,
+        hidesProviderCost: hidesProviderCost
+      )
       sourceLabels[provider] = value.sourceLabel
       errors[provider] = nil
+      if needsLocalCost {
+        refreshCost(
+          provider: provider,
+          now: value.usage.updatedAt,
+          reportedCostFallback: reportedCostFallback,
+          cacheHit: cachedCost != nil
+        )
+      } else {
+        lastEmptyCostScans[provider] = nil
+        latestReportedCostFallbacks[provider] = nil
+        costTasks[provider]?.cancel()
+        costTasks[provider] = nil
+      }
     case let .failure(error):
       errors[provider] = error.localizedDescription // keep any prior snapshot
     }
+  }
+
+  private nonisolated static func displaySnapshot(
+    from snapshot: UsageSnapshot,
+    previous: UsageSnapshot?,
+    cachedCost: CostSummary?,
+    prefersLocalCost: Bool,
+    hidesProviderCost: Bool
+  ) -> UsageSnapshot {
+    guard prefersLocalCost else { return snapshot }
+    var display = snapshot
+    display.cost = cachedCost
+      ?? previous?.cost.flatMap { shouldCarryForwardCost($0) ? $0 : nil }
+      ?? snapshot.cost.flatMap { hidesProviderCost || shouldHideSparseReportedCost($0) ? nil : $0 }
+    return display
+  }
+
+  private nonisolated static func shouldUseLocalCost(
+    provider: UsageProvider,
+    existing cost: CostSummary?,
+    sourceKind: ProviderFetchKind?
+  ) -> Bool {
+    if shouldHideProviderCost(provider: provider, sourceKind: sourceKind) {
+      return true
+    }
+    return shouldUseLocalCost(existing: cost)
+  }
+
+  private nonisolated static func shouldUseLocalCost(existing cost: CostSummary?) -> Bool {
+    guard let cost else { return true }
+    return !cost.hasTokenMetrics || cost.daily.count <= 1
+  }
+
+  private nonisolated static func shouldCarryForwardCost(_ cost: CostSummary) -> Bool {
+    cost.sourceDescription.localizedCaseInsensitiveContains("local")
+  }
+
+  private nonisolated static func shouldHideProviderCost(
+    provider: UsageProvider,
+    sourceKind: ProviderFetchKind?
+  ) -> Bool {
+    sourceKind == .mock && provider != .glm
+  }
+
+  private nonisolated static func shouldHideSparseReportedCost(_ cost: CostSummary) -> Bool {
+    !cost.hasTokenMetrics && cost.daily.count <= 1 && cost.monthSpend == 0 && cost.todaySpend == 0
+  }
+
+  private nonisolated static func reportedCostFallback(
+    from cost: CostSummary?,
+    hidesProviderCost: Bool
+  ) -> CostSummary? {
+    guard !hidesProviderCost,
+          let cost,
+          !cost.sourceDescription.localizedCaseInsensitiveContains("local"),
+          !shouldHideSparseReportedCost(cost)
+    else { return nil }
+    return cost
+  }
+
+  private func refreshCost(
+    provider: UsageProvider,
+    now: Date,
+    reportedCostFallback: CostSummary?,
+    cacheHit: Bool
+  ) {
+    latestReportedCostFallbacks[provider] = ReportedCostFallback(cost: reportedCostFallback)
+    guard costTasks[provider] == nil else { return }
+    if let lastEmptyCostScan = lastEmptyCostScans[provider],
+       now.timeIntervalSince(lastEmptyCostScan) < Self.localCostScanThrottle
+    {
+      return
+    }
+    if cacheHit,
+       let lastCostScan = lastCostScans[provider],
+       now.timeIntervalSince(lastCostScan) < Self.localCostScanThrottle
+    {
+      return
+    }
+    lastCostScans[provider] = now
+    let costEstimator = costEstimator
+    costTasks[provider] = Task { [weak self] in
+      let cost = await costEstimator.costSummary(provider: provider, now: now, historyDays: 30)
+      guard !Task.isCancelled else { return }
+      await MainActor.run {
+        self?.finishCostRefresh(cost, provider: provider)
+      }
+    }
+  }
+
+  private func finishCostRefresh(
+    _ cost: CostSummary?,
+    provider: UsageProvider
+  ) {
+    costTasks[provider] = nil
+    guard let cost else {
+      lastEmptyCostScans[provider] = Date()
+      costEstimator.invalidateCachedCostSummary(provider: provider, historyDays: 30)
+      let reportedCostFallback = latestReportedCostFallbacks[provider]?.cost
+      clearLocalCost(provider: provider, reportedCostFallback: reportedCostFallback)
+      return
+    }
+    lastEmptyCostScans[provider] = nil
+    applyCost(cost, provider: provider)
+  }
+
+  private func applyCost(_ cost: CostSummary, provider: UsageProvider) {
+    guard var snapshot = snapshots[provider],
+          Self.canApplyLocalCost(over: snapshot.cost)
+    else { return }
+    snapshot.cost = cost
+    snapshots[provider] = snapshot
+  }
+
+  private func clearLocalCost(provider: UsageProvider, reportedCostFallback: CostSummary?) {
+    guard var snapshot = snapshots[provider],
+          let cost = snapshot.cost,
+          cost.sourceDescription.localizedCaseInsensitiveContains("local")
+    else { return }
+    snapshot.cost = reportedCostFallback
+    snapshots[provider] = snapshot
+  }
+
+  private nonisolated static func canApplyLocalCost(over cost: CostSummary?) -> Bool {
+    guard let cost else { return true }
+    return shouldUseLocalCost(existing: cost) || cost.sourceDescription.localizedCaseInsensitiveContains("local")
   }
 
   private func startTimer() {
@@ -77,7 +249,9 @@ final class UsageStore {
       }
     }
   }
+}
 
+extension UsageStore {
   var highestUsedPercent: Double {
     snapshots.values.map(\.highestUsedPercent).max() ?? 0
   }

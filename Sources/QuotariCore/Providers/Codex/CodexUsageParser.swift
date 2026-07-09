@@ -33,6 +33,7 @@ public enum CodexUsageParser {
       primary: mapped.primary,
       secondary: mapped.secondary,
       extraWindows: mapped.extraWindows,
+      cost: LiveCostSummaryParser.parse(root, now: now),
       updatedAt: now
     )
   }

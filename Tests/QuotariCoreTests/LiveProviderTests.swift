@@ -69,6 +69,7 @@ private let claudeJSON = """
   "five_hour": { "utilization": 32, "resets_at": "2026-01-07T00:00:00.573174+00:00" },
   "seven_day": { "utilization": 76, "resets_at": "2026-01-12T00:00:00.573208+00:00" },
   "extra_usage": { "is_enabled": true, "monthly_limit": 100, "used_credits": 12.5, "utilization": 12.5 },
+  "spend": { "used": { "amount_minor": 370, "currency": "USD", "exponent": 2 } },
   "limits": [
     { "kind": "weekly", "group": "weekly", "percent": 76, "resets_at": "2026-01-12T00:00:00.573208+00:00", "is_active": true },
     {
@@ -229,6 +230,18 @@ struct ClaudeUsageTests {
     #expect(fable.usedPercent == 12)
     #expect(fable.resetsAt == now.addingTimeInterval(3600))
     #expect(fable.duration == TimeInterval(7 * 24 * 3600))
+
+    let cost = try #require(result.usage.cost)
+    #expect(cost.todaySpend == 3.70)
+    #expect(cost.monthSpend == 3.70)
+    #expect(cost.currencyCode == "USD")
+    #expect(cost.sourceDescription == "Reported by provider")
+    #expect(cost.hasTokenMetrics == false)
+    #expect(cost.daily == [DailyCost(
+      date: Calendar(identifier: .gregorian).startOfDay(for: now),
+      spend: 3.70,
+      tokens: 0
+    )])
   }
 
   @Test func unavailableWithoutCredentials() async {

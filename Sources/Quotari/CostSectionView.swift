@@ -18,7 +18,7 @@ struct CostSectionView: View {
         Text("Top model: \(model)")
           .font(.caption).foregroundStyle(.secondary)
       }
-      Text("Estimated from local logs")
+      Text(cost.sourceDescription)
         .font(.caption2).foregroundStyle(.tertiary)
     }
   }
@@ -26,12 +26,14 @@ struct CostSectionView: View {
   private var grid: some View {
     Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
       GridRow {
-        metric("Today", UsageFormatter.currency(cost.todaySpend, code: cost.currencyCode))
-        metric("30d cost", UsageFormatter.currency(cost.monthSpend, code: cost.currencyCode))
+        metric(cost.todaySpendLabel, UsageFormatter.currency(cost.todaySpend, code: cost.currencyCode))
+        metric(cost.monthSpendLabel, UsageFormatter.currency(cost.monthSpend, code: cost.currencyCode))
       }
-      GridRow {
-        metric("30d tokens", UsageFormatter.tokens(cost.monthTokens))
-        metric("Latest tokens", UsageFormatter.tokens(cost.latestTokens))
+      if cost.hasTokenMetrics {
+        GridRow {
+          metric("30d tokens", UsageFormatter.tokens(cost.monthTokens))
+          metric("Latest tokens", UsageFormatter.tokens(cost.latestTokens))
+        }
       }
     }
   }
