@@ -19,10 +19,16 @@ public struct ProviderFetchContext: Sendable {
 public struct ProviderFetchResult: Sendable {
   public let usage: UsageSnapshot
   public let sourceLabel: String
+  public let sourceKind: ProviderFetchKind?
 
-  public init(usage: UsageSnapshot, sourceLabel: String) {
+  public init(usage: UsageSnapshot, sourceLabel: String, sourceKind: ProviderFetchKind? = nil) {
     self.usage = usage
     self.sourceLabel = sourceLabel
+    self.sourceKind = sourceKind
+  }
+
+  func withSourceKind(_ kind: ProviderFetchKind) -> ProviderFetchResult {
+    ProviderFetchResult(usage: usage, sourceLabel: sourceLabel, sourceKind: sourceKind ?? kind)
   }
 }
 
@@ -73,7 +79,8 @@ public struct ProviderFetchPipeline: Sendable {
       if Task.isCancelled { return .failure(CancellationError()) }
       guard await strategy.isAvailable(context) else { continue }
       do {
-        return try await .success(strategy.fetch(context))
+        let result = try await strategy.fetch(context)
+        return .success(result.withSourceKind(strategy.kind))
       } catch {
         if error is CancellationError { return .failure(error) }
         lastError = error

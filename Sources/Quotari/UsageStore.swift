@@ -64,14 +64,20 @@ final class UsageStore {
   private func apply(provider: UsageProvider, result: Result<ProviderFetchResult, Error>) {
     switch result {
     case let .success(value):
-      let needsLocalCost = Self.shouldUseLocalCost(existing: value.usage.cost)
+      let needsLocalCost = Self.shouldUseLocalCost(
+        provider: provider,
+        existing: value.usage.cost,
+        sourceKind: value.sourceKind
+      )
       let cachedCost = needsLocalCost
         ? costEstimator.cachedCostSummary(provider: provider, now: value.usage.updatedAt, historyDays: 30)
         : nil
       snapshots[provider] = Self.displaySnapshot(
         from: value.usage,
         previous: snapshots[provider],
-        cachedCost: cachedCost
+        cachedCost: cachedCost,
+        prefersLocalCost: needsLocalCost,
+        hidesProviderCost: Self.shouldHideProviderCost(provider: provider, sourceKind: value.sourceKind)
       )
       sourceLabels[provider] = value.sourceLabel
       errors[provider] = nil
@@ -89,19 +95,43 @@ final class UsageStore {
   private nonisolated static func displaySnapshot(
     from snapshot: UsageSnapshot,
     previous: UsageSnapshot?,
-    cachedCost: CostSummary?
+    cachedCost: CostSummary?,
+    prefersLocalCost: Bool,
+    hidesProviderCost: Bool
   ) -> UsageSnapshot {
-    guard shouldUseLocalCost(existing: snapshot.cost) else { return snapshot }
+    guard prefersLocalCost else { return snapshot }
     var display = snapshot
     display.cost = cachedCost
-      ?? previous?.cost.flatMap { shouldUseLocalCost(existing: $0) ? nil : $0 }
-      ?? snapshot.cost.flatMap { shouldHideSparseReportedCost($0) ? nil : $0 }
+      ?? previous?.cost.flatMap { shouldCarryForwardCost($0) ? $0 : nil }
+      ?? snapshot.cost.flatMap { hidesProviderCost || shouldHideSparseReportedCost($0) ? nil : $0 }
     return display
+  }
+
+  private nonisolated static func shouldUseLocalCost(
+    provider: UsageProvider,
+    existing cost: CostSummary?,
+    sourceKind: ProviderFetchKind?
+  ) -> Bool {
+    if shouldHideProviderCost(provider: provider, sourceKind: sourceKind) {
+      return true
+    }
+    return shouldUseLocalCost(existing: cost)
   }
 
   private nonisolated static func shouldUseLocalCost(existing cost: CostSummary?) -> Bool {
     guard let cost else { return true }
     return !cost.hasTokenMetrics || cost.daily.count <= 1
+  }
+
+  private nonisolated static func shouldCarryForwardCost(_ cost: CostSummary) -> Bool {
+    !shouldUseLocalCost(existing: cost) || cost.sourceDescription.localizedCaseInsensitiveContains("local")
+  }
+
+  private nonisolated static func shouldHideProviderCost(
+    provider: UsageProvider,
+    sourceKind: ProviderFetchKind?
+  ) -> Bool {
+    sourceKind == .mock && provider != .glm
   }
 
   private nonisolated static func shouldHideSparseReportedCost(_ cost: CostSummary) -> Bool {
@@ -122,7 +152,10 @@ final class UsageStore {
 
   private func finishCostRefresh(_ cost: CostSummary?, provider: UsageProvider) {
     costTasks[provider] = nil
-    guard let cost else { return }
+    guard let cost else {
+      clearLocalCost(provider: provider)
+      return
+    }
     applyCost(cost, provider: provider)
   }
 
@@ -131,6 +164,15 @@ final class UsageStore {
           Self.canApplyLocalCost(over: snapshot.cost)
     else { return }
     snapshot.cost = cost
+    snapshots[provider] = snapshot
+  }
+
+  private func clearLocalCost(provider: UsageProvider) {
+    guard var snapshot = snapshots[provider],
+          let cost = snapshot.cost,
+          cost.sourceDescription.localizedCaseInsensitiveContains("local")
+    else { return }
+    snapshot.cost = nil
     snapshots[provider] = snapshot
   }
 

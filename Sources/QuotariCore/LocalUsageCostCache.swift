@@ -4,6 +4,7 @@ struct LocalUsageCostCache {
   private let cacheDirectory: URL
   private let fileManager: FileManager
   private let maxAge: TimeInterval
+  private let calendar = Calendar(identifier: .gregorian)
 
   init(
     cacheDirectory: URL,
@@ -20,7 +21,8 @@ struct LocalUsageCostCache {
           let entry = try? JSONDecoder().decode(Entry.self, from: data),
           entry.historyDays == historyDays,
           entry.cachedAt <= now.addingTimeInterval(300),
-          now.timeIntervalSince(entry.cachedAt) <= maxAge
+          now.timeIntervalSince(entry.cachedAt) <= maxAge,
+          cacheWindowMatches(entry: entry, now: now, historyDays: historyDays)
     else { return nil }
     return entry.summary
   }
@@ -34,6 +36,15 @@ struct LocalUsageCostCache {
 
   private func cacheURL(provider: UsageProvider, historyDays: Int) -> URL {
     cacheDirectory.appendingPathComponent("\(provider.rawValue)-\(historyDays).json", isDirectory: false)
+  }
+
+  private func cacheWindowMatches(entry: Entry, now: Date, historyDays: Int) -> Bool {
+    let today = calendar.startOfDay(for: now)
+    guard calendar.startOfDay(for: entry.cachedAt) == today,
+          entry.summary.daily.count == historyDays,
+          entry.summary.daily.last?.date == today
+    else { return false }
+    return true
   }
 
   private struct Entry: Codable {

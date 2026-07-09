@@ -300,7 +300,7 @@ private actor CountingDelayedCostEstimator: UsageCostEstimating {
 private struct StubUsageStrategy: ProviderFetchStrategy {
   let cost: CostSummary
   let id = "stub"
-  let kind = ProviderFetchKind.mock
+  let kind = ProviderFetchKind.api
 
   func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
     ProviderFetchResult(

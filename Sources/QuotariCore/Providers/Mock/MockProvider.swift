@@ -9,7 +9,7 @@ public struct MockFetchStrategy: ProviderFetchStrategy {
 
   public func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
     try? await Task.sleep(for: .milliseconds(250)) // simulate latency
-    return ProviderFetchResult(usage: make(context.provider, context.now), sourceLabel: "Mock")
+    return ProviderFetchResult(usage: make(context.provider, context.now), sourceLabel: "Mock", sourceKind: kind)
   }
 }
 

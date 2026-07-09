@@ -147,6 +147,27 @@ struct LocalUsageCostEstimatorReviewTests {
     #expect(abs(pricing.costUSD(provider: .claude, model: "claude-opus-4-1", tokens: tokens) - 90) < 0.0001)
   }
 
+  @Test func cachedCostSummaryRejectsPreviousDayWindows() throws {
+    let env = try ReviewCostTestEnvironment()
+    defer { env.cleanup() }
+
+    let cache = LocalUsageCostCache(
+      cacheDirectory: env.root.appendingPathComponent("cost-cache", isDirectory: true)
+    )
+    let summary = CostSummary(
+      todaySpend: 1,
+      monthSpend: 1,
+      monthTokens: 100,
+      latestTokens: 100,
+      sourceDescription: "Estimated from local logs",
+      daily: Self.dailySeries(endingAt: env.today, count: 30)
+    )
+    cache.save(summary, provider: .codex, now: env.now, historyDays: 30)
+
+    #expect(cache.load(provider: .codex, now: env.now, historyDays: 30) == summary)
+    #expect(cache.load(provider: .codex, now: env.now.addingTimeInterval(86400), historyDays: 30) == nil)
+  }
+
   private static func codexTotalLine(
     timestamp: String,
     input: Int,
@@ -229,17 +250,26 @@ struct LocalUsageCostEstimatorReviewTests {
     }
     return object
   }
+
+  private static func dailySeries(endingAt end: Date, count: Int) -> [DailyCost] {
+    (0 ..< count).compactMap { index in
+      Calendar(identifier: .gregorian).date(byAdding: .day, value: index - (count - 1), to: end)
+    }
+    .map { DailyCost(date: $0, spend: 1, tokens: 100) }
+  }
 }
 
 private struct ReviewCostTestEnvironment {
   let root: URL
   let now: Date
+  let today: Date
 
   init() throws {
     root = FileManager.default.temporaryDirectory
       .appendingPathComponent("quotari-review-cost-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     now = try #require(LenientDateParser.parse("2026-07-08T12:00:00Z"))
+    today = Calendar(identifier: .gregorian).startOfDay(for: now)
   }
 
   func createDirectory(_ url: URL) throws {

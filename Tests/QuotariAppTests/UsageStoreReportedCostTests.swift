@@ -120,7 +120,7 @@ private struct DelayedReportedCostEstimator: UsageCostEstimating {
 private struct ReportedCostStrategy: ProviderFetchStrategy {
   let cost: CostSummary
   let id = "reported-cost"
-  let kind = ProviderFetchKind.mock
+  let kind = ProviderFetchKind.api
 
   func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
     ProviderFetchResult(
