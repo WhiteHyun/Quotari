@@ -122,6 +122,52 @@ struct UsageStoreLocalCostReviewTests {
     #expect(estimator.invalidationCount >= 1)
   }
 
+  @Test func inFlightEmptyLocalCostScanUsesLatestReportedFallback() async throws {
+    let cachedCost = Self.costSummary(
+      todaySpend: 1.25,
+      monthSpend: 2.50,
+      monthTokens: 1000,
+      latestTokens: 200,
+      daily: Self.dailySeries(tokens: 1000)
+    )
+    let sparseCost = CostSummary(
+      todaySpend: 0,
+      monthSpend: 0,
+      monthTokens: 0,
+      latestTokens: 0,
+      sourceDescription: "Reported by provider",
+      daily: [DailyCost(date: Self.day, spend: 0, tokens: 0)]
+    )
+    let reportedCost = CostSummary(
+      todaySpend: 3.70,
+      monthSpend: 3.70,
+      monthTokens: 0,
+      latestTokens: 0,
+      todaySpendLabel: "Reported",
+      monthSpendLabel: "Period cost",
+      sourceDescription: "Reported by provider",
+      daily: [DailyCost(date: Self.day, spend: 3.70, tokens: 0)]
+    )
+    let strategy = ReviewSequenceUsageStrategy(costs: [sparseCost, reportedCost])
+    let descriptor = ProviderDescriptor(
+      id: .codex,
+      metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
+      pipeline: ProviderFetchPipeline { _ in [strategy] }
+    )
+    let estimator = ReviewInvalidatingCostEstimator(cachedCost: cachedCost, delay: .seconds(1))
+    let store = UsageStore(
+      providers: [descriptor],
+      costEstimator: estimator
+    )
+
+    _ = try await Self.waitForCost(in: store, matching: cachedCost)
+    await store.refresh()
+    let restored = try await Self.waitForCost(in: store, matching: reportedCost)
+
+    #expect(restored.cost == reportedCost)
+    #expect(estimator.invalidationCount >= 1)
+  }
+
   @Test func freshLocalCostReplacesPreviousProviderChartAfterSparseRefresh() async throws {
     let providerCost = Self.costSummary(
       todaySpend: 3.70,

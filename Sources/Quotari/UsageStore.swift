@@ -33,6 +33,12 @@ final class UsageStore {
   private var timerTask: Task<Void, Never>?
   private var costTasks: [UsageProvider: Task<Void, Never>] = [:]
   private var lastCostScans: [UsageProvider: Date] = [:]
+  private var lastEmptyCostScans: [UsageProvider: Date] = [:]
+  private var latestReportedCostFallbacks: [UsageProvider: ReportedCostFallback] = [:]
+
+  private struct ReportedCostFallback {
+    let cost: CostSummary?
+  }
 
   /// Tests inject mock descriptors so results don't depend on credentials
   /// present on the machine running them.
@@ -96,6 +102,8 @@ final class UsageStore {
           cacheHit: cachedCost != nil
         )
       } else {
+        lastEmptyCostScans[provider] = nil
+        latestReportedCostFallbacks[provider] = nil
         costTasks[provider]?.cancel()
         costTasks[provider] = nil
       }
@@ -168,7 +176,13 @@ final class UsageStore {
     reportedCostFallback: CostSummary?,
     cacheHit: Bool
   ) {
+    latestReportedCostFallbacks[provider] = ReportedCostFallback(cost: reportedCostFallback)
     guard costTasks[provider] == nil else { return }
+    if let lastEmptyCostScan = lastEmptyCostScans[provider],
+       now.timeIntervalSince(lastEmptyCostScan) < Self.localCostScanThrottle
+    {
+      return
+    }
     if cacheHit,
        let lastCostScan = lastCostScans[provider],
        now.timeIntervalSince(lastCostScan) < Self.localCostScanThrottle
@@ -181,22 +195,24 @@ final class UsageStore {
       let cost = await costEstimator.costSummary(provider: provider, now: now, historyDays: 30)
       guard !Task.isCancelled else { return }
       await MainActor.run {
-        self?.finishCostRefresh(cost, provider: provider, reportedCostFallback: reportedCostFallback)
+        self?.finishCostRefresh(cost, provider: provider)
       }
     }
   }
 
   private func finishCostRefresh(
     _ cost: CostSummary?,
-    provider: UsageProvider,
-    reportedCostFallback: CostSummary?
+    provider: UsageProvider
   ) {
     costTasks[provider] = nil
     guard let cost else {
+      lastEmptyCostScans[provider] = Date()
       costEstimator.invalidateCachedCostSummary(provider: provider, historyDays: 30)
+      let reportedCostFallback = latestReportedCostFallbacks[provider]?.cost
       clearLocalCost(provider: provider, reportedCostFallback: reportedCostFallback)
       return
     }
+    lastEmptyCostScans[provider] = nil
     applyCost(cost, provider: provider)
   }
 

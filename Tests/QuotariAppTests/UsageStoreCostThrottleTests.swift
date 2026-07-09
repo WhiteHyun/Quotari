@@ -40,6 +40,30 @@ struct UsageStoreCostThrottleTests {
     #expect(store.snapshots[UsageProvider.codex]?.cost == freshCost)
   }
 
+  @Test func emptyLocalCostScanAttemptsAreThrottled() async throws {
+    let reportedCost = CostSummary(
+      todaySpend: 0,
+      monthSpend: 0,
+      monthTokens: 0,
+      latestTokens: 0,
+      sourceDescription: "Reported by provider",
+      daily: [DailyCost(date: Self.day, spend: 0, tokens: 0)]
+    )
+    let estimator = CountingEmptyThrottleCostEstimator()
+    let store = UsageStore(
+      providers: [Self.descriptor(cost: reportedCost)],
+      costEstimator: estimator
+    )
+
+    try await Self.waitForCallCount(in: estimator, matching: 1)
+    try await Task.sleep(for: .milliseconds(50))
+    await store.refresh()
+    try await Task.sleep(for: .milliseconds(50))
+
+    #expect(estimator.callCount == 1)
+    #expect(store.snapshots[UsageProvider.codex]?.cost == nil)
+  }
+
   private static let day = Date(timeIntervalSince1970: 1_783_478_400)
 
   private static func descriptor(cost: CostSummary) -> ProviderDescriptor {
@@ -83,6 +107,19 @@ struct UsageStoreCostThrottleTests {
     #expect(snapshot.cost == cost)
     return snapshot
   }
+
+  private static func waitForCallCount(
+    in estimator: CountingEmptyThrottleCostEstimator,
+    matching count: Int
+  ) async throws {
+    for _ in 0 ..< 100 {
+      if estimator.callCount == count {
+        return
+      }
+      try await Task.sleep(for: .milliseconds(50))
+    }
+    #expect(estimator.callCount == count)
+  }
 }
 
 private final class CountingCachedThrottleCostEstimator: @unchecked Sendable, UsageCostEstimating {
@@ -103,6 +140,15 @@ private final class CountingCachedThrottleCostEstimator: @unchecked Sendable, Us
     callCount += 1
     cachedCost = freshCost
     return freshCost
+  }
+}
+
+private final class CountingEmptyThrottleCostEstimator: @unchecked Sendable, UsageCostEstimating {
+  private(set) var callCount = 0
+
+  func costSummary(provider: UsageProvider, now: Date, historyDays: Int) async -> CostSummary? {
+    callCount += 1
+    return nil
   }
 }
 
