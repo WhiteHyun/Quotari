@@ -316,9 +316,9 @@ struct LocalUsageCostScanner {
     var seen = Set<String>()
     var result: [URL] = []
     for url in urls {
-      let path = url.standardizedFileURL.path
-      guard seen.insert(path).inserted else { continue }
-      result.append(url.standardizedFileURL)
+      let canonical = url.resolvingSymlinksInPath().standardizedFileURL
+      guard seen.insert(canonical.path).inserted else { continue }
+      result.append(canonical)
     }
     return result
   }
