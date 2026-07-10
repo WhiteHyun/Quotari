@@ -35,7 +35,13 @@ extension LocalUsageCostScanner {
       }
       guard let day = range.day(containing: timestamp) else { continue }
       guard let tokens, tokens.total > 0 else { continue }
-      records.append(LocalTokenRecord(day: day, model: model, tokens: tokens))
+      records.append(LocalTokenRecord(
+        day: day,
+        model: model,
+        tokens: tokens,
+        contextInputTokens: codexContextInputTokens(from: info["last_token_usage"])
+          ?? (tokens.input + tokens.cacheRead + tokens.cacheWrite)
+      ))
     }
     return records
   }
@@ -58,7 +64,12 @@ extension LocalUsageCostScanner {
       guard let tokens = claudeTokenTotals(from: usage) else { continue }
       let record = PendingClaudeTokenRecord(
         lineNumber: lineNumber,
-        record: LocalTokenRecord(day: day, model: model, tokens: tokens)
+        record: LocalTokenRecord(
+          day: day,
+          model: model,
+          tokens: tokens,
+          contextInputTokens: claudeContextInputTokens(from: usage)
+        )
       )
       if let key = claudeUsageKey(from: object, message: message) {
         keyedRecords[key] = record
@@ -131,6 +142,21 @@ private extension LocalUsageCostScanner {
       output: 0
     )
     return totals.total > 0 ? totals : nil
+  }
+
+  func codexContextInputTokens(from value: Any?) -> Int? {
+    guard let fields = value as? [String: Any] else { return nil }
+    let input = int(fields["input_tokens"])
+    let cacheWrite = int(fields["cache_creation_input_tokens"])
+    let total = max(0, input) + max(0, cacheWrite)
+    return total > 0 ? total : nil
+  }
+
+  func claudeContextInputTokens(from usage: [String: Any]) -> Int? {
+    let total = max(0, int(usage["input_tokens"]))
+      + max(0, int(usage["cache_read_input_tokens"]))
+      + max(0, int(usage["cache_creation_input_tokens"]))
+    return total > 0 ? total : nil
   }
 
   func claudeUsageKey(from object: [String: Any], message: [String: Any]) -> String? {

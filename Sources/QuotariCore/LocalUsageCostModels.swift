@@ -10,32 +10,17 @@ enum LocalCostSummaryBuilder {
   ) -> CostSummary? {
     guard !records.isEmpty else { return nil }
 
-    var dayTotals: [Date: (spend: Double, tokens: Int)] = [:]
-    var modelTotals: [String: (spend: Double, tokens: Int)] = [:]
-    for record in records {
-      let spend = pricing.costUSD(provider: provider, model: record.model, tokens: record.tokens)
-      var day = dayTotals[record.day, default: (0, 0)]
-      day.spend += spend
-      day.tokens += record.tokens.total
-      dayTotals[record.day] = day
-
-      if let modelName = record.model {
-        var model = modelTotals[modelName, default: (0, 0)]
-        model.spend += spend
-        model.tokens += record.tokens.total
-        modelTotals[modelName] = model
-      }
-    }
+    let aggregation = aggregate(provider: provider, records: records, pricing: pricing)
 
     let daily = range.days.map { day in
-      let totals = dayTotals[day] ?? (0, 0)
+      let totals = aggregation.dayTotals[day] ?? (0, 0)
       return DailyCost(date: day, spend: totals.spend, tokens: totals.tokens)
     }
     let monthSpend = daily.reduce(0) { $0 + $1.spend }
     let monthTokens = daily.reduce(0) { $0 + $1.tokens }
     guard monthSpend > 0 || monthTokens > 0 else { return nil }
 
-    let topModel = modelTotals.max { lhs, rhs in
+    let topModel = aggregation.modelTotals.max { lhs, rhs in
       if lhs.value.spend != rhs.value.spend {
         return lhs.value.spend < rhs.value.spend
       }
@@ -49,6 +34,12 @@ enum LocalCostSummaryBuilder {
       latestTokens: daily.last(where: { $0.tokens > 0 })?.tokens ?? 0,
       topModel: topModel,
       sourceDescription: sourceDescription ?? Self.sourceDescription(for: provider),
+      estimateCoverage: CostEstimateCoverage(
+        pricedTokens: aggregation.pricedTokens,
+        unpricedTokens: aggregation.unpricedTokens,
+        unpricedModels: aggregation.unpricedModels.sorted(),
+        usesStalePricing: aggregation.usesStalePricing
+      ),
       daily: daily
     )
   }
@@ -63,112 +54,233 @@ enum LocalCostSummaryBuilder {
       "Estimated from local logs"
     }
   }
+
+  private static func aggregate(
+    provider: UsageProvider,
+    records: [LocalTokenRecord],
+    pricing: LocalModelPricing
+  ) -> LocalCostAggregation {
+    var aggregation = LocalCostAggregation()
+    for record in records {
+      let priced = pricing.price(
+        provider: provider,
+        model: record.model,
+        tokens: record.tokens,
+        contextInputTokens: record.contextInputTokens
+      )
+      aggregation.add(record: record, priced: priced)
+    }
+    return aggregation
+  }
+}
+
+private struct LocalCostAggregation {
+  var dayTotals: [Date: (spend: Double, tokens: Int)] = [:]
+  var modelTotals: [String: (spend: Double, tokens: Int)] = [:]
+  var pricedTokens = 0
+  var unpricedTokens = 0
+  var unpricedModels = Set<String>()
+  var usesStalePricing = false
+
+  mutating func add(record: LocalTokenRecord, priced: LocalPricingResult) {
+    var day = dayTotals[record.day, default: (0, 0)]
+    day.spend += priced.spend
+    day.tokens += record.tokens.total
+    dayTotals[record.day] = day
+    pricedTokens += priced.pricedTokens
+    unpricedTokens += priced.unpricedTokens
+    usesStalePricing = usesStalePricing || priced.usesStalePricing
+    if priced.unpricedTokens > 0 {
+      unpricedModels.insert(record.model.map(normalizedModelID) ?? "Unknown model")
+    }
+    if let modelName = record.model {
+      var model = modelTotals[modelName, default: (0, 0)]
+      model.spend += priced.spend
+      model.tokens += record.tokens.total
+      modelTotals[modelName] = model
+    }
+  }
 }
 
 struct LocalModelPricing {
+  let snapshot: ModelPricingCatalogSnapshot
+
+  init(snapshot: ModelPricingCatalogSnapshot = .bundledOnly) {
+    self.snapshot = snapshot
+  }
+
   func costUSD(provider: UsageProvider, model: String?, tokens: TokenTotals) -> Double {
-    let rates = ModelPricingCatalog.rates(provider: provider, model: model)
-    let input = Double(tokens.input) * rates.inputPerMillion / 1_000_000
-    let cacheRead = Double(tokens.cacheRead) * rates.cacheReadPerMillion / 1_000_000
-    let cacheWrite = Double(tokens.cacheWrite) * rates.cacheWritePerMillion / 1_000_000
-    let output = Double(tokens.output) * rates.outputPerMillion / 1_000_000
-    return input + cacheRead + cacheWrite + output
+    price(provider: provider, model: model, tokens: tokens, contextInputTokens: nil).spend
+  }
+
+  func price(
+    provider: UsageProvider,
+    model: String?,
+    tokens: TokenTotals,
+    contextInputTokens: Int?
+  ) -> LocalPricingResult {
+    let key = model.map { ModelPricingKey(provider: provider, modelID: $0) }
+    guard let key else {
+      return .unpriced(tokens: tokens.total)
+    }
+    let remote = snapshot.remote.pricing(for: key)
+    let bundled = BundledModelPricingCatalog.pricing(for: key)
+    guard let pricing = remote?.fillingMissing(with: bundled) ?? bundled else {
+      return .unpriced(tokens: tokens.total)
+    }
+
+    let inferredContextTokens = contextInputTokens
+      ?? (tokens.input + tokens.cacheRead + tokens.cacheWrite)
+    let rates = pricing.rates(contextInputTokens: inferredContextTokens)
+    var spend = 0.0
+    var pricedTokens = 0
+    var unpricedTokens = 0
+    add(tokens.input, rate: rates.inputPerMillion, spend: &spend, priced: &pricedTokens, unpriced: &unpricedTokens)
+    add(
+      tokens.cacheRead,
+      rate: rates.cacheReadPerMillion,
+      spend: &spend,
+      priced: &pricedTokens,
+      unpriced: &unpricedTokens
+    )
+    add(
+      tokens.cacheWrite,
+      rate: rates.cacheWritePerMillion,
+      spend: &spend,
+      priced: &pricedTokens,
+      unpriced: &unpricedTokens
+    )
+    add(
+      tokens.output,
+      rate: rates.outputPerMillion,
+      spend: &spend,
+      priced: &pricedTokens,
+      unpriced: &unpricedTokens
+    )
+    return LocalPricingResult(
+      spend: spend,
+      pricedTokens: pricedTokens,
+      unpricedTokens: unpricedTokens,
+      usesStalePricing: remote != nil && snapshot.remoteIsStale
+    )
+  }
+
+  private func add(
+    _ tokens: Int,
+    rate: Double?,
+    spend: inout Double,
+    priced: inout Int,
+    unpriced: inout Int
+  ) {
+    guard tokens > 0 else { return }
+    guard let rate else {
+      unpriced += tokens
+      return
+    }
+    spend += Double(tokens) * rate / 1_000_000
+    priced += tokens
   }
 }
 
-private enum ModelPricingCatalog {
-  private static let codexRules: [ModelPricingRule] = [
-    .exact("gpt-5.5", rates: .init(input: 5.00, cacheRead: 0.50, output: 30.00)),
-    .exact("gpt-5.4-mini", rates: .init(input: 0.75, cacheRead: 0.075, output: 4.50)),
-    .exact("gpt-5.4-nano", rates: .init(input: 0.20, cacheRead: 0.02, output: 1.25)),
-    .exact("gpt-5.4", rates: .init(input: 2.50, cacheRead: 0.25, output: 15.00)),
-    .exact("gpt-5.3-codex", rates: .init(input: 1.75, cacheRead: 0.175, output: 14.00)),
-  ]
+struct LocalPricingResult: Equatable, Sendable {
+  let spend: Double
+  let pricedTokens: Int
+  let unpricedTokens: Int
+  let usesStalePricing: Bool
 
-  private static let claudeRules: [ModelPricingRule] = [
-    .exactOrDated("claude-fable-5", rates: .init(input: 10.00, cacheRead: 1.00, output: 50.00)),
-    .exactOrDated("claude-opus-4-8", rates: .init(input: 5.00, cacheRead: 0.50, output: 25.00)),
-    .exactOrDated("claude-opus-4-7", rates: .init(input: 5.00, cacheRead: 0.50, output: 25.00)),
-    .exactOrDated("claude-opus-4-6", rates: .init(input: 5.00, cacheRead: 0.50, output: 25.00)),
-    .exactOrDated("claude-opus-4-5", rates: .init(input: 5.00, cacheRead: 0.50, output: 25.00)),
-    .exactOrDated("claude-haiku-4-5", rates: .init(input: 1.00, cacheRead: 0.10, output: 5.00)),
-    .exactOrDated("claude-sonnet-5", rates: .init(input: 3.00, cacheRead: 0.30, output: 15.00)),
-  ]
-
-  static func rates(provider: UsageProvider, model: String?) -> ModelRates {
-    let normalized = normalizedModelID(model)
-    switch provider {
-    case .codex:
-      return codexRules.first { $0.matches(normalized) }?.rates
-        ?? .init(input: 1.25, cacheRead: 0.125, output: 10.00)
-    case .claude:
-      return claudeRules.first { $0.matches(normalized) }?.rates
-        ?? legacyClaudeRates(model: normalized)
-    case .glm:
-      return .init(input: 0, cacheRead: 0, output: 0)
-    }
-  }
-
-  private static func legacyClaudeRates(model: String) -> ModelRates {
-    if model.contains("-opus-") {
-      return .init(input: 15.00, cacheRead: 1.50, output: 75.00)
-    }
-    if model.contains("-haiku-") {
-      return .init(input: 0.80, cacheRead: 0.08, output: 4.00)
-    }
-    return .init(input: 3.00, cacheRead: 0.30, output: 15.00)
+  static func unpriced(tokens: Int) -> Self {
+    Self(spend: 0, pricedTokens: 0, unpricedTokens: tokens, usesStalePricing: false)
   }
 }
 
-private struct ModelPricingRule {
-  let matcher: ModelMatcher
-  let rates: ModelRates
+enum BundledModelPricingCatalog {
+  private static let codexRules: [BundledPricingRule] = [
+    .exact("gpt-5.6-sol", pricing: pricing(5, 0.5, 6.25, 30, long: rates(10, 1, 12.5, 45))),
+    .exact("gpt-5.6-terra", pricing: pricing(2.5, 0.25, 3.125, 15, long: rates(5, 0.5, 6.25, 22.5))),
+    .exact("gpt-5.6-luna", pricing: pricing(1, 0.1, 1.25, 6, long: rates(2, 0.2, 2.5, 9))),
+    .exact("gpt-5.5", pricing: pricing(5, 0.5, 6.25, 30)),
+    .exact("gpt-5.4-mini", pricing: pricing(0.75, 0.075, 0.9375, 4.5)),
+    .exact("gpt-5.4-nano", pricing: pricing(0.2, 0.02, 0.25, 1.25)),
+    .exact("gpt-5.4", pricing: pricing(2.5, 0.25, 3.125, 15)),
+    .exact("gpt-5.3-codex", pricing: pricing(1.75, 0.175, 2.1875, 14)),
+    .exact("gpt-5.2", pricing: pricing(1.75, 0.175, 2.1875, 14)),
+    .exact("gpt-5", pricing: pricing(1.25, 0.125, 1.5625, 10)),
+  ]
 
-  static func exact(_ modelID: String, rates: ModelRates) -> ModelPricingRule {
-    ModelPricingRule(matcher: .exact(modelID), rates: rates)
+  private static let claudeRules: [BundledPricingRule] = [
+    .exactOrDated("claude-fable-5", pricing: pricing(10, 1, 12.5, 50)),
+    .exactOrDated("claude-opus-4-8", pricing: pricing(5, 0.5, 6.25, 25)),
+    .exactOrDated("claude-opus-4-7", pricing: pricing(5, 0.5, 6.25, 25)),
+    .exactOrDated("claude-opus-4-6", pricing: pricing(5, 0.5, 6.25, 25)),
+    .exactOrDated("claude-opus-4-5", pricing: pricing(5, 0.5, 6.25, 25)),
+    .exactOrDated("claude-opus-4-1", pricing: pricing(15, 1.5, 18.75, 75)),
+    .exactOrDated("claude-opus-4", pricing: pricing(15, 1.5, 18.75, 75)),
+    .exactOrDated("claude-haiku-4-5", pricing: pricing(1, 0.1, 1.25, 5)),
+    .exactOrDated("claude-sonnet-5", pricing: pricing(2, 0.2, 2.5, 10)),
+    .exactOrDated("claude-sonnet-4-6", pricing: pricing(3, 0.3, 3.75, 15)),
+    .exactOrDated("claude-sonnet-4-5", pricing: pricing(3, 0.3, 3.75, 15)),
+    .exactOrDated("claude-sonnet-4", pricing: pricing(3, 0.3, 3.75, 15)),
+  ]
+
+  static func pricing(for key: ModelPricingKey) -> ModelPricing? {
+    let rules: [BundledPricingRule] = switch key.provider {
+    case .codex: codexRules
+    case .claude: claudeRules
+    case .glm: []
+    }
+    return rules.first { $0.matches(key.modelID) }?.pricing
   }
 
-  static func exactOrDated(_ modelID: String, rates: ModelRates) -> ModelPricingRule {
-    ModelPricingRule(matcher: .exactOrDated(modelID), rates: rates)
+  private static func pricing(
+    _ input: Double,
+    _ cacheRead: Double,
+    _ cacheWrite: Double,
+    _ output: Double,
+    long: ModelRateComponents? = nil
+  ) -> ModelPricing {
+    let longContext = long.map { rates in
+      LongContextModelPricing(
+        thresholdTokens: 272_000,
+        overrides: rates
+      )
+    }
+    return ModelPricing(
+      standard: ModelRateComponents(
+        input: input,
+        cacheRead: cacheRead,
+        cacheWrite: cacheWrite,
+        output: output
+      ),
+      longContext: longContext
+    )
+  }
+
+  private static func rates(
+    _ input: Double,
+    _ cacheRead: Double,
+    _ cacheWrite: Double,
+    _ output: Double
+  ) -> ModelRateComponents {
+    ModelRateComponents(input: input, cacheRead: cacheRead, cacheWrite: cacheWrite, output: output)
+  }
+}
+
+private struct BundledPricingRule {
+  let modelID: String
+  let acceptsDatedSuffix: Bool
+  let pricing: ModelPricing
+
+  static func exact(_ modelID: String, pricing: ModelPricing) -> Self {
+    Self(modelID: modelID, acceptsDatedSuffix: false, pricing: pricing)
+  }
+
+  static func exactOrDated(_ modelID: String, pricing: ModelPricing) -> Self {
+    Self(modelID: modelID, acceptsDatedSuffix: true, pricing: pricing)
   }
 
   func matches(_ model: String) -> Bool {
-    matcher.matches(model)
+    model == modelID || (acceptsDatedSuffix && model.datedSuffix(after: modelID) != nil)
   }
-}
-
-private enum ModelMatcher {
-  case exact(String)
-  case exactOrDated(String)
-
-  func matches(_ model: String) -> Bool {
-    switch self {
-    case let .exact(modelID):
-      model == modelID
-    case let .exactOrDated(modelID):
-      model == modelID || model.datedSuffix(after: modelID) != nil
-    }
-  }
-}
-
-private struct ModelRates {
-  let inputPerMillion: Double
-  let cacheReadPerMillion: Double
-  let cacheWritePerMillion: Double
-  let outputPerMillion: Double
-
-  init(input: Double, cacheRead: Double, cacheWrite: Double? = nil, output: Double) {
-    inputPerMillion = input
-    cacheReadPerMillion = cacheRead
-    cacheWritePerMillion = cacheWrite ?? input * 1.25
-    outputPerMillion = output
-  }
-}
-
-private func normalizedModelID(_ model: String?) -> String {
-  model?
-    .lowercased()
-    .replacingOccurrences(of: "_", with: "-") ?? ""
 }
 
 private extension String {
@@ -183,7 +295,7 @@ private extension String {
   }
 }
 
-struct DayRange {
+struct DayRange: Sendable {
   let start: Date
   let end: Date
   let calendar: Calendar
@@ -210,13 +322,21 @@ struct DayRange {
   }
 }
 
-struct LocalTokenRecord {
+struct LocalTokenRecord: Sendable {
   let day: Date
   let model: String?
   let tokens: TokenTotals
+  let contextInputTokens: Int?
+
+  init(day: Date, model: String?, tokens: TokenTotals, contextInputTokens: Int? = nil) {
+    self.day = day
+    self.model = model
+    self.tokens = tokens
+    self.contextInputTokens = contextInputTokens
+  }
 }
 
-struct TokenTotals {
+struct TokenTotals: Sendable {
   let input: Int
   let cacheRead: Int
   let cacheWrite: Int

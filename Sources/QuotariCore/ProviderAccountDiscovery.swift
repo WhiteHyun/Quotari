@@ -47,7 +47,8 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
           provider: .codex,
           displayName: credentials.email ?? credentials.accountID ?? "Codex account",
           detail: label,
-          credentialSource: source
+          credentialSource: source,
+          credentialIdentity: credentials.accountID ?? credentials.accessToken
         )
       }
   }
@@ -59,7 +60,8 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
         provider: .claude,
         displayName: "Claude OAuth token",
         detail: ClaudeCredentialsStore.tokenEnvKey,
-        credentialSource: .claudeEnvironment(name: ClaudeCredentialsStore.tokenEnvKey)
+        credentialSource: .claudeEnvironment(name: ClaudeCredentialsStore.tokenEnvKey),
+        credentialIdentity: token
       ))
     }
     if let data = keychainData(),
@@ -98,7 +100,8 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
       provider: .claude,
       displayName: plan.map { "\(displayName) \($0)" } ?? displayName,
       detail: detail,
-      credentialSource: source
+      credentialSource: source,
+      credentialIdentity: credentials.accessToken
     )
   }
 }

@@ -30,7 +30,7 @@ struct LocalUsageCostEstimatorSymlinkTests {
       ]
     )
 
-    let estimator = LocalUsageCostEstimator(
+    let estimator = LocalUsageCostEstimator.testing(
       environment: ["CLAUDE_CONFIG_DIR": "\(claudeConfig.path),\(symlinkConfig.path)"],
       homeDirectory: root
     )

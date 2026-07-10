@@ -108,15 +108,24 @@ final class UsageStore {
 
   func reloadAccounts() async {
     var next: [UsageProvider: [ProviderAccount]] = [:]
+    var refreshedSelections: [(UsageProvider, ProviderAccount)] = []
     for descriptor in providers {
       var providerAccounts = await accountDiscovery.accounts(for: descriptor.id)
-      if let selected = selectedAccounts[descriptor.id],
-         !providerAccounts.contains(where: { $0.id == selected.id }) {
-        providerAccounts.append(selected)
+      if let selected = selectedAccounts[descriptor.id] {
+        if let refreshed = providerAccounts.first(where: { $0.id == selected.id }) {
+          if refreshed != selected {
+            refreshedSelections.append((descriptor.id, refreshed))
+          }
+        } else {
+          providerAccounts.append(selected)
+        }
       }
       next[descriptor.id] = providerAccounts
     }
     accounts = next
+    for (provider, account) in refreshedSelections {
+      selectAccount(account, for: provider)
+    }
   }
 
   func selectAccount(id: String?, for provider: UsageProvider) {

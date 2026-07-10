@@ -33,7 +33,7 @@ extension LocalUsageCostEstimatorTests {
       ]
     )
 
-    let estimator = LocalUsageCostEstimator(
+    let estimator = LocalUsageCostEstimator.testing(
       environment: ["CODEX_HOME": codexHome.path],
       homeDirectory: env.root
     )
@@ -63,7 +63,7 @@ extension LocalUsageCostEstimatorTests {
       ]
     )
 
-    let estimator = LocalUsageCostEstimator(
+    let estimator = LocalUsageCostEstimator.testing(
       environment: ["CODEX_HOME": codexHome.path],
       homeDirectory: env.root
     )
@@ -94,7 +94,7 @@ extension LocalUsageCostEstimatorTests {
       ]
     )
 
-    let estimator = LocalUsageCostEstimator(
+    let estimator = LocalUsageCostEstimator.testing(
       environment: ["CODEX_HOME": codexHome.path],
       homeDirectory: env.root
     )
@@ -119,7 +119,7 @@ extension LocalUsageCostEstimatorTests {
       ]
     )
 
-    let estimator = LocalUsageCostEstimator(
+    let estimator = LocalUsageCostEstimator.testing(
       environment: ["CODEX_HOME": codexHome.path],
       homeDirectory: env.root,
       cacheDirectory: cache
@@ -161,7 +161,7 @@ extension LocalUsageCostEstimatorTests {
       detail: "CODEX_HOME",
       credentialSource: .codexAuthFile(path: customHome.appendingPathComponent("auth.json").path)
     )
-    let estimator = LocalUsageCostEstimator(
+    let estimator = LocalUsageCostEstimator.testing(
       environment: ["CODEX_HOME": customHome.path],
       homeDirectory: env.root,
       cacheDirectory: cache
@@ -197,7 +197,7 @@ extension LocalUsageCostEstimatorTests {
       ]
     )
 
-    let estimator = LocalUsageCostEstimator(
+    let estimator = LocalUsageCostEstimator.testing(
       environment: ["CODEX_HOME": codexHome.path],
       homeDirectory: env.root
     )
@@ -237,7 +237,7 @@ extension LocalUsageCostEstimatorTests {
       ]
     )
 
-    let estimator = LocalUsageCostEstimator(
+    let estimator = LocalUsageCostEstimator.testing(
       environment: ["CLAUDE_CONFIG_DIR": claudeConfig.path],
       homeDirectory: env.root
     )
@@ -276,7 +276,7 @@ extension LocalUsageCostEstimatorTests {
       ]
     )
 
-    let estimator = LocalUsageCostEstimator(environment: [:], homeDirectory: env.root)
+    let estimator = LocalUsageCostEstimator.testing(environment: [:], homeDirectory: env.root)
     #expect(await estimator.costSummary(provider: .claude, now: env.now, historyDays: 30) == nil)
   }
 

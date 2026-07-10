@@ -61,16 +61,34 @@ public struct LocalUsageCostEstimator: UsageCostEstimating {
   private let environment: [String: String]
   private let homeDirectory: URL
   private let cacheDirectory: URL
+  private let pricingCatalogProvider: any ModelPricingCatalogProviding
 
   public init(
     environment: [String: String] = ProcessInfo.processInfo.environment,
     homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
     cacheDirectory: URL? = nil
   ) {
+    let pricingCacheDirectory = homeDirectory
+      .appendingPathComponent("Library/Caches/Quotari/ModelPricing", isDirectory: true)
+    self.init(
+      environment: environment,
+      homeDirectory: homeDirectory,
+      cacheDirectory: cacheDirectory,
+      pricingCatalogProvider: RemoteModelPricingCatalogStore(cacheDirectory: pricingCacheDirectory)
+    )
+  }
+
+  init(
+    environment: [String: String],
+    homeDirectory: URL,
+    cacheDirectory: URL? = nil,
+    pricingCatalogProvider: any ModelPricingCatalogProviding
+  ) {
     self.environment = environment
     self.homeDirectory = homeDirectory
     self.cacheDirectory = cacheDirectory ?? homeDirectory
       .appendingPathComponent("Library/Caches/Quotari/LocalUsageCost", isDirectory: true)
+    self.pricingCatalogProvider = pricingCatalogProvider
   }
 
   public func cachedCostSummary(provider: UsageProvider, now: Date, historyDays: Int = 30) -> CostSummary? {
@@ -84,7 +102,7 @@ public struct LocalUsageCostEstimator: UsageCostEstimating {
     historyDays: Int = 30
   ) -> CostSummary? {
     LocalUsageCostCache(cacheDirectory: cacheDirectory)
-      .load(provider: provider, scopeID: account?.id, now: now, historyDays: historyDays)
+      .load(provider: provider, scopeID: account?.costCacheScopeID, now: now, historyDays: historyDays)
   }
 
   public func costSummary(provider: UsageProvider, now: Date, historyDays: Int = 30) async -> CostSummary? {
@@ -100,23 +118,37 @@ public struct LocalUsageCostEstimator: UsageCostEstimating {
     let environment = environment
     let homeDirectory = homeDirectory
     let cacheDirectory = cacheDirectory
-    return await Task.detached(priority: .utility) {
-      let summary = LocalUsageCostScanner(
+    let pricingCatalogProvider = pricingCatalogProvider
+    let scan = await Task.detached(priority: .utility) {
+      LocalUsageCostScanner(
         environment: environment,
         homeDirectory: homeDirectory
-      ).costSummary(provider: provider, account: account, now: now, historyDays: historyDays)
-      if let summary {
-        LocalUsageCostCache(cacheDirectory: cacheDirectory)
-          .save(
-            summary,
-            provider: provider,
-            scopeID: account?.id,
-            now: now,
-            historyDays: historyDays
-          )
-      }
-      return summary
+      ).scan(provider: provider, account: account, now: now, historyDays: historyDays)
     }.value
+    let keys = Set(scan.records.compactMap { record in
+      record.model.map { ModelPricingKey(provider: provider, modelID: $0) }
+    })
+    let pricingSnapshot = await pricingCatalogProvider.snapshot(for: keys, now: now)
+    let summary = await Task.detached(priority: .utility) {
+      LocalCostSummaryBuilder.summary(
+        provider: provider,
+        records: scan.records,
+        range: scan.range,
+        pricing: LocalModelPricing(snapshot: pricingSnapshot),
+        sourceDescription: scan.sourceDescription
+      )
+    }.value
+    if let summary {
+      LocalUsageCostCache(cacheDirectory: cacheDirectory)
+        .save(
+          summary,
+          provider: provider,
+          scopeID: account?.costCacheScopeID,
+          now: now,
+          historyDays: historyDays
+        )
+    }
+    return summary
   }
 
   public func invalidateCachedCostSummary(provider: UsageProvider, historyDays: Int = 30) {
@@ -129,7 +161,7 @@ public struct LocalUsageCostEstimator: UsageCostEstimating {
     historyDays: Int = 30
   ) {
     LocalUsageCostCache(cacheDirectory: cacheDirectory)
-      .remove(provider: provider, scopeID: account?.id, historyDays: historyDays)
+      .remove(provider: provider, scopeID: account?.costCacheScopeID, historyDays: historyDays)
   }
 }
 
@@ -149,12 +181,12 @@ struct LocalUsageCostScanner {
     self.fileManager = fileManager
   }
 
-  func costSummary(
+  func scan(
     provider: UsageProvider,
     account: ProviderAccount? = nil,
     now: Date,
     historyDays: Int = 30
-  ) -> CostSummary? {
+  ) -> LocalUsageScan {
     let historyDays = max(1, min(365, historyDays))
     let today = calendar.startOfDay(for: now)
     let start = calendar.date(byAdding: .day, value: -(historyDays - 1), to: today) ?? today
@@ -167,11 +199,9 @@ struct LocalUsageCostScanner {
     case .glm:
       []
     }
-    return LocalCostSummaryBuilder.summary(
-      provider: provider,
+    return LocalUsageScan(
       records: records,
       range: range,
-      pricing: LocalModelPricing(),
       sourceDescription: sourceDescription(account: account)
     )
   }
@@ -277,4 +307,10 @@ struct LocalUsageCostScanner {
     }
     return result
   }
+}
+
+struct LocalUsageScan: Sendable {
+  let records: [LocalTokenRecord]
+  let range: DayRange
+  let sourceDescription: String?
 }
