@@ -18,14 +18,6 @@ final class UsageStore {
     didSet { startTimer() }
   }
 
-  var iconStyle: MenuBarIconStyle =
-    .init(rawValue: UserDefaults.standard.string(forKey: UsageStore.iconStyleKey) ?? "") ?? .gaugeAndPercent {
-    didSet {
-      UserDefaults.standard.set(iconStyle.rawValue, forKey: Self.iconStyleKey)
-    }
-  }
-
-  private static let iconStyleKey = "menuBarIconStyle"
   private static let localCostScanThrottle: TimeInterval = 15 * 60
 
   let providers: [ProviderDescriptor]
@@ -366,12 +358,12 @@ extension UsageStore {
     snapshots.values.map(\.highestUsedPercent).max() ?? 0
   }
 
-  var menuBarIcon: NSImage {
-    IconRenderer.meterIcon(
-      remainingPercent: 100 - highestUsedPercent,
-      loading: isRefreshing && snapshots.isEmpty,
-      style: iconStyle
-    )
+  func menuBarIcon(frame: Int) -> NSImage {
+    IconRenderer.mascotIcon(frame: frame)
+  }
+
+  var menuBarAnimationInterval: TimeInterval {
+    IconRenderer.animationInterval(usedPercent: highestUsedPercent)
   }
 
   var menuBarAccessibilityLabel: String {
