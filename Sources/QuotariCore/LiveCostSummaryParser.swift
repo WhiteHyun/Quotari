@@ -68,9 +68,15 @@ enum LiveCostSummaryParser {
   }
 
   private static func number(_ value: Any?) -> Double? {
-    if let double = value as? Double { return double }
-    if let int = value as? Int { return Double(int) }
-    if let string = value as? String { return Double(string) }
+    if let double = value as? Double {
+      return double
+    }
+    if let int = value as? Int {
+      return Double(int)
+    }
+    if let string = value as? String {
+      return Double(string)
+    }
     return nil
   }
 

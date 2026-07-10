@@ -2,7 +2,9 @@ import Foundation
 
 public enum UsageFormatter {
   public static func percent(_ value: Double) -> String {
-    if value > 0, value < 1 { return "<1%" }
+    if value > 0, value < 1 {
+      return "<1%"
+    }
     return "\(Int(value.rounded()))%"
   }
 
@@ -12,8 +14,12 @@ public enum UsageFormatter {
     guard total > 0 else { return nil }
     let hours = total / 3600
     let minutes = (total % 3600) / 60
-    if hours >= 24 { return "\(hours / 24)d \(hours % 24)h" }
-    if hours > 0 { return "\(hours)h \(minutes)m" }
+    if hours >= 24 {
+      return "\(hours / 24)d \(hours % 24)h"
+    }
+    if hours > 0 {
+      return "\(hours)h \(minutes)m"
+    }
     return "\(minutes)m"
   }
 
@@ -21,7 +27,9 @@ public enum UsageFormatter {
   public static func resetCountdown(to date: Date?, now: Date = Date()) -> String? {
     guard let date else { return nil }
     let seconds = date.timeIntervalSince(now)
-    if seconds <= 0 { return "now" }
+    if seconds <= 0 {
+      return "now"
+    }
     return compactDuration(seconds).map { "in \($0)" }
   }
 

@@ -19,8 +19,12 @@ struct ProviderCardView: View {
     VStack(alignment: .leading, spacing: 10) {
       header
       if let snapshot {
-        if let primary = snapshot.primary { windowRow("Session", primary) }
-        if let secondary = snapshot.secondary { windowRow("Weekly", secondary) }
+        if let primary = snapshot.primary {
+          windowRow("Session", primary)
+        }
+        if let secondary = snapshot.secondary {
+          windowRow("Weekly", secondary)
+        }
         ForEach(snapshot.extraWindows) { named in windowRow(named.title, named.window) }
         if let cost = snapshot.cost {
           Divider().padding(.vertical, 2)

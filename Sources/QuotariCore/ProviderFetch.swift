@@ -86,15 +86,21 @@ public struct ProviderFetchPipeline: Sendable {
   public func fetch(_ context: ProviderFetchContext) async -> Result<ProviderFetchResult, Error> {
     var lastError: Error?
     for strategy in resolveStrategies(context) {
-      if Task.isCancelled { return .failure(CancellationError()) }
+      if Task.isCancelled {
+        return .failure(CancellationError())
+      }
       guard await strategy.isAvailable(context) else { continue }
       do {
         let result = try await strategy.fetch(context)
         return .success(result.withSourceKind(strategy.kind))
       } catch {
-        if error is CancellationError { return .failure(error) }
+        if error is CancellationError {
+          return .failure(error)
+        }
         lastError = error
-        if strategy.shouldFallback(on: error) { continue }
+        if strategy.shouldFallback(on: error) {
+          continue
+        }
         return .failure(error)
       }
     }

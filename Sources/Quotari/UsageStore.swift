@@ -143,7 +143,9 @@ final class UsageStore {
     latestReportedCostFallbacks[provider] = nil
     Task { await refresh(provider: provider) }
   }
+}
 
+private extension UsageStore {
   private func apply(provider: UsageProvider, result: Result<ProviderFetchResult, Error>) {
     switch result {
     case let .success(value):

@@ -110,8 +110,12 @@ private enum ModelPricingCatalog {
   }
 
   private static func legacyClaudeRates(model: String) -> ModelRates {
-    if model.contains("-opus-") { return .init(input: 15.00, cacheRead: 1.50, output: 75.00) }
-    if model.contains("-haiku-") { return .init(input: 0.80, cacheRead: 0.08, output: 4.00) }
+    if model.contains("-opus-") {
+      return .init(input: 15.00, cacheRead: 1.50, output: 75.00)
+    }
+    if model.contains("-haiku-") {
+      return .init(input: 0.80, cacheRead: 0.08, output: 4.00)
+    }
     return .init(input: 3.00, cacheRead: 0.30, output: 15.00)
   }
 }

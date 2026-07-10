@@ -2,7 +2,9 @@ import Foundation
 @testable import QuotariCore
 import Testing
 
-struct LocalUsageCostEstimatorTests {
+struct LocalUsageCostEstimatorTests {}
+
+extension LocalUsageCostEstimatorTests {
   @Test func codexLogsProduceCostSummary() async throws {
     let env = try LocalCostTestEnvironment()
     defer { env.cleanup() }
@@ -165,34 +167,20 @@ struct LocalUsageCostEstimatorTests {
       cacheDirectory: cache
     )
 
-    let defaultSummary = try #require(await estimator.costSummary(
-      provider: .codex,
+    let defaultSummary = try await Self.scopedSummary(
+      using: estimator,
       account: defaultAccount,
-      now: env.now,
-      historyDays: 30
-    ))
-    let customSummary = try #require(await estimator.costSummary(
-      provider: .codex,
+      now: env.now
+    )
+    let customSummary = try await Self.scopedSummary(
+      using: estimator,
       account: customAccount,
-      now: env.now,
-      historyDays: 30
-    ))
+      now: env.now
+    )
 
     #expect(defaultSummary.monthTokens == 100)
     #expect(customSummary.monthTokens == 1000)
     #expect(defaultSummary.sourceDescription == "Estimated from selected account's local Codex logs")
-    #expect(estimator.cachedCostSummary(
-      provider: .codex,
-      account: defaultAccount,
-      now: env.now,
-      historyDays: 30
-    )?.monthTokens == 100)
-    #expect(estimator.cachedCostSummary(
-      provider: .codex,
-      account: customAccount,
-      now: env.now,
-      historyDays: 30
-    )?.monthTokens == 1000)
   }
 
   @Test func codexUnknownModelDoesNotExposeProviderNameAsTopModel() async throws {
@@ -218,7 +206,9 @@ struct LocalUsageCostEstimatorTests {
     #expect(summary.monthTokens == 185)
     #expect(summary.topModel == nil)
   }
+}
 
+extension LocalUsageCostEstimatorTests {
   @Test func claudeLogsProduceCostSummary() async throws {
     let env = try LocalCostTestEnvironment()
     defer { env.cleanup() }
@@ -288,6 +278,26 @@ struct LocalUsageCostEstimatorTests {
 
     let estimator = LocalUsageCostEstimator(environment: [:], homeDirectory: env.root)
     #expect(await estimator.costSummary(provider: .claude, now: env.now, historyDays: 30) == nil)
+  }
+
+  private static func scopedSummary(
+    using estimator: LocalUsageCostEstimator,
+    account: ProviderAccount,
+    now: Date
+  ) async throws -> CostSummary {
+    let summary = try #require(await estimator.costSummary(
+      provider: .codex,
+      account: account,
+      now: now,
+      historyDays: 30
+    ))
+    #expect(estimator.cachedCostSummary(
+      provider: .codex,
+      account: account,
+      now: now,
+      historyDays: 30
+    ) == summary)
+    return summary
   }
 
   private static func codexTotalLine(timestamp: String, input: Int, cached: Int, output: Int) -> [String: Any] {

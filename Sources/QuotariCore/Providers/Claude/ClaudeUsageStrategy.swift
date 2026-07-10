@@ -22,7 +22,9 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
   }
 
   public func isAvailable(_ context: ProviderFetchContext) async -> Bool {
-    if context.account != nil { return true }
+    if context.account != nil {
+      return true
+    }
     return (try? credentials(for: context)) != nil
   }
 
