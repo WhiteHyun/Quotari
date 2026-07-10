@@ -2,10 +2,14 @@ import QuotariCore
 import SwiftUI
 
 struct ProviderCardView: View {
+  @Environment(UsageStore.self) private var store
+
   let descriptor: ProviderDescriptor
   let snapshot: UsageSnapshot?
   let sourceLabel: String?
   let error: String?
+
+  @State private var isShowingAccounts = false
 
   private var accent: Color {
     Color(
@@ -47,23 +51,81 @@ struct ProviderCardView: View {
 
   private var header: some View {
     VStack(spacing: 2) {
-      HStack(alignment: .firstTextBaseline) {
+      HStack(alignment: .top) {
         Text(descriptor.metadata.displayName).font(.headline)
         Spacer()
-        if let account = snapshot?.account {
-          Text(account).font(.footnote).foregroundStyle(.secondary)
-        }
+        accountControl
       }
       HStack {
         if let sourceLabel {
           Text(sourceLabel).font(.caption).foregroundStyle(.secondary)
         }
         Spacer()
-        if let plan = snapshot?.plan {
-          Text(plan).font(.caption).foregroundStyle(.secondary)
-        }
       }
     }
+  }
+
+  @ViewBuilder
+  private var accountControl: some View {
+    if !providerAccounts.isEmpty {
+      Button {
+        isShowingAccounts.toggle()
+      } label: {
+        HStack(spacing: 6) {
+          accountLabels
+          Image(systemName: "chevron.right")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .background(
+          isShowingAccounts ? Color.primary.opacity(0.07) : Color.clear,
+          in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+        )
+      }
+      .buttonStyle(.plain)
+      .popover(
+        isPresented: $isShowingAccounts,
+        attachmentAnchor: .rect(.bounds),
+        arrowEdge: .leading
+      ) {
+        ProviderAccountPopover(descriptor: descriptor)
+          .environment(store)
+      }
+      .accessibilityLabel("\(descriptor.metadata.displayName) account")
+      .accessibilityHint("Shows usage for available accounts")
+    } else if accountDisplayName != nil || snapshot?.plan != nil {
+      accountLabels
+    }
+  }
+
+  private var accountLabels: some View {
+    VStack(alignment: .trailing, spacing: 1) {
+      if let accountDisplayName {
+        Text(accountDisplayName)
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+          .truncationMode(.middle)
+      }
+      if let plan = snapshot?.plan {
+        Text(plan)
+          .font(.caption)
+          .foregroundStyle(.secondary)
+          .lineLimit(1)
+      }
+    }
+    .frame(maxWidth: 180, alignment: .trailing)
+  }
+
+  private var providerAccounts: [ProviderAccount] {
+    store.accounts[descriptor.id] ?? []
+  }
+
+  private var accountDisplayName: String? {
+    store.activeAccount(for: descriptor.id)?.displayName ?? snapshot?.account
   }
 
   @ViewBuilder

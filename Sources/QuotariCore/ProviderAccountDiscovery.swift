@@ -92,13 +92,9 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
     detail: String,
     source: ProviderCredentialSource
   ) -> ProviderAccount {
-    let plan = PlanLabel.claude(
-      subscriptionType: credentials.subscriptionType,
-      rateLimitTier: credentials.rateLimitTier
-    )
-    return ProviderAccount(
+    ProviderAccount(
       provider: .claude,
-      displayName: plan.map { "\(displayName) \($0)" } ?? displayName,
+      displayName: displayName,
       detail: detail,
       credentialSource: source,
       credentialIdentity: credentials.accessToken

@@ -1,0 +1,268 @@
+import Foundation
+import QuotariCore
+
+struct ProviderAccountUsage: Sendable {
+  var snapshot: UsageSnapshot?
+  var sourceLabel: String?
+  var sourceKind: ProviderFetchKind?
+  var error: String?
+
+  init(
+    snapshot: UsageSnapshot? = nil,
+    sourceLabel: String? = nil,
+    sourceKind: ProviderFetchKind? = nil,
+    error: String? = nil
+  ) {
+    self.snapshot = snapshot
+    self.sourceLabel = sourceLabel
+    self.sourceKind = sourceKind
+    self.error = error
+  }
+}
+
+struct AccountUsageRefreshTask {
+  let task: Task<Void, Never>
+  let force: Bool
+}
+
+extension UsageStore {
+  /// The explicitly selected account, or the discovered account the current
+  /// provider snapshot confidently names. Without either there is no active
+  /// account — guessing would mark the wrong account as active and let
+  /// unattributed (or demo) provider data surface under a real account.
+  func activeAccount(for provider: UsageProvider) -> ProviderAccount? {
+    if let selected = selectedAccounts[provider] {
+      return selected
+    }
+    guard let accountName = snapshots[provider]?.account else { return nil }
+    return (accounts[provider] ?? []).first {
+      $0.displayName.localizedCaseInsensitiveCompare(accountName) == .orderedSame
+    }
+  }
+
+  func accountUsage(for account: ProviderAccount) -> ProviderAccountUsage? {
+    if let usage = accountUsage[account.provider]?[account.id] {
+      return usage
+    }
+    guard activeAccount(for: account.provider)?.id == account.id,
+          let snapshot = snapshots[account.provider]
+    else { return nil }
+    return ProviderAccountUsage(
+      snapshot: snapshot,
+      sourceLabel: sourceLabels[account.provider],
+      sourceKind: nil,
+      error: errors[account.provider]
+    )
+  }
+
+  func refreshAccountUsage(for provider: UsageProvider, force: Bool = false) async {
+    if let current = accountUsageRefreshTasks[provider] {
+      await current.task.value
+      if force, !current.force {
+        await refreshAccountUsage(for: provider, force: true)
+      }
+      return
+    }
+    guard let descriptor = providers.first(where: { $0.id == provider }) else { return }
+    let now = Date()
+    let accountsToFetch = accountsNeedingRefresh(for: provider, now: now, force: force)
+    guard !accountsToFetch.isEmpty else { return }
+
+    refreshingAccountUsageProviders.insert(provider)
+    let task = Task { [weak self] in
+      guard let self else { return }
+      await performAccountUsageRefresh(
+        provider: provider,
+        descriptor: descriptor,
+        accounts: accountsToFetch,
+        now: now
+      )
+      refreshingAccountUsageProviders.remove(provider)
+      accountUsageRefreshTasks[provider] = nil
+    }
+    accountUsageRefreshTasks[provider] = AccountUsageRefreshTask(task: task, force: force)
+    await task.value
+  }
+
+  func reconcileAccountUsage(
+    provider: UsageProvider,
+    previousAccounts: [ProviderAccount],
+    currentAccounts: [ProviderAccount]
+  ) {
+    let currentIDs = Set(currentAccounts.map(\.id))
+    var usage = accountUsage[provider] ?? [:]
+    usage = usage.filter { currentIDs.contains($0.key) }
+    for account in currentAccounts {
+      if let previous = previousAccounts.first(where: { $0.id == account.id }),
+         previous != account {
+        usage[account.id] = nil
+      }
+    }
+    accountUsage[provider] = usage.isEmpty ? nil : usage
+  }
+
+  func recordAccountUsageSuccess(
+    _ value: ProviderFetchResult,
+    provider: UsageProvider,
+    account: ProviderAccount?
+  ) -> UsageSnapshot {
+    let usage = Self.normalizedSnapshot(value.usage, account: account)
+    // The automatic pipeline falls back to demo data when the live fetch
+    // fails; its fabricated snapshot must never be stored under a real account.
+    if account == nil, value.sourceKind == .mock {
+      return usage
+    }
+    if let resolvedAccount = account ?? matchedAccount(for: usage, provider: provider) {
+      setAccountUsage(
+        ProviderAccountUsage(
+          snapshot: usage,
+          sourceLabel: value.sourceLabel,
+          sourceKind: value.sourceKind,
+          error: nil
+        ),
+        for: resolvedAccount
+      )
+    }
+    return usage
+  }
+
+  func recordAccountUsageFailure(
+    _ error: Error,
+    provider: UsageProvider,
+    account: ProviderAccount?
+  ) {
+    // Automatic-mode failures stay at the provider level (errors[provider]);
+    // guessing an account here would blame the wrong credentials.
+    guard let account else { return }
+    var usage = accountUsage[provider]?[account.id] ?? ProviderAccountUsage()
+    usage.error = error.localizedDescription
+    setAccountUsage(usage, for: account)
+  }
+
+  /// Cached usage older than this is not shown as current; selection falls
+  /// back to a clean loading state and waits for the follow-up refresh.
+  static let cachedAccountUsageLifetime: TimeInterval = 30 * 60
+
+  func applyCachedAccountUsage(
+    _ usage: ProviderAccountUsage?,
+    account: ProviderAccount?,
+    provider: UsageProvider
+  ) {
+    guard let account, let usage, let snapshot = usage.snapshot,
+          Date().timeIntervalSince(snapshot.updatedAt) < Self.cachedAccountUsageLifetime
+    else {
+      snapshots[provider] = nil
+      errors[provider] = nil
+      sourceLabels[provider] = nil
+      return
+    }
+    let hidesProviderCost = Self.shouldHideProviderCost(provider: provider, sourceKind: usage.sourceKind)
+    let needsLocalCost = Self.shouldUseLocalCost(
+      provider: provider,
+      existing: snapshot.cost,
+      sourceKind: usage.sourceKind
+    )
+    let cachedCost = needsLocalCost
+      ? costEstimator.cachedCostSummary(
+        provider: provider,
+        account: account,
+        now: snapshot.updatedAt,
+        historyDays: 30
+      )
+      : nil
+    snapshots[provider] = Self.displaySnapshot(
+      from: snapshot,
+      previous: nil,
+      cachedCost: cachedCost,
+      prefersLocalCost: needsLocalCost,
+      hidesProviderCost: hidesProviderCost
+    )
+    errors[provider] = usage.error
+    sourceLabels[provider] = usage.sourceLabel
+  }
+
+  private func accountsNeedingRefresh(
+    for provider: UsageProvider,
+    now: Date,
+    force: Bool
+  ) -> [ProviderAccount] {
+    (accounts[provider] ?? []).filter { account in
+      guard !force,
+            let snapshot = accountUsage[provider]?[account.id]?.snapshot
+      else { return true }
+      return now.timeIntervalSince(snapshot.updatedAt) >= refreshInterval
+    }
+  }
+
+  private func performAccountUsageRefresh(
+    provider: UsageProvider,
+    descriptor: ProviderDescriptor,
+    accounts: [ProviderAccount],
+    now: Date
+  ) async {
+    await withTaskGroup(of: (ProviderAccount, Result<ProviderFetchResult, Error>).self) { group in
+      for account in accounts {
+        group.addTask {
+          await (account, descriptor.fetch(now: now, account: account))
+        }
+      }
+      for await (account, result) in group {
+        guard self.accounts[provider]?.contains(account) == true else { continue }
+        applyAccountUsageResult(result, account: account)
+      }
+    }
+  }
+
+  private func applyAccountUsageResult(
+    _ result: Result<ProviderFetchResult, Error>,
+    account: ProviderAccount
+  ) {
+    switch result {
+    case let .success(value):
+      _ = recordAccountUsageSuccess(value, provider: account.provider, account: account)
+    case let .failure(error):
+      recordAccountUsageFailure(error, provider: account.provider, account: account)
+    }
+    syncSelectedAccountUsage(for: account)
+  }
+
+  /// Per-account refreshes land in `accountUsage`; mirror the selected
+  /// account's result onto the dashboard so the card and the popover
+  /// never show different numbers for the same account.
+  private func syncSelectedAccountUsage(for account: ProviderAccount) {
+    let provider = account.provider
+    guard selectedAccounts[provider]?.id == account.id,
+          let usage = accountUsage[provider]?[account.id]
+    else { return }
+    guard usage.snapshot != nil else {
+      errors[provider] = usage.error // keep any prior snapshot
+      return
+    }
+    applyCachedAccountUsage(usage, account: account, provider: provider)
+  }
+
+  private func setAccountUsage(_ usage: ProviderAccountUsage, for account: ProviderAccount) {
+    var providerUsage = accountUsage[account.provider] ?? [:]
+    providerUsage[account.id] = usage
+    accountUsage[account.provider] = providerUsage
+  }
+
+  /// Results without a confident name match stay unattributed rather than
+  /// being credited to an arbitrary account.
+  private func matchedAccount(for snapshot: UsageSnapshot, provider: UsageProvider) -> ProviderAccount? {
+    guard let name = snapshot.account else { return nil }
+    return (accounts[provider] ?? []).first {
+      $0.displayName.localizedCaseInsensitiveCompare(name) == .orderedSame
+    }
+  }
+
+  private nonisolated static func normalizedSnapshot(
+    _ snapshot: UsageSnapshot,
+    account: ProviderAccount?
+  ) -> UsageSnapshot {
+    guard let account, snapshot.account == nil else { return snapshot }
+    var normalized = snapshot
+    normalized.account = account.displayName
+    return normalized
+  }
+}

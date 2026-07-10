@@ -26,7 +26,6 @@ struct DashboardView: View {
 /// wraps this in a scroll view for the menu bar; snapshot tests render it directly.
 struct DashboardContent: View {
   @Environment(UsageStore.self) private var store
-  @Environment(\.openSettings) private var openSettings
 
   var body: some View {
     VStack(spacing: 0) {
@@ -72,7 +71,7 @@ struct DashboardContent: View {
         title: "Settings…",
         shortcut: "⌘,"
       ) {
-        openSettings()
+        SettingsWindowController.shared.show(store: store)
       }
       .keyboardShortcut(",")
 
@@ -112,33 +111,51 @@ private struct MenuActionRow: View {
 
   var body: some View {
     Button(action: action) {
-      HStack(spacing: 8) {
-        if busy {
-          ProgressView()
-            .controlSize(.small)
-            .frame(width: 16, height: 16)
-        } else {
-          Image(systemName: icon)
-            .frame(width: 16)
-        }
-        Text(title)
-        Spacer()
-        if let shortcut {
-          Text(shortcut)
-            .foregroundStyle(hovering ? Color.white.opacity(0.8) : Color.secondary)
-        }
-      }
-      .font(.body)
-      .foregroundStyle(hovering ? Color.white : Color.primary)
-      .padding(.horizontal, 8)
-      .padding(.vertical, 5)
-      .contentShape(Rectangle())
-      .background(
-        hovering ? Color.accentColor : Color.clear,
-        in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+      MenuActionLabel(
+        icon: icon,
+        title: title,
+        shortcut: shortcut,
+        busy: busy,
+        highlighted: hovering
       )
     }
     .buttonStyle(.plain)
     .onHover { hovering = $0 }
+  }
+}
+
+private struct MenuActionLabel: View {
+  let icon: String
+  let title: String
+  let shortcut: String?
+  let busy: Bool
+  let highlighted: Bool
+
+  var body: some View {
+    HStack(spacing: 8) {
+      if busy {
+        ProgressView()
+          .controlSize(.small)
+          .frame(width: 16, height: 16)
+      } else {
+        Image(systemName: icon)
+          .frame(width: 16)
+      }
+      Text(title)
+      Spacer()
+      if let shortcut {
+        Text(shortcut)
+          .foregroundStyle(highlighted ? Color.white.opacity(0.8) : Color.secondary)
+      }
+    }
+    .font(.body)
+    .foregroundStyle(highlighted ? Color.white : Color.primary)
+    .padding(.horizontal, 8)
+    .padding(.vertical, 5)
+    .contentShape(Rectangle())
+    .background(
+      highlighted ? Color.accentColor : Color.clear,
+      in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+    )
   }
 }
