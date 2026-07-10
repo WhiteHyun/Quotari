@@ -54,27 +54,44 @@ struct LongContextModelPricing: Equatable, Sendable {
 
 struct ModelPricing: Equatable, Sendable {
   let standard: ModelRateComponents
-  let longContext: LongContextModelPricing?
+  let longContexts: [LongContextModelPricing]
+
+  init(standard: ModelRateComponents, longContext: LongContextModelPricing?) {
+    self.init(standard: standard, longContexts: longContext.map { [$0] } ?? [])
+  }
+
+  init(standard: ModelRateComponents, longContexts: [LongContextModelPricing]) {
+    self.standard = standard
+    self.longContexts = longContexts.sorted { $0.thresholdTokens < $1.thresholdTokens }
+  }
+
+  var longContext: LongContextModelPricing? {
+    longContexts.first
+  }
 
   func fillingMissing(with fallback: Self?) -> Self {
-    let mergedLongContext: LongContextModelPricing? = if let longContext {
-      LongContextModelPricing(
-        thresholdTokens: longContext.thresholdTokens,
-        overrides: longContext.overrides.fillingMissing(with: fallback?.longContext?.overrides)
-      )
+    let mergedLongContexts: [LongContextModelPricing] = if longContexts.isEmpty {
+      fallback?.longContexts ?? []
     } else {
-      fallback?.longContext
+      longContexts.map { longContext in
+        let fallbackRates = fallback?.longContexts
+          .first { $0.thresholdTokens == longContext.thresholdTokens }?
+          .overrides
+        return LongContextModelPricing(
+          thresholdTokens: longContext.thresholdTokens,
+          overrides: longContext.overrides.fillingMissing(with: fallbackRates)
+        )
+      }
     }
     return Self(
       standard: standard.fillingMissing(with: fallback?.standard),
-      longContext: mergedLongContext
+      longContexts: mergedLongContexts
     )
   }
 
   func rates(contextInputTokens: Int?) -> ModelRateComponents {
-    guard let longContext,
-          let contextInputTokens,
-          contextInputTokens > longContext.thresholdTokens
+    guard let contextInputTokens,
+          let longContext = longContexts.last(where: { contextInputTokens > $0.thresholdTokens })
     else { return standard }
     return standard.applying(longContext.overrides)
   }
@@ -142,7 +159,7 @@ enum LiteLLMPricingCatalogParser {
       )
       let pricing = ModelPricing(
         standard: standard,
-        longContext: longContextPricing(entry, provider: provider)
+        longContexts: longContextPricing(entry)
       )
 
       if entries[key] != nil {
@@ -192,40 +209,23 @@ enum LiteLLMPricingCatalogParser {
     value * 1_000_000
   }
 
-  private static func longContextPricing(
-    _ entry: LiteLLMEntry,
-    provider: UsageProvider
-  ) -> LongContextModelPricing? {
-    let threshold: Int
-    let overrides: ModelRateComponents
-    switch provider {
-    case .codex:
-      threshold = 272_000
-      overrides = ModelRateComponents(
-        input: validOptionalRate(entry.inputCostPerTokenAbove272K).map(perMillion),
-        cacheRead: validOptionalRate(entry.cacheReadInputTokenCostAbove272K).map(perMillion),
-        cacheWrite: validOptionalRate(entry.cacheCreationInputTokenCostAbove272K).map(perMillion),
-        output: validOptionalRate(entry.outputCostPerTokenAbove272K).map(perMillion)
+  private static func longContextPricing(_ entry: LiteLLMEntry) -> [LongContextModelPricing] {
+    entry.longContextRates.compactMap { threshold, rates in
+      let overrides = ModelRateComponents(
+        input: validOptionalRate(rates.input).map(perMillion),
+        cacheRead: validOptionalRate(rates.cacheRead).map(perMillion),
+        cacheWrite: validOptionalRate(rates.cacheWrite).map(perMillion),
+        output: validOptionalRate(rates.output).map(perMillion)
       )
-    case .claude:
-      threshold = 200_000
-      overrides = ModelRateComponents(
-        input: validOptionalRate(entry.inputCostPerTokenAbove200K).map(perMillion),
-        cacheRead: validOptionalRate(entry.cacheReadInputTokenCostAbove200K).map(perMillion),
-        cacheWrite: validOptionalRate(entry.cacheCreationInputTokenCostAbove200K).map(perMillion),
-        output: validOptionalRate(entry.outputCostPerTokenAbove200K).map(perMillion)
-      )
-    case .glm:
-      return nil
+      let values = [
+        overrides.inputPerMillion,
+        overrides.cacheReadPerMillion,
+        overrides.cacheWritePerMillion,
+        overrides.outputPerMillion,
+      ]
+      guard values.contains(where: { $0 != nil }) else { return nil }
+      return LongContextModelPricing(thresholdTokens: threshold, overrides: overrides)
     }
-    let values = [
-      overrides.inputPerMillion,
-      overrides.cacheReadPerMillion,
-      overrides.cacheWritePerMillion,
-      overrides.outputPerMillion,
-    ]
-    guard values.contains(where: { $0 != nil }) else { return nil }
-    return LongContextModelPricing(thresholdTokens: threshold, overrides: overrides)
   }
 }
 
@@ -268,14 +268,27 @@ private struct LiteLLMEntry: Decodable {
   let cacheReadInputTokenCost: Double?
   let cacheCreationInputTokenCost: Double?
   let outputCostPerToken: Double?
-  let inputCostPerTokenAbove272K: Double?
-  let cacheReadInputTokenCostAbove272K: Double?
-  let cacheCreationInputTokenCostAbove272K: Double?
-  let outputCostPerTokenAbove272K: Double?
-  let inputCostPerTokenAbove200K: Double?
-  let cacheReadInputTokenCostAbove200K: Double?
-  let cacheCreationInputTokenCostAbove200K: Double?
-  let outputCostPerTokenAbove200K: Double?
+  let longContextRates: [Int: LiteLLMLongContextRates]
+
+  init(from decoder: Decoder) throws {
+    let standard = try decoder.container(keyedBy: CodingKeys.self)
+    litellmProvider = try standard.decodeIfPresent(String.self, forKey: .litellmProvider)
+    inputCostPerToken = try standard.decodeIfPresent(Double.self, forKey: .inputCostPerToken)
+    cacheReadInputTokenCost = try standard.decodeIfPresent(Double.self, forKey: .cacheReadInputTokenCost)
+    cacheCreationInputTokenCost = try standard.decodeIfPresent(Double.self, forKey: .cacheCreationInputTokenCost)
+    outputCostPerToken = try standard.decodeIfPresent(Double.self, forKey: .outputCostPerToken)
+
+    let dynamic = try decoder.container(keyedBy: DynamicCodingKey.self)
+    var tiers: [Int: LiteLLMLongContextRates] = [:]
+    for key in dynamic.allKeys {
+      guard let (threshold, component) = LiteLLMLongContextKey.parse(key.stringValue) else { continue }
+      let value = try dynamic.decodeIfPresent(Double.self, forKey: key)
+      var rates = tiers[threshold, default: LiteLLMLongContextRates()]
+      rates.set(value, for: component)
+      tiers[threshold] = rates
+    }
+    longContextRates = tiers
+  }
 
   enum CodingKeys: String, CodingKey {
     case litellmProvider = "litellm_provider"
@@ -283,14 +296,57 @@ private struct LiteLLMEntry: Decodable {
     case cacheReadInputTokenCost = "cache_read_input_token_cost"
     case cacheCreationInputTokenCost = "cache_creation_input_token_cost"
     case outputCostPerToken = "output_cost_per_token"
-    case inputCostPerTokenAbove272K = "input_cost_per_token_above_272k_tokens"
-    case cacheReadInputTokenCostAbove272K = "cache_read_input_token_cost_above_272k_tokens"
-    case cacheCreationInputTokenCostAbove272K = "cache_creation_input_token_cost_above_272k_tokens"
-    case outputCostPerTokenAbove272K = "output_cost_per_token_above_272k_tokens"
-    case inputCostPerTokenAbove200K = "input_cost_per_token_above_200k_tokens"
-    case cacheReadInputTokenCostAbove200K = "cache_read_input_token_cost_above_200k_tokens"
-    case cacheCreationInputTokenCostAbove200K = "cache_creation_input_token_cost_above_200k_tokens"
-    case outputCostPerTokenAbove200K = "output_cost_per_token_above_200k_tokens"
+  }
+}
+
+private struct LiteLLMLongContextRates {
+  var input: Double?
+  var cacheRead: Double?
+  var cacheWrite: Double?
+  var output: Double?
+
+  mutating func set(_ value: Double?, for component: LiteLLMLongContextComponent) {
+    switch component {
+    case .input:
+      input = value
+    case .cacheRead:
+      cacheRead = value
+    case .cacheWrite:
+      cacheWrite = value
+    case .output:
+      output = value
+    }
+  }
+}
+
+private enum LiteLLMLongContextComponent {
+  case input
+  case cacheRead
+  case cacheWrite
+  case output
+}
+
+private enum LiteLLMLongContextKey {
+  private static let suffix = "k_tokens"
+  private static let prefixes: [(String, LiteLLMLongContextComponent)] = [
+    ("input_cost_per_token_above_", .input),
+    ("cache_read_input_token_cost_above_", .cacheRead),
+    ("cache_creation_input_token_cost_above_", .cacheWrite),
+    ("output_cost_per_token_above_", .output),
+  ]
+
+  static func parse(_ key: String) -> (threshold: Int, component: LiteLLMLongContextComponent)? {
+    guard key.hasSuffix(suffix) else { return nil }
+    for (prefix, component) in prefixes where key.hasPrefix(prefix) {
+      let start = key.index(key.startIndex, offsetBy: prefix.count)
+      let end = key.index(key.endIndex, offsetBy: -suffix.count)
+      guard let thousands = Int(key[start ..< end]),
+            thousands > 0,
+            thousands <= Int.max / 1000
+      else { return nil }
+      return (thousands * 1000, component)
+    }
+    return nil
   }
 }
 

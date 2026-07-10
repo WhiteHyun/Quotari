@@ -44,6 +44,31 @@ struct ModelPricingCatalogParserTests {
     #expect(parsed.issues.contains { $0.reason.contains("collision") })
   }
 
+  @Test func parsesAndSelectsDynamicLongContextTiers() throws {
+    let data = Data("""
+    {
+      "future-gpt": {
+        "litellm_provider": "openai",
+        "input_cost_per_token": 0.000001,
+        "output_cost_per_token": 0.000002,
+        "input_cost_per_token_above_128k_tokens": 0.000003,
+        "output_cost_per_token_above_128k_tokens": 0.000004,
+        "input_cost_per_token_above_512k_tokens": 0.000005,
+        "output_cost_per_token_above_512k_tokens": 0.000006
+      }
+    }
+    """.utf8)
+
+    let catalog = try LiteLLMPricingCatalogParser.parse(data).catalog
+    let pricing = try #require(catalog.pricing(for: .init(provider: .codex, modelID: "future-gpt")))
+
+    #expect(pricing.longContexts.map(\.thresholdTokens) == [128_000, 512_000])
+    #expect(pricing.rates(contextInputTokens: 128_000).inputPerMillion == 1)
+    #expect(pricing.rates(contextInputTokens: 128_001).inputPerMillion == 3)
+    #expect(pricing.rates(contextInputTokens: 512_001).inputPerMillion == 5)
+    #expect(pricing.rates(contextInputTokens: 512_001).outputPerMillion == 6)
+  }
+
   @Test func longContextPricingAndPartialCoverageAreApplied() throws {
     let parsed = try LiteLLMPricingCatalogParser.parse(Data(Self.catalogJSON.utf8))
     let pricing = LocalModelPricing(snapshot: ModelPricingCatalogSnapshot(

@@ -25,6 +25,27 @@ struct DynamicPricingEstimatorIntegrationTests {
     #expect(summary.estimateCoverage?.isComplete == true)
   }
 
+  @Test func estimatorSkipsPricingLookupWhenScanHasNoModelKeys() async {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("quotari-empty-estimator-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let pricingProvider = RecordingPricingCatalogProvider()
+    let estimator = LocalUsageCostEstimator(
+      environment: ["CODEX_HOME": root.appendingPathComponent("codex").path],
+      homeDirectory: root,
+      pricingCatalogProvider: pricingProvider
+    )
+
+    let summary = await estimator.costSummary(
+      provider: .codex,
+      now: Date(timeIntervalSince1970: 1_767_744_000),
+      historyDays: 1
+    )
+
+    #expect(summary == nil)
+    #expect(await pricingProvider.requestCount == 0)
+  }
+
   private static func writeSession(root: URL) throws {
     let sessions = root.appendingPathComponent("codex/sessions", isDirectory: true)
     try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
@@ -73,5 +94,14 @@ private struct FixedPricingCatalogProvider: ModelPricingCatalogProviding {
 
   func snapshot(for keys: Set<ModelPricingKey>, now: Date) async -> ModelPricingCatalogSnapshot {
     value
+  }
+}
+
+private actor RecordingPricingCatalogProvider: ModelPricingCatalogProviding {
+  private(set) var requestCount = 0
+
+  func snapshot(for keys: Set<ModelPricingKey>, now: Date) async -> ModelPricingCatalogSnapshot {
+    requestCount += 1
+    return .bundledOnly
   }
 }

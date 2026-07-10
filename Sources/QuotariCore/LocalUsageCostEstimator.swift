@@ -128,7 +128,11 @@ public struct LocalUsageCostEstimator: UsageCostEstimating {
     let keys = Set(scan.records.compactMap { record in
       record.model.map { ModelPricingKey(provider: provider, modelID: $0) }
     })
-    let pricingSnapshot = await pricingCatalogProvider.snapshot(for: keys, now: now)
+    let pricingSnapshot = if keys.isEmpty {
+      ModelPricingCatalogSnapshot.bundledOnly
+    } else {
+      await pricingCatalogProvider.snapshot(for: keys, now: now)
+    }
     let summary = await Task.detached(priority: .utility) {
       LocalCostSummaryBuilder.summary(
         provider: provider,
