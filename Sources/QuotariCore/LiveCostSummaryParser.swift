@@ -4,8 +4,7 @@ enum LiveCostSummaryParser {
   static func parse(_ root: [String: Any], now: Date) -> CostSummary? {
     if let spend = root["spend"] as? [String: Any],
        let used = spend["used"] as? [String: Any],
-       let summary = amountMinorSummary(from: used, now: now)
-    {
+       let summary = amountMinorSummary(from: used, now: now) {
       return summary
     }
 
@@ -16,8 +15,7 @@ enum LiveCostSummaryParser {
          currencyCode: string(extra["currency"]) ?? "USD",
          now: now,
          sourceDescription: "Reported usage credits"
-       )
-    {
+       ) {
       return summary
     }
 
@@ -70,9 +68,15 @@ enum LiveCostSummaryParser {
   }
 
   private static func number(_ value: Any?) -> Double? {
-    if let double = value as? Double { return double }
-    if let int = value as? Int { return Double(int) }
-    if let string = value as? String { return Double(string) }
+    if let double = value as? Double {
+      return double
+    }
+    if let int = value as? Int {
+      return Double(int)
+    }
+    if let string = value as? String {
+      return Double(string)
+    }
     return nil
   }
 

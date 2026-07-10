@@ -9,6 +9,8 @@ final class UsageStore {
   private(set) var snapshots: [UsageProvider: UsageSnapshot] = [:]
   private(set) var errors: [UsageProvider: String] = [:]
   private(set) var sourceLabels: [UsageProvider: String] = [:]
+  private(set) var accounts: [UsageProvider: [ProviderAccount]] = [:]
+  private(set) var selectedAccounts: [UsageProvider: ProviderAccount] = [:]
   private(set) var isRefreshing = false
   private(set) var lastRefresh: Date?
 
@@ -17,8 +19,7 @@ final class UsageStore {
   }
 
   var iconStyle: MenuBarIconStyle =
-    .init(rawValue: UserDefaults.standard.string(forKey: UsageStore.iconStyleKey) ?? "") ?? .gauge
-  {
+    .init(rawValue: UserDefaults.standard.string(forKey: UsageStore.iconStyleKey) ?? "") ?? .gauge {
     didSet {
       UserDefaults.standard.set(iconStyle.rawValue, forKey: Self.iconStyleKey)
     }
@@ -29,8 +30,12 @@ final class UsageStore {
 
   let providers: [ProviderDescriptor]
   private let costEstimator: any UsageCostEstimating
+  private let accountDiscovery: any ProviderAccountDiscovering
+  private let accountSelectionStore: ProviderAccountSelectionStore
 
   private var timerTask: Task<Void, Never>?
+  private var refreshRequested = false
+  private var accountRevisions: [UsageProvider: UInt] = [:]
   private var costTasks: [UsageProvider: Task<Void, Never>] = [:]
   private var lastCostScans: [UsageProvider: Date] = [:]
   private var lastEmptyCostScans: [UsageProvider: Date] = [:]
@@ -44,31 +49,103 @@ final class UsageStore {
   /// present on the machine running them.
   init(
     providers: [ProviderDescriptor] = ProviderRegistry.all,
-    costEstimator: any UsageCostEstimating = LocalUsageCostEstimator()
+    costEstimator: any UsageCostEstimating = LocalUsageCostEstimator(),
+    accountDiscovery: any ProviderAccountDiscovering = ProviderAccountDiscovery(),
+    accountSelectionStore: ProviderAccountSelectionStore = ProviderAccountSelectionStore(),
+    startsAutomatically: Bool = true
   ) {
     assert(ProviderRegistry.isComplete, "Every UsageProvider case needs a descriptor")
     self.providers = providers
     self.costEstimator = costEstimator
-    startTimer()
+    self.accountDiscovery = accountDiscovery
+    self.accountSelectionStore = accountSelectionStore
+    selectedAccounts = accountSelectionStore.load()
+    if startsAutomatically {
+      startTimer()
+      Task { await reloadAccounts() }
+    }
   }
 
   func refresh() async {
-    guard !isRefreshing else { return }
+    guard !isRefreshing else {
+      refreshRequested = true
+      return
+    }
     isRefreshing = true
     defer { isRefreshing = false }
 
+    repeat {
+      refreshRequested = false
+      await performRefresh()
+    } while refreshRequested
+  }
+
+  private func performRefresh() async {
     let now = Date()
-    await withTaskGroup(of: (UsageProvider, Result<ProviderFetchResult, Error>).self) { group in
+    await withTaskGroup(of: (UsageProvider, UInt, Result<ProviderFetchResult, Error>).self) { group in
       for descriptor in providers {
-        group.addTask { await (descriptor.id, descriptor.fetch(now: now)) }
+        let account = selectedAccounts[descriptor.id]
+        let revision = accountRevisions[descriptor.id] ?? 0
+        group.addTask { await (descriptor.id, revision, descriptor.fetch(now: now, account: account)) }
       }
-      for await (provider, result) in group {
+      for await (provider, revision, result) in group {
+        guard (accountRevisions[provider] ?? 0) == revision else { continue }
         apply(provider: provider, result: result)
       }
     }
     lastRefresh = Date()
   }
 
+  private func refresh(provider: UsageProvider) async {
+    guard let descriptor = providers.first(where: { $0.id == provider }) else { return }
+    let account = selectedAccounts[provider]
+    let revision = accountRevisions[provider] ?? 0
+    let result = await descriptor.fetch(now: Date(), account: account)
+    guard (accountRevisions[provider] ?? 0) == revision else { return }
+    apply(provider: provider, result: result)
+    lastRefresh = Date()
+  }
+
+  func reloadAccounts() async {
+    var next: [UsageProvider: [ProviderAccount]] = [:]
+    for descriptor in providers {
+      var providerAccounts = await accountDiscovery.accounts(for: descriptor.id)
+      if let selected = selectedAccounts[descriptor.id],
+         !providerAccounts.contains(where: { $0.id == selected.id }) {
+        providerAccounts.append(selected)
+      }
+      next[descriptor.id] = providerAccounts
+    }
+    accounts = next
+  }
+
+  func selectAccount(id: String?, for provider: UsageProvider) {
+    let account = id.flatMap { id in accounts[provider]?.first { $0.id == id } }
+    selectAccount(account, for: provider)
+  }
+
+  func selectAccount(_ account: ProviderAccount?, for provider: UsageProvider) {
+    guard selectedAccounts[provider] != account else { return }
+    if let account {
+      selectedAccounts[provider] = account
+    } else {
+      selectedAccounts[provider] = nil
+    }
+    accountRevisions[provider, default: 0] &+= 1
+    try? accountSelectionStore.save(selectedAccounts)
+    snapshots[provider] = nil
+    errors[provider] = nil
+    sourceLabels[provider] = nil
+    costTasks[provider]?.cancel()
+    costTasks[provider] = nil
+    lastCostScans[provider] = nil
+    lastEmptyCostScans[provider] = nil
+    latestReportedCostFallbacks[provider] = nil
+    Task { await refresh(provider: provider) }
+  }
+}
+
+private extension UsageStore {
   private func apply(provider: UsageProvider, result: Result<ProviderFetchResult, Error>) {
     switch result {
     case let .success(value):
@@ -82,8 +159,14 @@ final class UsageStore {
         existing: value.usage.cost,
         sourceKind: value.sourceKind
       )
+      let account = selectedAccounts[provider]
       let cachedCost = needsLocalCost
-        ? costEstimator.cachedCostSummary(provider: provider, now: value.usage.updatedAt, historyDays: 30)
+        ? costEstimator.cachedCostSummary(
+          provider: provider,
+          account: account,
+          now: value.usage.updatedAt,
+          historyDays: 30
+        )
         : nil
       snapshots[provider] = Self.displaySnapshot(
         from: value.usage,
@@ -97,6 +180,7 @@ final class UsageStore {
       if needsLocalCost {
         refreshCost(
           provider: provider,
+          account: account,
           now: value.usage.updatedAt,
           reportedCostFallback: reportedCostFallback,
           cacheHit: cachedCost != nil
@@ -172,6 +256,7 @@ final class UsageStore {
 
   private func refreshCost(
     provider: UsageProvider,
+    account: ProviderAccount?,
     now: Date,
     reportedCostFallback: CostSummary?,
     cacheHit: Bool
@@ -179,35 +264,51 @@ final class UsageStore {
     latestReportedCostFallbacks[provider] = ReportedCostFallback(cost: reportedCostFallback)
     guard costTasks[provider] == nil else { return }
     if let lastEmptyCostScan = lastEmptyCostScans[provider],
-       now.timeIntervalSince(lastEmptyCostScan) < Self.localCostScanThrottle
-    {
+       now.timeIntervalSince(lastEmptyCostScan) < Self.localCostScanThrottle {
       return
     }
     if cacheHit,
        let lastCostScan = lastCostScans[provider],
-       now.timeIntervalSince(lastCostScan) < Self.localCostScanThrottle
-    {
+       now.timeIntervalSince(lastCostScan) < Self.localCostScanThrottle {
       return
     }
     lastCostScans[provider] = now
+    let revision = accountRevisions[provider] ?? 0
     let costEstimator = costEstimator
     costTasks[provider] = Task { [weak self] in
-      let cost = await costEstimator.costSummary(provider: provider, now: now, historyDays: 30)
+      let cost = await costEstimator.costSummary(
+        provider: provider,
+        account: account,
+        now: now,
+        historyDays: 30
+      )
       guard !Task.isCancelled else { return }
       await MainActor.run {
-        self?.finishCostRefresh(cost, provider: provider)
+        self?.finishCostRefresh(
+          cost,
+          provider: provider,
+          account: account,
+          revision: revision
+        )
       }
     }
   }
 
   private func finishCostRefresh(
     _ cost: CostSummary?,
-    provider: UsageProvider
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    revision: UInt
   ) {
+    guard (accountRevisions[provider] ?? 0) == revision else { return }
     costTasks[provider] = nil
     guard let cost else {
       lastEmptyCostScans[provider] = Date()
-      costEstimator.invalidateCachedCostSummary(provider: provider, historyDays: 30)
+      costEstimator.invalidateCachedCostSummary(
+        provider: provider,
+        account: account,
+        historyDays: 30
+      )
       let reportedCostFallback = latestReportedCostFallbacks[provider]?.cost
       clearLocalCost(provider: provider, reportedCostFallback: reportedCostFallback)
       return

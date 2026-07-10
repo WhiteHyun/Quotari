@@ -30,8 +30,12 @@ public struct ProviderDescriptor: Sendable {
     self.pipeline = pipeline
   }
 
-  public func fetch(now: Date, credential: String? = nil) async -> Result<ProviderFetchResult, Error> {
-    await pipeline.fetch(ProviderFetchContext(provider: id, now: now, credential: credential))
+  public func fetch(
+    now: Date,
+    credential: String? = nil,
+    account: ProviderAccount? = nil
+  ) async -> Result<ProviderFetchResult, Error> {
+    await pipeline.fetch(ProviderFetchContext(provider: id, now: now, credential: credential, account: account))
   }
 }
 

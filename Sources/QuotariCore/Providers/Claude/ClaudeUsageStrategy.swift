@@ -21,12 +21,15 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
     self.loadCredentials = loadCredentials
   }
 
-  public func isAvailable(_: ProviderFetchContext) async -> Bool {
-    (try? loadCredentials()) != nil
+  public func isAvailable(_ context: ProviderFetchContext) async -> Bool {
+    if context.account != nil {
+      return true
+    }
+    return (try? credentials(for: context)) != nil
   }
 
   public func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
-    let credentials = try loadCredentials()
+    let credentials = try credentials(for: context)
     let data = try await transport.getJSON(
       url: usageURL,
       bearer: credentials.accessToken,
@@ -43,6 +46,21 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
   }
 
   public func shouldFallback(on error: Error) -> Bool {
-    !(error is ProviderHTTPError)
+    if let fetchError = error as? ProviderFetchError,
+       case .selectedCredentialUnavailable = fetchError {
+      return false
+    }
+    return !(error is ProviderHTTPError)
+  }
+
+  private func credentials(for context: ProviderFetchContext) throws -> ClaudeCredentials {
+    if let account = context.account {
+      do {
+        return try ClaudeCredentialsStore.load(source: account.credentialSource)
+      } catch {
+        throw ProviderFetchError.selectedCredentialUnavailable(context.provider)
+      }
+    }
+    return try loadCredentials()
   }
 }

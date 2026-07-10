@@ -65,8 +65,7 @@ enum LenientDateParser {
     }
     if let firstSpace = string.firstIndex(of: " "),
        string[..<firstSpace].contains("-"),
-       !string[..<firstSpace].contains("T")
-    {
+       !string[..<firstSpace].contains("T") {
       var replaced = string
       replaced.replaceSubrange(firstSpace ... firstSpace, with: "T")
       appendCandidate(replaced)

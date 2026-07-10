@@ -21,12 +21,15 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
     self.loadCredentials = loadCredentials
   }
 
-  public func isAvailable(_: ProviderFetchContext) async -> Bool {
-    (try? loadCredentials()) != nil
+  public func isAvailable(_ context: ProviderFetchContext) async -> Bool {
+    if context.account != nil {
+      return true
+    }
+    return (try? credentials(for: context)) != nil
   }
 
   public func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
-    let credentials = try loadCredentials()
+    let credentials = try credentials(for: context)
     var headers: [String: String] = [:]
     if let account = credentials.accountID {
       headers["chatgpt-account-id"] = account
@@ -40,7 +43,22 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
   }
 
   public func shouldFallback(on error: Error) -> Bool {
+    if let fetchError = error as? ProviderFetchError,
+       case .selectedCredentialUnavailable = fetchError {
+      return false
+    }
     // Auth failures won't be fixed by retrying another Codex strategy.
-    !(error is ProviderHTTPError)
+    return !(error is ProviderHTTPError)
+  }
+
+  private func credentials(for context: ProviderFetchContext) throws -> CodexCredentials {
+    if let account = context.account {
+      do {
+        return try CodexCredentialsStore.load(source: account.credentialSource)
+      } catch {
+        throw ProviderFetchError.selectedCredentialUnavailable(context.provider)
+      }
+    }
+    return try loadCredentials()
   }
 }

@@ -76,8 +76,12 @@ public enum CodexUsageParser {
   }
 
   private static func durationSuffix(for duration: TimeInterval) -> String? {
-    if duration >= 6 * 24 * 3600 { return "Weekly" }
-    if duration >= 3600 { return "\(Int((duration / 3600).rounded()))-hour" }
+    if duration >= 6 * 24 * 3600 {
+      return "Weekly"
+    }
+    if duration >= 3600 {
+      return "\(Int((duration / 3600).rounded()))-hour"
+    }
     return nil
   }
 
@@ -125,8 +129,7 @@ public enum CodexUsageParser {
   private static func resetDate(from fields: [String: Any], now: Date) -> Date? {
     if let seconds = number(fields["resets_in_seconds"])
       ?? number(fields["reset_in_seconds"])
-      ?? number(fields["reset_after_seconds"])
-    {
+      ?? number(fields["reset_after_seconds"]) {
       return now.addingTimeInterval(seconds)
     }
 
@@ -141,9 +144,15 @@ public enum CodexUsageParser {
   // MARK: - Lenient scalar readers
 
   private static func number(_ value: Any?) -> Double? {
-    if let double = value as? Double { return double }
-    if let int = value as? Int { return Double(int) }
-    if let string = value as? String { return Double(string) }
+    if let double = value as? Double {
+      return double
+    }
+    if let int = value as? Int {
+      return Double(int)
+    }
+    if let string = value as? String {
+      return Double(string)
+    }
     return nil
   }
 

@@ -16,9 +16,15 @@ public enum ProviderCatalog {
   private static func pipeline(for id: UsageProvider) -> ProviderFetchPipeline {
     switch id {
     case .codex:
-      ProviderFetchPipeline { _ in [CodexUsageStrategy(), MockProviders.codexStrategy] }
+      ProviderFetchPipeline { context in
+        let live = CodexUsageStrategy()
+        return context.account == nil ? [live, MockProviders.codexStrategy] : [live]
+      }
     case .claude:
-      ProviderFetchPipeline { _ in [ClaudeUsageStrategy(), MockProviders.claudeStrategy] }
+      ProviderFetchPipeline { context in
+        let live = ClaudeUsageStrategy()
+        return context.account == nil ? [live, MockProviders.claudeStrategy] : [live]
+      }
     case .glm:
       ProviderFetchPipeline { _ in [MockProviders.glmStrategy] }
     }

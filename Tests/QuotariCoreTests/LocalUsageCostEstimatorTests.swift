@@ -2,7 +2,9 @@ import Foundation
 @testable import QuotariCore
 import Testing
 
-struct LocalUsageCostEstimatorTests {
+struct LocalUsageCostEstimatorTests {}
+
+extension LocalUsageCostEstimatorTests {
   @Test func codexLogsProduceCostSummary() async throws {
     let env = try LocalCostTestEnvironment()
     defer { env.cleanup() }
@@ -128,6 +130,59 @@ struct LocalUsageCostEstimatorTests {
     #expect(cached == summary)
   }
 
+  @Test func selectedCodexAccountScopesLogsAndCacheToCredentialSource() async throws {
+    let env = try LocalCostTestEnvironment()
+    defer { env.cleanup() }
+
+    let defaultHome = env.root.appendingPathComponent(".codex", isDirectory: true)
+    let customHome = env.root.appendingPathComponent("custom-codex", isDirectory: true)
+    let defaultSessions = defaultHome.appendingPathComponent("sessions", isDirectory: true)
+    let customSessions = customHome.appendingPathComponent("sessions", isDirectory: true)
+    let cache = env.root.appendingPathComponent("cost-cache", isDirectory: true)
+    try env.createDirectory(defaultSessions)
+    try env.createDirectory(customSessions)
+    try env.writeJSONL(
+      defaultSessions.appendingPathComponent("usage.jsonl"),
+      [Self.codexTotalLine(timestamp: "2026-07-08T09:00:00Z", input: 100, cached: 0, output: 0)]
+    )
+    try env.writeJSONL(
+      customSessions.appendingPathComponent("usage.jsonl"),
+      [Self.codexTotalLine(timestamp: "2026-07-08T09:00:00Z", input: 1000, cached: 0, output: 0)]
+    )
+    let defaultAccount = ProviderAccount(
+      provider: .codex,
+      displayName: "Default",
+      detail: "Default",
+      credentialSource: .codexAuthFile(path: defaultHome.appendingPathComponent("auth.json").path)
+    )
+    let customAccount = ProviderAccount(
+      provider: .codex,
+      displayName: "Custom",
+      detail: "CODEX_HOME",
+      credentialSource: .codexAuthFile(path: customHome.appendingPathComponent("auth.json").path)
+    )
+    let estimator = LocalUsageCostEstimator(
+      environment: ["CODEX_HOME": customHome.path],
+      homeDirectory: env.root,
+      cacheDirectory: cache
+    )
+
+    let defaultSummary = try await Self.scopedSummary(
+      using: estimator,
+      account: defaultAccount,
+      now: env.now
+    )
+    let customSummary = try await Self.scopedSummary(
+      using: estimator,
+      account: customAccount,
+      now: env.now
+    )
+
+    #expect(defaultSummary.monthTokens == 100)
+    #expect(customSummary.monthTokens == 1000)
+    #expect(defaultSummary.sourceDescription == "Estimated from selected account's local Codex logs")
+  }
+
   @Test func codexUnknownModelDoesNotExposeProviderNameAsTopModel() async throws {
     let env = try LocalCostTestEnvironment()
     defer { env.cleanup() }
@@ -151,7 +206,9 @@ struct LocalUsageCostEstimatorTests {
     #expect(summary.monthTokens == 185)
     #expect(summary.topModel == nil)
   }
+}
 
+extension LocalUsageCostEstimatorTests {
   @Test func claudeLogsProduceCostSummary() async throws {
     let env = try LocalCostTestEnvironment()
     defer { env.cleanup() }
@@ -221,6 +278,26 @@ struct LocalUsageCostEstimatorTests {
 
     let estimator = LocalUsageCostEstimator(environment: [:], homeDirectory: env.root)
     #expect(await estimator.costSummary(provider: .claude, now: env.now, historyDays: 30) == nil)
+  }
+
+  private static func scopedSummary(
+    using estimator: LocalUsageCostEstimator,
+    account: ProviderAccount,
+    now: Date
+  ) async throws -> CostSummary {
+    let summary = try #require(await estimator.costSummary(
+      provider: .codex,
+      account: account,
+      now: now,
+      historyDays: 30
+    ))
+    #expect(estimator.cachedCostSummary(
+      provider: .codex,
+      account: account,
+      now: now,
+      historyDays: 30
+    ) == summary)
+    return summary
   }
 
   private static func codexTotalLine(timestamp: String, input: Int, cached: Int, output: Int) -> [String: Any] {

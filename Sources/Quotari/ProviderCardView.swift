@@ -19,8 +19,12 @@ struct ProviderCardView: View {
     VStack(alignment: .leading, spacing: 10) {
       header
       if let snapshot {
-        if let primary = snapshot.primary { windowRow("Session", primary) }
-        if let secondary = snapshot.secondary { windowRow("Weekly", secondary) }
+        if let primary = snapshot.primary {
+          windowRow("Session", primary)
+        }
+        if let secondary = snapshot.secondary {
+          windowRow("Weekly", secondary)
+        }
         ForEach(snapshot.extraWindows) { named in windowRow(named.title, named.window) }
         if let cost = snapshot.cost {
           Divider().padding(.vertical, 2)
@@ -79,8 +83,7 @@ struct ProviderCardView: View {
         }
       }
       if window.usedPercent < 100, let pace,
-         UsageFormatter.paceTrend(pace) != nil || pace.runsOutIn != nil
-      {
+         UsageFormatter.paceTrend(pace) != nil || pace.runsOutIn != nil {
         HStack(spacing: 6) {
           if let trend = UsageFormatter.paceTrend(pace) {
             Text(trend)

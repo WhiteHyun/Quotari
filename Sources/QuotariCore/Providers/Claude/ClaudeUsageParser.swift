@@ -89,8 +89,7 @@ public enum ClaudeUsageParser {
     if let now,
        let seconds = number(fields["resets_in_seconds"])
        ?? number(fields["reset_in_seconds"])
-       ?? number(fields["reset_after_seconds"])
-    {
+       ?? number(fields["reset_after_seconds"]) {
       return now.addingTimeInterval(seconds)
     }
 
@@ -103,9 +102,15 @@ public enum ClaudeUsageParser {
   }
 
   private static func number(_ value: Any?) -> Double? {
-    if let double = value as? Double { return double }
-    if let int = value as? Int { return Double(int) }
-    if let string = value as? String { return Double(string) }
+    if let double = value as? Double {
+      return double
+    }
+    if let int = value as? Int {
+      return Double(int)
+    }
+    if let string = value as? String {
+      return Double(string)
+    }
     return nil
   }
 

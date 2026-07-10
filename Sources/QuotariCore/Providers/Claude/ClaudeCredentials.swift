@@ -31,7 +31,7 @@ public enum ClaudeCredentialsError: LocalizedError, Sendable {
 /// item, then `~/.claude/.credentials.json`.
 public enum ClaudeCredentialsStore {
   public static let tokenEnvKey = "QUOTARI_CLAUDE_OAUTH_TOKEN"
-  static let keychainService = "Claude Code-credentials"
+  public static let keychainService = "Claude Code-credentials"
 
   public static func load(
     environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -40,7 +40,8 @@ public enum ClaudeCredentialsStore {
     if let token = environment[tokenEnvKey], !token.isEmpty {
       return ClaudeCredentials(accessToken: token)
     }
-    if let data = keychainItem(), let credentials = try? parse(data) {
+    if let data = keychainItem(),
+       let credentials = try? parse(data) {
       return credentials
     }
     let fileURL = home.appendingPathComponent(".claude/.credentials.json")
@@ -48,6 +49,25 @@ public enum ClaudeCredentialsStore {
       return try parse(data)
     }
     throw ClaudeCredentialsError.notFound
+  }
+
+  public static func load(
+    source: ProviderCredentialSource,
+    environment: [String: String] = ProcessInfo.processInfo.environment
+  ) throws -> ClaudeCredentials {
+    switch source {
+    case let .claudeEnvironment(name):
+      guard let token = environment[name], !token.isEmpty else { throw ClaudeCredentialsError.notFound }
+      return ClaudeCredentials(accessToken: token)
+    case .claudeKeychain:
+      guard let data = keychainItem() else { throw ClaudeCredentialsError.notFound }
+      return try parse(data)
+    case let .claudeCredentialsFile(path):
+      let data = try Data(contentsOf: URL(fileURLWithPath: path))
+      return try parse(data)
+    case .codexAuthFile:
+      throw ClaudeCredentialsError.notFound
+    }
   }
 
   static func parse(_ data: Data) throws -> ClaudeCredentials {
@@ -66,7 +86,7 @@ public enum ClaudeCredentialsStore {
   /// Reads the keychain item through the `security` CLI rather than
   /// Security.framework: the ACL consent then sticks to the stable system
   /// binary, so rebuilt dev binaries don't re-prompt on every run.
-  private static func keychainItem() -> Data? {
+  static func keychainItem() -> Data? {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
     process.arguments = ["find-generic-password", "-s", keychainService, "-w"]

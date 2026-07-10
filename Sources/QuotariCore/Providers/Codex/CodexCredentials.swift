@@ -41,13 +41,17 @@ public enum CodexCredentialsStore {
     guard fileManager.fileExists(atPath: url.path) else { throw CodexCredentialsError.notFound }
 
     if let posix = try? fileManager.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber,
-       posix.intValue & 0o077 != 0
-    {
+       posix.intValue & 0o077 != 0 {
       throw CodexCredentialsError.insecurePermissions
     }
 
     let data = try Data(contentsOf: url)
     return try parse(data)
+  }
+
+  public static func load(source: ProviderCredentialSource) throws -> CodexCredentials {
+    guard case let .codexAuthFile(path) = source else { throw CodexCredentialsError.notFound }
+    return try load(url: URL(fileURLWithPath: path))
   }
 
   static func parse(_ data: Data) throws -> CodexCredentials {

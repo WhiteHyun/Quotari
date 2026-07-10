@@ -48,9 +48,13 @@ public struct UsagePace: Sendable, Equatable {
     var headroom: Double?
     if ratePerSecond > 0 {
       let eta = remaining / ratePerSecond
-      if eta < timeUntilReset { runsOutIn = eta }
+      if eta < timeUntilReset {
+        runsOutIn = eta
+      }
       let projectedRemainingUse = ratePerSecond * timeUntilReset
-      if projectedRemainingUse > 0 { headroom = remaining / projectedRemainingUse }
+      if projectedRemainingUse > 0 {
+        headroom = remaining / projectedRemainingUse
+      }
     }
 
     return UsagePace(deltaPercent: delta, runsOutIn: runsOutIn, headroomMultiplier: headroom)
