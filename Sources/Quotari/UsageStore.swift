@@ -19,7 +19,7 @@ final class UsageStore {
   }
 
   var iconStyle: MenuBarIconStyle =
-    .init(rawValue: UserDefaults.standard.string(forKey: UsageStore.iconStyleKey) ?? "") ?? .gauge {
+    .init(rawValue: UserDefaults.standard.string(forKey: UsageStore.iconStyleKey) ?? "") ?? .gaugeAndPercent {
     didSet {
       UserDefaults.standard.set(iconStyle.rawValue, forKey: Self.iconStyleKey)
     }
@@ -367,8 +367,8 @@ extension UsageStore {
   }
 
   var menuBarIcon: NSImage {
-    IconRenderer.gaugeIcon(
-      usedPercent: highestUsedPercent,
+    IconRenderer.meterIcon(
+      remainingPercent: 100 - highestUsedPercent,
       loading: isRefreshing && snapshots.isEmpty,
       style: iconStyle
     )
@@ -376,7 +376,7 @@ extension UsageStore {
 
   var menuBarAccessibilityLabel: String {
     guard !snapshots.isEmpty else { return "Quotari, loading usage" }
-    let percent = Int(highestUsedPercent.rounded())
-    return "Quotari, highest usage \(percent) percent, \(Theme.statusWord(highestUsedPercent))"
+    let remaining = Int((100 - highestUsedPercent).rounded())
+    return "Quotari, lowest remaining quota \(remaining) percent, \(Theme.statusWord(highestUsedPercent))"
   }
 }
