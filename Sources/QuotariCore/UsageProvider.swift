@@ -4,7 +4,6 @@ import Foundation
 public enum UsageProvider: String, CaseIterable, Sendable, Codable, Hashable, Identifiable {
   case codex
   case claude
-  case glm
 
   public var id: String {
     rawValue

@@ -200,8 +200,6 @@ struct LocalUsageCostScanner {
       scanCodex(range: range, account: account)
     case .claude:
       scanClaude(range: range, account: account)
-    case .glm:
-      []
     }
     return LocalUsageScan(
       records: records,

@@ -186,7 +186,6 @@ enum LiteLLMPricingCatalogParser {
     let prefix = switch provider {
     case .codex: "openai/"
     case .claude: "anthropic/"
-    case .glm: ""
     }
     if !prefix.isEmpty, modelID.lowercased().hasPrefix(prefix) {
       return String(modelID.dropFirst(prefix.count))

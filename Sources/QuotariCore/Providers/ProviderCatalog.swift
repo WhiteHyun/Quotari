@@ -25,8 +25,6 @@ public enum ProviderCatalog {
         let live = ClaudeUsageStrategy()
         return context.account == nil ? [live, MockProviders.claudeStrategy] : [live]
       }
-    case .glm:
-      ProviderFetchPipeline { _ in [MockProviders.glmStrategy] }
     }
   }
 }

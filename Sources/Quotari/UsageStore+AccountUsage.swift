@@ -160,9 +160,8 @@ extension UsageStore {
       sourceLabels[provider] = nil
       return
     }
-    let hidesProviderCost = Self.shouldHideProviderCost(provider: provider, sourceKind: usage.sourceKind)
+    let hidesProviderCost = Self.shouldHideProviderCost(sourceKind: usage.sourceKind)
     let needsLocalCost = Self.shouldUseLocalCost(
-      provider: provider,
       existing: snapshot.cost,
       sourceKind: usage.sourceKind
     )
