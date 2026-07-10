@@ -42,8 +42,7 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
 
   public func shouldFallback(on error: Error) -> Bool {
     if let fetchError = error as? ProviderFetchError,
-       case .selectedCredentialUnavailable = fetchError
-    {
+       case .selectedCredentialUnavailable = fetchError {
       return false
     }
     // Auth failures won't be fixed by retrying another Codex strategy.

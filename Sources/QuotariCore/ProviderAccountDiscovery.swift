@@ -63,8 +63,7 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
       ))
     }
     if let data = keychainData(),
-       let credentials = try? ClaudeCredentialsStore.parse(data)
-    {
+       let credentials = try? ClaudeCredentialsStore.parse(data) {
       accounts.append(claudeAccount(
         credentials: credentials,
         displayName: "Claude Code",
@@ -74,8 +73,7 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
     }
     let fileURL = home.appendingPathComponent(".claude/.credentials.json")
     if let data = try? Data(contentsOf: fileURL),
-       let credentials = try? ClaudeCredentialsStore.parse(data)
-    {
+       let credentials = try? ClaudeCredentialsStore.parse(data) {
       accounts.append(claudeAccount(
         credentials: credentials,
         displayName: "Claude Code",

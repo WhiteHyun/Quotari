@@ -251,8 +251,7 @@ struct UsageStoreLocalCostReviewTests {
   private static func waitForCost(in store: UsageStore, matching cost: CostSummary) async throws -> UsageSnapshot {
     for _ in 0 ..< 100 {
       if let snapshot = store.snapshots[.codex],
-         snapshot.cost == cost
-      {
+         snapshot.cost == cost {
         return snapshot
       }
       try await Task.sleep(for: .milliseconds(50))
@@ -265,8 +264,7 @@ struct UsageStoreLocalCostReviewTests {
   private static func waitForCostCleared(in store: UsageStore) async throws -> UsageSnapshot {
     for _ in 0 ..< 100 {
       if let snapshot = store.snapshots[.codex],
-         snapshot.cost == nil
-      {
+         snapshot.cost == nil {
         return snapshot
       }
       try await Task.sleep(for: .milliseconds(50))

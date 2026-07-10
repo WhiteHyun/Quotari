@@ -79,8 +79,7 @@ struct ProviderCardView: View {
         }
       }
       if window.usedPercent < 100, let pace,
-         UsageFormatter.paceTrend(pace) != nil || pace.runsOutIn != nil
-      {
+         UsageFormatter.paceTrend(pace) != nil || pace.runsOutIn != nil {
         HStack(spacing: 6) {
           if let trend = UsageFormatter.paceTrend(pace) {
             Text(trend)

@@ -190,15 +190,13 @@ struct LocalUsageCostScanner {
 
   private func codexRoots(account: ProviderAccount?) -> [URL] {
     if let account,
-       case let .codexAuthFile(path) = account.credentialSource
-    {
+       case let .codexAuthFile(path) = account.credentialSource {
       return codexRoots(home: URL(fileURLWithPath: path).deletingLastPathComponent())
     }
 
     let home: URL = {
       if let raw = environment["CODEX_HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-         !raw.isEmpty
-      {
+         !raw.isEmpty {
         return URL(fileURLWithPath: raw, isDirectory: true)
       }
       return homeDirectory.appendingPathComponent(".codex", isDirectory: true)
@@ -217,16 +215,14 @@ struct LocalUsageCostScanner {
 
   private func claudeProjectRoots(account: ProviderAccount?) -> [URL] {
     if let account,
-       case let .claudeCredentialsFile(path) = account.credentialSource
-    {
+       case let .claudeCredentialsFile(path) = account.credentialSource {
       let config = URL(fileURLWithPath: path).deletingLastPathComponent()
       let projects = config.appendingPathComponent("projects", isDirectory: true)
       return fileManager.fileExists(atPath: projects.path) ? [projects] : []
     }
 
     let roots: [URL] = if let raw = environment["CLAUDE_CONFIG_DIR"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-                          !raw.isEmpty
-    {
+                          !raw.isEmpty {
       raw.split(separator: ",").map { part in
         let url = URL(fileURLWithPath: String(part).trimmingCharacters(in: .whitespacesAndNewlines), isDirectory: true)
         return url.lastPathComponent == "projects" ? url : url.appendingPathComponent("projects", isDirectory: true)
@@ -319,14 +315,12 @@ struct LocalUsageCostScanner {
       return model
     }
     if let info = payload["info"] as? [String: Any],
-       let model = string(info["model"])
-    {
+       let model = string(info["model"]) {
       return model
     }
     for key in ["item", "message", "response"] {
       if let nested = payload[key] as? [String: Any],
-         let model = string(nested["model"])
-      {
+         let model = string(nested["model"]) {
         return model
       }
     }

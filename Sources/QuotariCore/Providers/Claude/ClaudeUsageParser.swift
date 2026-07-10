@@ -89,8 +89,7 @@ public enum ClaudeUsageParser {
     if let now,
        let seconds = number(fields["resets_in_seconds"])
        ?? number(fields["reset_in_seconds"])
-       ?? number(fields["reset_after_seconds"])
-    {
+       ?? number(fields["reset_after_seconds"]) {
       return now.addingTimeInterval(seconds)
     }
 

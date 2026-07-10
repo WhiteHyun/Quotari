@@ -41,8 +41,7 @@ public enum CodexCredentialsStore {
     guard fileManager.fileExists(atPath: url.path) else { throw CodexCredentialsError.notFound }
 
     if let posix = try? fileManager.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber,
-       posix.intValue & 0o077 != 0
-    {
+       posix.intValue & 0o077 != 0 {
       throw CodexCredentialsError.insecurePermissions
     }
 

@@ -64,8 +64,7 @@ struct PreferencesView: View {
     let provider = descriptor.id
     var accounts = store.accounts[provider] ?? []
     if let selected = store.selectedAccounts[provider],
-       !accounts.contains(where: { $0.id == selected.id })
-    {
+       !accounts.contains(where: { $0.id == selected.id }) {
       accounts.append(selected)
     }
     let selection = Binding<String>(

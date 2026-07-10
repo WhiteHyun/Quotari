@@ -4,8 +4,7 @@ enum LiveCostSummaryParser {
   static func parse(_ root: [String: Any], now: Date) -> CostSummary? {
     if let spend = root["spend"] as? [String: Any],
        let used = spend["used"] as? [String: Any],
-       let summary = amountMinorSummary(from: used, now: now)
-    {
+       let summary = amountMinorSummary(from: used, now: now) {
       return summary
     }
 
@@ -16,8 +15,7 @@ enum LiveCostSummaryParser {
          currencyCode: string(extra["currency"]) ?? "USD",
          now: now,
          sourceDescription: "Reported usage credits"
-       )
-    {
+       ) {
       return summary
     }
 

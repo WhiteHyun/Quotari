@@ -45,8 +45,7 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
 
   public func shouldFallback(on error: Error) -> Bool {
     if let fetchError = error as? ProviderFetchError,
-       case .selectedCredentialUnavailable = fetchError
-    {
+       case .selectedCredentialUnavailable = fetchError {
       return false
     }
     return !(error is ProviderHTTPError)

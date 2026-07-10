@@ -19,8 +19,7 @@ final class UsageStore {
   }
 
   var iconStyle: MenuBarIconStyle =
-    .init(rawValue: UserDefaults.standard.string(forKey: UsageStore.iconStyleKey) ?? "") ?? .gauge
-  {
+    .init(rawValue: UserDefaults.standard.string(forKey: UsageStore.iconStyleKey) ?? "") ?? .gauge {
     didSet {
       UserDefaults.standard.set(iconStyle.rawValue, forKey: Self.iconStyleKey)
     }
@@ -112,8 +111,7 @@ final class UsageStore {
     for descriptor in providers {
       var providerAccounts = await accountDiscovery.accounts(for: descriptor.id)
       if let selected = selectedAccounts[descriptor.id],
-         !providerAccounts.contains(where: { $0.id == selected.id })
-      {
+         !providerAccounts.contains(where: { $0.id == selected.id }) {
         providerAccounts.append(selected)
       }
       next[descriptor.id] = providerAccounts
@@ -264,14 +262,12 @@ final class UsageStore {
     latestReportedCostFallbacks[provider] = ReportedCostFallback(cost: reportedCostFallback)
     guard costTasks[provider] == nil else { return }
     if let lastEmptyCostScan = lastEmptyCostScans[provider],
-       now.timeIntervalSince(lastEmptyCostScan) < Self.localCostScanThrottle
-    {
+       now.timeIntervalSince(lastEmptyCostScan) < Self.localCostScanThrottle {
       return
     }
     if cacheHit,
        let lastCostScan = lastCostScans[provider],
-       now.timeIntervalSince(lastCostScan) < Self.localCostScanThrottle
-    {
+       now.timeIntervalSince(lastCostScan) < Self.localCostScanThrottle {
       return
     }
     lastCostScans[provider] = now
