@@ -11,12 +11,22 @@ struct CostSectionView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       grid
-      if !cost.daily.isEmpty {
+      if showsMonetaryMetrics, !cost.daily.isEmpty {
         chart
       }
       if let model = cost.topModel {
         Text("Top model: \(model)")
           .font(.caption).foregroundStyle(.secondary)
+      }
+      if let pricingStatusMessage {
+        Text(pricingStatusMessage)
+          .font(.caption2)
+          .foregroundStyle(.orange)
+      }
+      if cost.estimateCoverage?.usesStalePricing == true {
+        Text("Using cached pricing")
+          .font(.caption2)
+          .foregroundStyle(.secondary)
       }
       Text(cost.sourceDescription)
         .font(.caption2).foregroundStyle(.tertiary)
@@ -25,9 +35,11 @@ struct CostSectionView: View {
 
   private var grid: some View {
     Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
-      GridRow {
-        metric(cost.todaySpendLabel, UsageFormatter.currency(cost.todaySpend, code: cost.currencyCode))
-        metric(cost.monthSpendLabel, UsageFormatter.currency(cost.monthSpend, code: cost.currencyCode))
+      if showsMonetaryMetrics {
+        GridRow {
+          metric(cost.todaySpendLabel, UsageFormatter.currency(cost.todaySpend, code: cost.currencyCode))
+          metric(cost.monthSpendLabel, UsageFormatter.currency(cost.monthSpend, code: cost.currencyCode))
+        }
       }
       if cost.hasTokenMetrics {
         GridRow {
@@ -43,6 +55,32 @@ struct CostSectionView: View {
       Text(label).font(.caption2).foregroundStyle(.secondary)
       Text(value).font(.callout.weight(.semibold).monospacedDigit())
     }
+  }
+
+  var showsMonetaryMetrics: Bool {
+    cost.estimateCoverage?.availability != .unavailable
+  }
+
+  var pricingStatusMessage: String? {
+    guard let coverage = cost.estimateCoverage else { return nil }
+    let unavailableDetail = unavailablePricingDetail(coverage)
+    switch coverage.availability {
+    case .complete:
+      return nil
+    case .partial:
+      return "Partial estimate\(unavailableDetail)"
+    case .unavailable:
+      return "Cost unavailable\(unavailableDetail)"
+    }
+  }
+
+  private func unavailablePricingDetail(_ coverage: CostEstimateCoverage) -> String {
+    let visibleModels = coverage.unpricedModels.prefix(2)
+    guard !visibleModels.isEmpty else { return "" }
+    let names = visibleModels.joined(separator: ", ")
+    let remaining = coverage.unpricedModels.count - visibleModels.count
+    let suffix = remaining > 0 ? " +\(remaining)" : ""
+    return " · pricing unavailable for \(names)\(suffix)"
   }
 
   private var chart: some View {

@@ -16,6 +16,46 @@ public struct DailyCost: Codable, Equatable, Sendable, Identifiable {
   }
 }
 
+/// How much of a local token estimate had an exact model price available.
+public enum CostEstimateAvailability: Equatable, Sendable {
+  case complete
+  case partial
+  case unavailable
+}
+
+public struct CostEstimateCoverage: Codable, Equatable, Sendable {
+  public var pricedTokens: Int
+  public var unpricedTokens: Int
+  public var unpricedModels: [String]
+  public var usesStalePricing: Bool
+
+  public init(
+    pricedTokens: Int,
+    unpricedTokens: Int,
+    unpricedModels: [String] = [],
+    usesStalePricing: Bool = false
+  ) {
+    self.pricedTokens = pricedTokens
+    self.unpricedTokens = unpricedTokens
+    self.unpricedModels = unpricedModels
+    self.usesStalePricing = usesStalePricing
+  }
+
+  public var isComplete: Bool {
+    availability == .complete
+  }
+
+  public var availability: CostEstimateAvailability {
+    if pricedTokens == 0, unpricedTokens > 0 {
+      return .unavailable
+    }
+    if unpricedTokens > 0 {
+      return .partial
+    }
+    return .complete
+  }
+}
+
 /// Cost/token usage for a provider, either estimated locally or reported by a
 /// live provider endpoint.
 public struct CostSummary: Codable, Equatable, Sendable {
@@ -28,6 +68,7 @@ public struct CostSummary: Codable, Equatable, Sendable {
   public var todaySpendLabel: String
   public var monthSpendLabel: String
   public var sourceDescription: String
+  public var estimateCoverage: CostEstimateCoverage?
   /// Chronological, one entry per day (oldest first).
   public var daily: [DailyCost]
 
@@ -41,6 +82,7 @@ public struct CostSummary: Codable, Equatable, Sendable {
     todaySpendLabel: String = "Today",
     monthSpendLabel: String = "30d cost",
     sourceDescription: String = "Estimated from local logs",
+    estimateCoverage: CostEstimateCoverage? = nil,
     daily: [DailyCost] = []
   ) {
     self.currencyCode = currencyCode
@@ -52,6 +94,7 @@ public struct CostSummary: Codable, Equatable, Sendable {
     self.todaySpendLabel = todaySpendLabel
     self.monthSpendLabel = monthSpendLabel
     self.sourceDescription = sourceDescription
+    self.estimateCoverage = estimateCoverage
     self.daily = daily
   }
 

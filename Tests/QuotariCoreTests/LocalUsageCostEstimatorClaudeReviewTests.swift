@@ -34,7 +34,7 @@ struct LocalUsageCostEstimatorClaudeReviewTests {
       ]
     )
 
-    let estimator = LocalUsageCostEstimator(
+    let estimator = LocalUsageCostEstimator.testing(
       environment: ["CLAUDE_CONFIG_DIR": claudeConfig.path],
       homeDirectory: env.root
     )
@@ -65,7 +65,7 @@ struct LocalUsageCostEstimatorClaudeReviewTests {
       ]
     )
 
-    let estimator = LocalUsageCostEstimator(
+    let estimator = LocalUsageCostEstimator.testing(
       environment: ["CLAUDE_CONFIG_DIR": claudeConfig.path],
       homeDirectory: env.root
     )

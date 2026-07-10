@@ -82,6 +82,47 @@ struct UsageStoreAccountRefreshTests {
     #expect(requestCountBeforeStaleRequestFinishes == 2)
   }
 
+  @Test func reloadAccountsRefreshesPersistedCredentialIdentity() async throws {
+    let directory = try TemporaryDirectory()
+    let selectionStore = ProviderAccountSelectionStore(
+      url: directory.url.appendingPathComponent("ProviderAccounts.json")
+    )
+    let source = ProviderCredentialSource.codexAuthFile(path: "/tmp/auth.json")
+    let persistedAccount = ProviderAccount(
+      provider: .codex,
+      displayName: "Persisted",
+      detail: "Default",
+      credentialSource: source,
+      credentialIdentity: "old-account"
+    )
+    let refreshedAccount = ProviderAccount(
+      provider: .codex,
+      displayName: "Refreshed",
+      detail: "Default",
+      credentialSource: source,
+      credentialIdentity: "new-account"
+    )
+    try selectionStore.save([.codex: persistedAccount])
+    let recorder = AccountRecorder()
+    let descriptor = ProviderDescriptor(
+      id: .codex,
+      metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
+      pipeline: ProviderFetchPipeline { _ in [RecordingAccountStrategy(recorder: recorder)] }
+    )
+    let store = UsageStore(
+      providers: [descriptor],
+      costEstimator: EmptyCostEstimator(),
+      accountDiscovery: StaticAccountDiscovery(accounts: [.codex: [refreshedAccount]]),
+      accountSelectionStore: selectionStore,
+      startsAutomatically: false
+    )
+
+    await store.reloadAccounts()
+
+    #expect(store.selectedAccounts[.codex] == refreshedAccount)
+    #expect(selectionStore.load()[.codex] == refreshedAccount)
+  }
+
   private static func waitForSnapshot(
     in store: UsageStore,
     account: String,
@@ -100,6 +141,14 @@ struct UsageStoreAccountRefreshTests {
 private struct EmptyCostEstimator: UsageCostEstimating {
   func costSummary(provider: UsageProvider, now: Date, historyDays: Int) async -> CostSummary? {
     nil
+  }
+}
+
+private struct StaticAccountDiscovery: ProviderAccountDiscovering {
+  let accounts: [UsageProvider: [ProviderAccount]]
+
+  func accounts(for provider: UsageProvider) async -> [ProviderAccount] {
+    accounts[provider] ?? []
   }
 }
 

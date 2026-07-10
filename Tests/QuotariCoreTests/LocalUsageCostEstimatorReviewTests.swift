@@ -18,7 +18,7 @@ struct LocalUsageCostEstimatorReviewTests {
       ]
     )
 
-    let estimator = LocalUsageCostEstimator(
+    let estimator = LocalUsageCostEstimator.testing(
       environment: ["CODEX_HOME": codexHome.path],
       homeDirectory: env.root
     )
@@ -59,7 +59,7 @@ struct LocalUsageCostEstimatorReviewTests {
       ]
     )
 
-    let estimator = LocalUsageCostEstimator(
+    let estimator = LocalUsageCostEstimator.testing(
       environment: ["CODEX_HOME": codexHome.path],
       homeDirectory: env.root
     )
@@ -89,7 +89,7 @@ struct LocalUsageCostEstimatorReviewTests {
       ]
     )
 
-    let estimator = LocalUsageCostEstimator(
+    let estimator = LocalUsageCostEstimator.testing(
       environment: ["CODEX_HOME": codexHome.path],
       homeDirectory: env.root
     )
@@ -115,7 +115,7 @@ struct LocalUsageCostEstimatorReviewTests {
       ]
     )
 
-    let estimator = LocalUsageCostEstimator(
+    let estimator = LocalUsageCostEstimator.testing(
       environment: ["CODEX_HOME": codexHome.path],
       homeDirectory: env.root
     )
