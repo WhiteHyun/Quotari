@@ -7,17 +7,6 @@ struct PreferencesView: View {
 
   var body: some View {
     Form {
-      Section("Menu Bar") {
-        Picker("Icon", selection: Binding(
-          get: { store.iconStyle },
-          set: { store.iconStyle = $0 }
-        )) {
-          ForEach(MenuBarIconStyle.allCases, id: \.self) { style in
-            Text(style.label)
-              .tag(style)
-          }
-        }
-      }
       Section("Refresh") {
         Slider(value: $intervalMinutes, in: 1 ... 30, step: 1) {
           Text("Interval")

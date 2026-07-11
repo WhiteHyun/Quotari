@@ -30,6 +30,9 @@ let package = Package(
         "QuotariCore",
         .product(name: "Sparkle", package: "Sparkle"),
       ],
+      resources: [
+        .process("Resources"),
+      ],
       plugins: [
         .plugin(name: "SwiftLintBuildToolPlugin", package: "SwiftLintPlugins"),
       ]

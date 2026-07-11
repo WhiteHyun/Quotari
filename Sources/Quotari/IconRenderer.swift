@@ -1,92 +1,138 @@
 import AppKit
+import Foundation
 
-enum MenuBarIconStyle: String, CaseIterable {
-  case gauge
-  case gaugeAndPercent
-
-  var label: String {
-    switch self {
-    case .gauge: "Gauge only"
-    case .gaugeAndPercent: "Gauge + percent"
-    }
-  }
-}
-
-/// Monochrome template menu-bar image; the system tints it to the menu bar.
+/// Renders the Quotari flame mascot as a compact, animated menu-bar item.
+/// Its animation speeds up as the most-constrained quota gets closer to its limit.
 enum IconRenderer {
-  private static let height: CGFloat = 18
-  private static let gaugeWidth: CGFloat = 24
-
-  static func gaugeIcon(usedPercent: Double, loading: Bool, style: MenuBarIconStyle) -> NSImage {
-    let showText = style == .gaugeAndPercent && !loading
-    let textFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
-    let textAttributes: [NSAttributedString.Key: Any] = [
-      .font: textFont,
-      .foregroundColor: NSColor.black,
-    ]
-    // Fixed field for "100%" so the item never shifts width as digits grow.
-    let fieldWidth: CGFloat = showText
-      ? ceil(("100%" as NSString).size(withAttributes: textAttributes).width)
-      : 0
-    let gap: CGFloat = showText ? 4 : 0
-    let totalWidth = gaugeWidth + gap + fieldWidth
-
-    let image = NSImage(size: NSSize(width: totalWidth, height: height))
-    image.lockFocus()
-    drawGauge(
-      usedPercent: usedPercent,
-      loading: loading,
-      in: CGRect(x: 0, y: 0, width: gaugeWidth, height: height)
-    )
-    if showText {
-      let text = "\(Int(usedPercent.rounded()))%" as NSString
-      let size = text.size(withAttributes: textAttributes)
-      text.draw(
-        at: CGPoint(x: gaugeWidth + gap, y: (height - size.height) / 2),
-        withAttributes: textAttributes
-      )
-    }
-    image.unlockFocus()
-    image.isTemplate = true
-    return image
+  private static let stepsPerTransition = 3
+  private static let iconSize = NSSize(width: 18, height: 18)
+  private static let bitmapScale = 2
+  private static let frameBounds = [
+    NSRect(x: 126.89, y: 200.39, width: 368.22, height: 368.22),
+    NSRect(x: 588.73, y: 151.73, width: 411.54, height: 411.54),
+    NSRect(x: 1125.64, y: 165.64, width: 396.72, height: 396.72),
+    NSRect(x: 1629, y: 123.26, width: 435.48, height: 435.48),
+  ]
+  private static let frames = makeFrames()
+  static var frameCount: Int {
+    frames.count
   }
 
-  private static func drawGauge(usedPercent: Double, loading: Bool, in bounds: CGRect) {
-    let inset: CGFloat = 2
-    let trackRect = CGRect(
-      x: bounds.minX + inset,
-      y: bounds.minY + 4,
-      width: bounds.width - inset * 2,
-      height: 10
-    )
-    let radius = trackRect.height / 2
+  static func mascotIcon(frame: Int) -> NSImage {
+    guard !frames.isEmpty else { return NSImage(size: iconSize) }
+    return frames[frame % frames.count]
+  }
 
-    NSColor.black.withAlphaComponent(0.28).setFill()
-    NSBezierPath(roundedRect: trackRect, xRadius: radius, yRadius: radius).fill()
+  static func animationInterval(usedPercent: Double) -> TimeInterval {
+    switch usedPercent {
+    case ..<70: 0.16
+    case ..<90: 0.1
+    default: 0.075
+    }
+  }
 
-    guard !loading else {
-      NSColor.black.withAlphaComponent(0.55).setFill()
-      let bar = CGRect(
-        x: trackRect.midX - 5,
-        y: trackRect.midY - 1.5,
-        width: 10,
-        height: 3
+  private static func makeFrames() -> [NSImage] {
+    guard let url = Bundle.module.url(forResource: "flame-mascot-sprite", withExtension: "png"),
+          let data = try? Data(contentsOf: url),
+          let sprite = NSBitmapImageRep(data: data),
+          sprite.hasAlpha
+    else { return [] }
+
+    let keyframes = frameBounds.map { bounds in
+      let frame = NSImage(size: iconSize)
+      frame.lockFocus()
+      sprite.draw(
+        in: NSRect(origin: .zero, size: iconSize),
+        from: bounds,
+        operation: .sourceOver,
+        fraction: 1,
+        respectFlipped: false,
+        hints: [.interpolation: NSImageInterpolation.high]
       )
-      NSBezierPath(roundedRect: bar, xRadius: 1.5, yRadius: 1.5).fill()
-      return
+      frame.unlockFocus()
+      frame.isTemplate = false
+      return frame
+    }
+    return makeTransitionFrames(from: keyframes)
+  }
+
+  private static func makeTransitionFrames(from keyframes: [NSImage]) -> [NSImage] {
+    guard keyframes.count > 1 else { return keyframes }
+    return keyframes.indices.flatMap { index in
+      let current = keyframes[index]
+      let next = keyframes[(index + 1) % keyframes.count]
+      return (0 ..< stepsPerTransition).map { step in
+        blend(current, with: next, progress: CGFloat(step) / CGFloat(stepsPerTransition))
+      }
+    }
+  }
+
+  private static func blend(_ current: NSImage, with next: NSImage, progress: CGFloat) -> NSImage {
+    guard progress > 0 else { return current }
+    guard let currentBitmap = bitmap(from: current),
+          let nextBitmap = bitmap(from: next),
+          let blended = emptyBitmap()
+    else {
+      assertionFailure("Could not create bitmap representations for mascot frame blending")
+      return current
     }
 
-    let fraction = min(1, max(0, usedPercent / 100))
-    if fraction > 0 {
-      let fillWidth = max(3, (trackRect.width - 2) * fraction)
-      let fillRect = CGRect(
-        x: trackRect.minX + 1,
-        y: trackRect.minY + 1,
-        width: fillWidth,
-        height: trackRect.height - 2
-      )
-      NSColor.black.withAlphaComponent(0.9).setFill()
-      NSBezierPath(roundedRect: fillRect, xRadius: radius - 1, yRadius: radius - 1).fill()
+    for x in 0 ..< blended.pixelsWide {
+      for y in 0 ..< blended.pixelsHigh {
+        var currentPixel = [Int](repeating: 0, count: 4)
+        var nextPixel = [Int](repeating: 0, count: 4)
+        currentBitmap.getPixel(&currentPixel, atX: x, y: y)
+        nextBitmap.getPixel(&nextPixel, atX: x, y: y)
+        var pixel = interpolate(currentPixel, nextPixel, progress: progress)
+        blended.setPixel(&pixel, atX: x, y: y)
+      }
+    }
+
+    let frame = NSImage(size: iconSize)
+    blended.size = iconSize
+    frame.addRepresentation(blended)
+    frame.isTemplate = false
+    return frame
+  }
+
+  private static func bitmap(from image: NSImage) -> NSBitmapImageRep? {
+    guard let bitmap = emptyBitmap() else {
+      assertionFailure("Could not allocate a mascot frame bitmap")
+      return nil
+    }
+    guard let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
+      assertionFailure("Could not create a drawing context for a mascot frame bitmap")
+      return nil
+    }
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = context
+    image.draw(in: NSRect(origin: .zero, size: iconSize))
+    NSGraphicsContext.restoreGraphicsState()
+    return bitmap
+  }
+
+  private static func emptyBitmap() -> NSBitmapImageRep? {
+    guard let bitmap = NSBitmapImageRep(
+      bitmapDataPlanes: nil,
+      pixelsWide: Int(iconSize.width) * bitmapScale,
+      pixelsHigh: Int(iconSize.height) * bitmapScale,
+      bitsPerSample: 8,
+      samplesPerPixel: 4,
+      hasAlpha: true,
+      isPlanar: false,
+      colorSpaceName: .calibratedRGB,
+      bytesPerRow: 0,
+      bitsPerPixel: 0
+    ) else { return nil }
+    bitmap.size = iconSize
+    return bitmap
+  }
+
+  private static func interpolate(_ from: [Int], _ to: [Int], progress: CGFloat) -> [Int] {
+    let fromWeight = 1 - progress
+    return (0 ..< 4).map { index in
+      let value = CGFloat(from[index]) * fromWeight + CGFloat(to[index]) * progress
+      return Int(value.rounded())
     }
   }
 }

@@ -11,8 +11,7 @@ struct QuotariApp: App {
       DashboardView()
         .environment(store)
     } label: {
-      Image(nsImage: store.menuBarIcon)
-        .accessibilityLabel(store.menuBarAccessibilityLabel)
+      MenuBarMascotLabel(store: store)
     }
     .menuBarExtraStyle(.window)
 
@@ -20,6 +19,27 @@ struct QuotariApp: App {
       PreferencesView()
         .environment(store)
     }
+  }
+}
+
+private struct MenuBarMascotLabel: View {
+  let store: UsageStore
+  @State private var frameIndex = 0
+
+  var body: some View {
+    Image(nsImage: store.menuBarIcon(frame: frameIndex))
+      .accessibilityLabel(store.menuBarAccessibilityLabel)
+      .task(id: store.menuBarAnimationInterval) {
+        let interval = store.menuBarAnimationInterval
+        while !Task.isCancelled {
+          do {
+            try await Task.sleep(for: .seconds(interval))
+          } catch {
+            return
+          }
+          frameIndex = (frameIndex + 1) % IconRenderer.frameCount
+        }
+      }
   }
 }
 
