@@ -1,12 +1,41 @@
+import AppKit
+import Combine
 import QuotariCore
 import SwiftUI
 
 struct PreferencesView: View {
   @Environment(UsageStore.self) private var store
   @State private var intervalMinutes: Double = 1
+  @Bindable private var loginItems = LoginItemController.shared
 
   var body: some View {
     Form {
+      Section("General") {
+        Toggle("Launch at Login", isOn: $loginItems.launchesAtLogin)
+          .disabled(!loginItems.isAvailable)
+        if !loginItems.isAvailable {
+          Text("Launch at Login is available in packaged releases.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        } else if loginItems.requiresApproval {
+          HStack(alignment: .firstTextBaseline) {
+            Text("Approval is required in System Settings › Login Items.")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+            Spacer()
+            Button("Open System Settings…") { loginItems.openSystemSettings() }
+              .controlSize(.small)
+          }
+        } else if loginItems.serviceNotFound {
+          Text("The login item could not be found. Toggling it again or reinstalling the app should restore it.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        } else if let error = loginItems.lastError {
+          Text(error)
+            .font(.caption)
+            .foregroundStyle(.red)
+        }
+      }
       Section("Refresh") {
         Slider(value: $intervalMinutes, in: 1 ... 30, step: 1) {
           Text("Interval")
@@ -42,8 +71,16 @@ struct PreferencesView: View {
       }
     }
     .formStyle(.grouped)
-    .frame(width: 420, height: 430)
-    .onAppear { intervalMinutes = store.refreshInterval / 60 }
+    .frame(width: 420, height: 500)
+    .onAppear {
+      intervalMinutes = store.refreshInterval / 60
+      loginItems.refreshStatus()
+    }
+    // Coming back from System Settings (e.g. after approving the login item)
+    // re-activates the app; that's the moment to pick up the outside change.
+    .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+      loginItems.refreshStatus()
+    }
     .onChange(of: intervalMinutes) { _, newValue in
       store.refreshInterval = newValue * 60
     }
