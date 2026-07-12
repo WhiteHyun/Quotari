@@ -76,16 +76,22 @@ public struct AccountCaptureService: Sendable {
 
   private func rawPayload(for source: ProviderCredentialSource) -> Data? {
     switch source {
-    case let .codexAuthFile(path), let .claudeCredentialsFile(path):
-      try? Data(contentsOf: URL(fileURLWithPath: path))
+    case let .codexAuthFile(path):
+      // Validate through the Codex loader first so its insecure-permissions
+      // guard still applies — capture reads the file directly, and we must not
+      // snapshot a bearer token out of a group/world-readable auth.json.
+      guard (try? CodexCredentialsStore.load(url: URL(fileURLWithPath: path))) != nil else { return nil }
+      return try? Data(contentsOf: URL(fileURLWithPath: path))
+    case let .claudeCredentialsFile(path):
+      return try? Data(contentsOf: URL(fileURLWithPath: path))
     case let .claudeKeychain(service):
-      claudeKeychainRead(service)
+      return claudeKeychainRead(service)
     case .claudeEnvironment:
       // An env token is just an access token — no refresh token to keep it
       // alive, so a snapshot would die at the next expiry. Not capturable.
-      nil
+      return nil
     case let .quotariRegistry(id):
-      capturedAccounts.account(id: id)?.payload
+      return capturedAccounts.account(id: id)?.payload
     }
   }
 
@@ -142,10 +148,13 @@ public enum ProviderCredentialIdentity {
   }
 }
 
-/// Reduces a raw provider credential payload to only the fields Quotari's
-/// parsers read, so a captured snapshot never carries unrelated secrets (e.g.
-/// the mcpOAuth tokens that live alongside Claude's OAuth in the same keychain
-/// item) and never stores a wrong-shaped or unusable blob.
+/// Reduces a raw provider credential payload to just the provider's own
+/// credential object, dropping unrelated root-level secrets that live beside
+/// it (e.g. the `mcpOAuth` tokens for other services in Claude's keychain
+/// item, or Codex's root `OPENAI_API_KEY`). The whole provider object is kept
+/// verbatim — including the refresh token and refresh metadata a saved account
+/// needs to stay renewable — since everything inside it is that provider's own
+/// credential data. Wrong-shaped or token-less payloads are rejected.
 public enum ProviderCredentialMinimizer {
   public static func minimize(provider: UsageProvider, payload: Data) -> Data? {
     guard let root = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else { return nil }
@@ -154,33 +163,12 @@ public enum ProviderCredentialMinimizer {
       guard let oauth = root["claudeAiOauth"] as? [String: Any],
             let accessToken = oauth["accessToken"] as? String, !accessToken.isEmpty
       else { return nil }
-      var minimal: [String: Any] = ["accessToken": accessToken]
-      copyString("refreshToken", from: oauth, into: &minimal)
-      copyString("subscriptionType", from: oauth, into: &minimal)
-      copyString("rateLimitTier", from: oauth, into: &minimal)
-      if let expiresAt = oauth["expiresAt"] as? NSNumber {
-        minimal["expiresAt"] = expiresAt
-      }
-      if let scopes = oauth["scopes"] as? [String] {
-        minimal["scopes"] = scopes
-      }
-      return try? JSONSerialization.data(withJSONObject: ["claudeAiOauth": minimal], options: [.sortedKeys])
+      return try? JSONSerialization.data(withJSONObject: ["claudeAiOauth": oauth], options: [.sortedKeys])
     case .codex:
       guard let tokens = root["tokens"] as? [String: Any],
             let accessToken = tokens["access_token"] as? String, !accessToken.isEmpty
       else { return nil }
-      var minimal: [String: Any] = ["access_token": accessToken]
-      copyString("account_id", from: tokens, into: &minimal)
-      copyString("id_token", from: tokens, into: &minimal)
-      return try? JSONSerialization.data(withJSONObject: ["tokens": minimal], options: [.sortedKeys])
-    }
-  }
-
-  /// Copies `key` only when it's a String, so a type-confused value under an
-  /// allowed key can't ride along into the stored snapshot.
-  private static func copyString(_ key: String, from source: [String: Any], into target: inout [String: Any]) {
-    if let value = source[key] as? String {
-      target[key] = value
+      return try? JSONSerialization.data(withJSONObject: ["tokens": tokens], options: [.sortedKeys])
     }
   }
 }

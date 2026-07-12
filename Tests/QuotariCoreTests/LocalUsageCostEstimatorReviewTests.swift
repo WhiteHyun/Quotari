@@ -28,6 +28,36 @@ struct LocalUsageCostEstimatorReviewTests {
     #expect(summary.latestTokens == 250)
   }
 
+  @Test func savedAccountDoesNotInheritTheLiveAccountsLocalLogs() async throws {
+    let env = try ReviewCostTestEnvironment()
+    defer { env.cleanup() }
+
+    let codexHome = env.root.appendingPathComponent("codex", isDirectory: true)
+    let sessions = codexHome.appendingPathComponent("sessions", isDirectory: true)
+    try env.createDirectory(sessions)
+    try env.writeJSONL(
+      sessions.appendingPathComponent("usage.jsonl"),
+      [Self.codexTotalLine(timestamp: "2026-07-08T09:00:00Z", input: 1200, cached: 120, output: 150)]
+    )
+    let estimator = LocalUsageCostEstimator.testing(
+      environment: ["CODEX_HOME": codexHome.path],
+      homeDirectory: env.root
+    )
+
+    // The live (unselected) account sees the local logs...
+    let live = await estimator.costSummary(provider: .codex, account: nil, now: env.now, historyDays: 30)
+    #expect(live != nil)
+
+    // ...but a saved/registry account must NOT inherit them — those logs
+    // belong to whichever account is currently the live CLI login.
+    let saved = ProviderAccount(
+      provider: .codex, displayName: "Saved", detail: nil,
+      credentialSource: .quotariRegistry(id: "codex:saved")
+    )
+    let savedSummary = await estimator.costSummary(provider: .codex, account: saved, now: env.now, historyDays: 30)
+    #expect(savedSummary == nil)
+  }
+
   @Test func codexTotalsWinOverRepeatedLastUsageSnapshots() async throws {
     let env = try ReviewCostTestEnvironment()
     defer { env.cleanup() }

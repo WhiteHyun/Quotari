@@ -221,6 +221,12 @@ struct LocalUsageCostScanner {
   }
 
   private func codexRoots(account: ProviderAccount?) -> [URL] {
+    // A saved (registry) account isn't the live CLI login, so the local logs
+    // in the default location belong to a different account — attributing them
+    // here would misreport its cost. It has no local logs of its own.
+    if let account, account.credentialSource.isCaptured {
+      return []
+    }
     if let account,
        case let .codexAuthFile(path) = account.credentialSource {
       return codexRoots(home: URL(fileURLWithPath: path).deletingLastPathComponent())
@@ -246,6 +252,11 @@ struct LocalUsageCostScanner {
   }
 
   private func claudeProjectRoots(account: ProviderAccount?) -> [URL] {
+    // See codexRoots: a saved account's local cache isn't in the live
+    // location, so it has no account-specific logs to scan.
+    if let account, account.credentialSource.isCaptured {
+      return []
+    }
     if let account,
        case let .claudeCredentialsFile(path) = account.credentialSource {
       let config = URL(fileURLWithPath: path).deletingLastPathComponent()
@@ -275,8 +286,14 @@ struct LocalUsageCostScanner {
       "Estimated from selected account's local Codex logs"
     case .claudeCredentialsFile:
       "Estimated from selected account's local Claude cache logs"
-    case .claudeEnvironment, .claudeKeychain, .quotariRegistry:
+    case .claudeEnvironment, .claudeKeychain:
       "Estimated from local Claude cache logs (not account-specific)"
+    case .quotariRegistry:
+      // A saved account has no local logs of its own (see codex/claude roots);
+      // no local estimate is produced, so this is only a defensive label.
+      account.provider == .codex
+        ? "Saved account — local Codex cost estimate unavailable"
+        : "Saved account — local Claude cost estimate unavailable"
     }
   }
 

@@ -62,6 +62,22 @@ struct AccountCaptureServiceTests {
     ).accessToken == "tok-2")
   }
 
+  @Test func capturingAWorldReadableCodexFileIsRejected() throws {
+    let url = try codexAuthFile(Self.codexPayload)
+    defer { try? FileManager.default.removeItem(at: url) }
+    // Loosen permissions so the Codex loader's insecure-permissions guard trips.
+    try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
+    let service = AccountCaptureService(capturedAccounts: makeStore(InMemoryKeychain()))
+    let account = ProviderAccount(
+      provider: .codex, displayName: "Codex", detail: "Default",
+      credentialSource: .codexAuthFile(path: url.path)
+    )
+
+    #expect(throws: AccountCaptureError.self) {
+      _ = try service.capture(account, now: Self.now)
+    }
+  }
+
   @Test func capturingAnEnvironmentTokenIsRejected() {
     let service = AccountCaptureService(capturedAccounts: makeStore(InMemoryKeychain()))
     let account = ProviderAccount(
@@ -151,26 +167,31 @@ struct AccountCaptureServiceTests {
     #expect(ProviderCredentialMinimizer.minimize(provider: .claude, payload: Data("not json".utf8)) == nil)
   }
 
-  @Test func minimizerKeepsOnlyAllowedFields() throws {
+  @Test func minimizerDropsRootSiblingsButKeepsTheProviderObject() throws {
+    // Root-level siblings (other services' secrets) are dropped; the whole
+    // claudeAiOauth object — including the refresh token — is preserved so a
+    // saved account stays renewable.
     let payload = Data("""
     {"claudeAiOauth":{"accessToken":"a","refreshToken":"r","expiresAt":1,"scopes":["s"],
-     "subscriptionType":"max","rateLimitTier":"t","unknownSecret":"KEEP-OUT"},
+     "subscriptionType":"max","rateLimitTier":"t"},
      "mcpOAuth":{"x":{"accessToken":"MCP"}}}
     """.utf8)
     let minimal = try #require(ProviderCredentialMinimizer.minimize(provider: .claude, payload: payload))
     let text = String(data: minimal, encoding: .utf8) ?? ""
 
-    #expect(!text.contains("unknownSecret"))
-    #expect(!text.contains("KEEP-OUT"))
     #expect(!text.contains("mcpOAuth"))
+    #expect(!text.contains("MCP"))
     #expect(text.contains("refreshToken"))
     #expect(text.contains("rateLimitTier"))
   }
 
-  @Test func codexMinimizerKeepsOnlyTokenFields() throws {
+  @Test func codexMinimizerKeepsRefreshTokenAndDropsRootApiKey() throws {
+    // Real Codex auth.json shape: OPENAI_API_KEY and last_refresh are root
+    // siblings; the tokens object (incl. refresh_token) must survive so the
+    // saved account can refresh a stale session.
     let payload = Data("""
-    {"tokens":{"access_token":"a","account_id":"acct","id_token":"jwt","OPENAI_API_KEY":"sk-KEEP-OUT"},
-     "last_refresh":"2026-01-01"}
+    {"tokens":{"access_token":"a","account_id":"acct","id_token":"jwt","refresh_token":"REFRESH"},
+     "OPENAI_API_KEY":"sk-KEEP-OUT","last_refresh":"2026-01-01"}
     """.utf8)
     let minimal = try #require(ProviderCredentialMinimizer.minimize(provider: .codex, payload: payload))
     let text = String(data: minimal, encoding: .utf8) ?? ""
@@ -178,19 +199,9 @@ struct AccountCaptureServiceTests {
     #expect(!text.contains("OPENAI_API_KEY"))
     #expect(!text.contains("sk-KEEP-OUT"))
     #expect(!text.contains("last_refresh"))
+    #expect(text.contains("refresh_token"))
+    #expect(text.contains("REFRESH"))
     #expect(text.contains("account_id"))
-    #expect(text.contains("id_token"))
-  }
-
-  @Test func minimizerDropsTypeConfusedValuesUnderAllowedKeys() throws {
-    // A wrong-typed value under an allowed key must not ride along.
-    let payload = Data(#"{"claudeAiOauth":{"accessToken":"a","refreshToken":{"nested":"OBJECT"}}}"#.utf8)
-    let minimal = try #require(ProviderCredentialMinimizer.minimize(provider: .claude, payload: payload))
-    let text = String(data: minimal, encoding: .utf8) ?? ""
-
-    #expect(!text.contains("nested"))
-    #expect(!text.contains("OBJECT"))
-    #expect(text.contains("\"accessToken\":\"a\""))
   }
 
   @Test func codexEmptyAccountIDFallsBackAndDoesNotCollide() throws {
