@@ -21,7 +21,7 @@ struct UsageStoreLocalCostReviewTests {
       latestTokens: 200,
       daily: Self.dailySeries(tokens: 1000)
     )
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [Self.descriptor(cost: mockCost, kind: .mock)],
       costEstimator: ReviewStubCostEstimator(cost: localCost)
     )
@@ -48,7 +48,7 @@ struct UsageStoreLocalCostReviewTests {
       daily: [DailyCost(date: Self.day, spend: 0, tokens: 0)]
     )
     let estimator = ReviewSequenceCostEstimator(costs: [localCost, nil])
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [Self.descriptor(cost: reportedCost)],
       costEstimator: estimator
     )
@@ -77,7 +77,7 @@ struct UsageStoreLocalCostReviewTests {
       daily: [DailyCost(date: Self.day, spend: 0, tokens: 0)]
     )
     let estimator = ReviewInvalidatingCostEstimator(cachedCost: cachedCost, delay: .milliseconds(100))
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [Self.descriptor(cost: reportedCost)],
       costEstimator: estimator
     )
@@ -110,7 +110,7 @@ struct UsageStoreLocalCostReviewTests {
       daily: [DailyCost(date: Self.day, spend: 3.70, tokens: 0)]
     )
     let estimator = ReviewInvalidatingCostEstimator(cachedCost: cachedCost, delay: .milliseconds(100))
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [Self.descriptor(cost: reportedCost)],
       costEstimator: estimator
     )
@@ -155,7 +155,7 @@ struct UsageStoreLocalCostReviewTests {
       pipeline: ProviderFetchPipeline { _ in [strategy] }
     )
     let estimator = ReviewInvalidatingCostEstimator(cachedCost: cachedCost, delay: .seconds(1))
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [descriptor],
       costEstimator: estimator
     )
@@ -198,7 +198,7 @@ struct UsageStoreLocalCostReviewTests {
       metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
       pipeline: ProviderFetchPipeline { _ in [strategy] }
     )
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [descriptor],
       costEstimator: ReviewStubCostEstimator(cost: localCost)
     )

@@ -27,7 +27,7 @@ struct UsageStoreCostThrottleTests {
       daily: [DailyCost(date: Self.day, spend: 0, tokens: 0)]
     )
     let estimator = CountingCachedThrottleCostEstimator(cachedCost: cachedCost, freshCost: freshCost)
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [Self.descriptor(cost: reportedCost)],
       costEstimator: estimator
     )
@@ -50,7 +50,7 @@ struct UsageStoreCostThrottleTests {
       daily: [DailyCost(date: Self.day, spend: 0, tokens: 0)]
     )
     let estimator = CountingEmptyThrottleCostEstimator()
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [Self.descriptor(cost: reportedCost)],
       costEstimator: estimator
     )

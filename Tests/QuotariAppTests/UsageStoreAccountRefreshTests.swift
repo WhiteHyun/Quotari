@@ -23,7 +23,7 @@ struct UsageStoreAccountRefreshTests {
       metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
       pipeline: ProviderFetchPipeline { _ in [RecordingAccountStrategy(recorder: recorder)] }
     )
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [descriptor],
       accountSelectionStore: selectionStore,
       startsAutomatically: false
@@ -58,7 +58,7 @@ struct UsageStoreAccountRefreshTests {
       metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
       pipeline: ProviderFetchPipeline { _ in [strategy] }
     )
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [descriptor],
       costEstimator: EmptyCostEstimator(),
       accountSelectionStore: selectionStore,
@@ -109,7 +109,7 @@ struct UsageStoreAccountRefreshTests {
       metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
       pipeline: ProviderFetchPipeline { _ in [RecordingAccountStrategy(recorder: recorder)] }
     )
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [descriptor],
       costEstimator: EmptyCostEstimator(),
       accountDiscovery: StaticAccountDiscovery(accounts: [.codex: [refreshedAccount]]),
@@ -141,14 +141,6 @@ struct UsageStoreAccountRefreshTests {
 private struct EmptyCostEstimator: UsageCostEstimating {
   func costSummary(provider: UsageProvider, now: Date, historyDays: Int) async -> CostSummary? {
     nil
-  }
-}
-
-private struct StaticAccountDiscovery: ProviderAccountDiscovering {
-  let accounts: [UsageProvider: [ProviderAccount]]
-
-  func accounts(for provider: UsageProvider) async -> [ProviderAccount] {
-    accounts[provider] ?? []
   }
 }
 
