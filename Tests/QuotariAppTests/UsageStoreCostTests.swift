@@ -170,14 +170,19 @@ struct UsageStoreCostTests {
       daily: [DailyCost(date: Self.day, spend: 0, tokens: 0)]
     )
     let estimator = CountingDelayedCostEstimator(cost: localCost, delay: .milliseconds(250))
+    // startsAutomatically: false so the background timer's own refresh() can't
+    // race the explicit refreshes below — otherwise two refreshes can each
+    // start a cost scan before the pending-scan dedup registers, which is the
+    // exact invariant under test. Drive every refresh explicitly instead.
     let store = UsageStore.isolatedForTesting(
       providers: [Self.descriptor(cost: reportedCost)],
-      costEstimator: estimator
+      costEstimator: estimator,
+      startsAutomatically: false
     )
 
+    await store.refresh() // starts the quota snapshot + the pending cost scan
     _ = try await Self.waitForSnapshot(in: store, attempts: 10)
-    await store.refresh()
-    await store.refresh()
+    await store.refresh() // must NOT restart the still-pending cost scan
 
     let snapshot = try await Self.waitForCost(in: store, matching: localCost)
     #expect(snapshot.cost == localCost)
