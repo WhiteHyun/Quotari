@@ -14,11 +14,6 @@ struct QuotariApp: App {
       MenuBarMascotLabel(store: store)
     }
     .menuBarExtraStyle(.window)
-
-    Settings {
-      PreferencesView()
-        .environment(store)
-    }
   }
 }
 

@@ -54,7 +54,7 @@ struct ProviderAccountDiscoveryTests {
       ClaudeCredentialsStore.tokenEnvKey, "Keychain", "Credentials file",
     ])
     #expect(accounts.map(\.displayName) == [
-      "Claude OAuth token", "Claude Code Max 5x", "Claude Code Max 20x",
+      "Claude OAuth token", "Claude Code", "Claude Code",
     ])
     #expect(accounts.allSatisfy { $0.provider == .claude })
   }
