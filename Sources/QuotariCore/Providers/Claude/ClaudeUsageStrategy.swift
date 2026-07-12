@@ -19,6 +19,7 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
   private let resolveCredentials: @Sendable () throws -> ResolvedClaudeCredentials
   private let refresher: (any ClaudeTokenRefreshing)?
   private let persister: any ClaudeCredentialPersisting
+  private let capturedAccounts: CapturedAccountStore
   private let refreshCoordinator: ClaudeTokenRefreshCoordinator
 
   public init(
@@ -28,14 +29,16 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
       try ClaudeCredentialsStore.loadResolved()
     },
     refresher: (any ClaudeTokenRefreshing)? = ClaudeTokenRefresher(),
-    persister: any ClaudeCredentialPersisting = ClaudeCredentialsWriter(),
+    persister: (any ClaudeCredentialPersisting)? = nil,
+    capturedAccounts: CapturedAccountStore = CapturedAccountStore(),
     refreshCoordinator: ClaudeTokenRefreshCoordinator = .shared
   ) {
     self.transport = transport
     self.usageURL = usageURL
     self.resolveCredentials = resolveCredentials
     self.refresher = refresher
-    self.persister = persister
+    self.persister = persister ?? ClaudeCredentialsWriter(capturedAccounts: capturedAccounts)
+    self.capturedAccounts = capturedAccounts
     self.refreshCoordinator = refreshCoordinator
   }
 
@@ -77,7 +80,10 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
     if let account = context.account {
       do {
         return try ResolvedClaudeCredentials(
-          credentials: ClaudeCredentialsStore.load(source: account.credentialSource),
+          credentials: ClaudeCredentialsStore.load(
+            source: account.credentialSource,
+            capturedAccounts: capturedAccounts
+          ),
           source: account.credentialSource
         )
       } catch {
@@ -109,40 +115,160 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
       if let reloaded = reloadedFromSource(resolved, now: now) {
         return reloaded
       }
-      do {
-        let grant = try await refresher.refresh(
-          refreshToken: refreshToken,
-          scopes: credentials.scopes,
-          now: now
-        )
-        return persistedCredentials(grant, resolved: resolved, now: now)
-      } catch {
-        // Claude Code may have rotated the token first; its fresher pair
-        // will already be at the source, so re-read once before giving up.
-        // If that doesn't help either, let the API answer 401 as before.
-        Self.logger.error("Token refresh failed: \(error.localizedDescription, privacy: .public)")
-        return reloadedFromSource(resolved, now: now) ?? resolved
+      var base = resolved
+      // A rotated pair whose registry write-back failed: retry the write
+      // before submitting the burned refresh token again.
+      if let pending = await refreshCoordinator.takeUnpersisted(sourceID: resolved.source.stableID) {
+        if let retried = await persisted(pending, resolved: base, now: now) {
+          return retried
+        }
+        switch await resolvedStaleWrite(pending, enteredWith: refreshToken, fallback: base, now: now) {
+        case let .resolved(outcome):
+          return outcome
+        case let .exchange(current):
+          base = current
+        }
       }
+      return await exchanged(base, refreshToken: refreshToken, refresher: refresher, now: now)
     }
   }
 
-  private func persistedCredentials(
-    _ grant: ClaudeTokenGrant,
-    resolved: ResolvedClaudeCredentials,
+  /// One fresh exchange of `refreshToken`, persisted over `base`. On a stale
+  /// write the shared resolution decides; a failed exchange falls back to the
+  /// stored pair and lets the API answer 401 as before.
+  private func exchanged(
+    _ base: ResolvedClaudeCredentials,
+    refreshToken: String,
+    refresher: any ClaudeTokenRefreshing,
     now: Date
-  ) -> ResolvedClaudeCredentials {
+  ) async -> ResolvedClaudeCredentials {
     do {
-      try persister.persist(grant, replacing: resolved.credentials.accessToken, to: resolved.source)
-    } catch ClaudeCredentialPersistError.staleSource {
+      let grant = try await refresher.refresh(
+        refreshToken: refreshToken,
+        scopes: base.credentials.scopes,
+        now: now
+      )
+      let pending = ClaudePendingGrant(
+        grant: grant,
+        previousAccessToken: base.credentials.accessToken,
+        consumedRefreshToken: refreshToken
+      )
+      if let updated = await persisted(pending, resolved: base, now: now) {
+        return updated
+      }
+      switch await resolvedStaleWrite(pending, enteredWith: refreshToken, fallback: base, now: now) {
+      case let .resolved(outcome):
+        return outcome
+      case let .exchange(current):
+        // Same still-valid (non-rotating) token: their write stays stored
+        // and can refresh itself later; the grant still serves this fetch.
+        return current.credentials.isExpired(now: now) ? inMemory(current, grant) : current
+      }
+    } catch {
+      // Claude Code may have rotated the token first; its fresher pair
+      // will already be at the source, so re-read once before giving up.
+      // If that doesn't help either, let the API answer 401 as before.
+      Self.logger.error("Token refresh failed: \(error.localizedDescription, privacy: .public)")
+      return reloadedFromSource(base, now: now) ?? base
+    }
+  }
+
+  private enum StaleWriteResolution {
+    case resolved(ResolvedClaudeCredentials)
+    /// The stored pair is the entered generation and provably still
+    /// exchangeable — either it was never consumed, or its exchange showed
+    /// the endpoint keeps the token alive.
+    case exchange(ResolvedClaudeCredentials)
+  }
+
+  /// The source was rewritten while a refreshed pair was in hand (its
+  /// guarded write was rejected as stale). For CLI-owned sources whoever
+  /// rewrote them is the truth — Claude Code recovers its own rotations. A
+  /// registry pair has no co-owner, so the Codex rules apply: a pair riding
+  /// a token the exchange rotated away can never refresh again (superseded
+  /// by the grant); a different generation restarts re-keyed.
+  private func resolvedStaleWrite(
+    _ pending: ClaudePendingGrant,
+    enteredWith refreshToken: String,
+    fallback: ResolvedClaudeCredentials,
+    now: Date
+  ) async -> StaleWriteResolution {
+    guard case .quotariRegistry = fallback.source else {
       // Someone re-logged-in (or otherwise replaced the pair) since we read
       // it; their credentials are the truth now, not our refreshed grant.
       Self.logger.notice("Credential source changed during refresh; using its pair instead.")
-      return reloadedFromSource(resolved, now: now) ?? resolved
+      return .resolved(reloadedFromSource(fallback, now: now) ?? fallback)
+    }
+    guard let current = try? ClaudeCredentialsStore.load(
+      source: fallback.source,
+      capturedAccounts: capturedAccounts
+    ) else { return .resolved(inMemory(fallback, pending.grant)) }
+    let stored = ResolvedClaudeCredentials(credentials: current, source: fallback.source)
+    if current.refreshToken == pending.consumedRefreshToken, pending.rotatedRefreshToken {
+      return await .resolved(supersede(pending, stored: stored, now: now))
+    }
+    if current.refreshToken != refreshToken {
+      return await .resolved(refreshIfExpired(stored, now: now))
+    }
+    return .exchange(stored)
+  }
+
+  /// The stored registry pair rides a refresh token an exchange rotated away
+  /// — it can never refresh again, so the pending grant supersedes it no
+  /// matter who wrote it.
+  private func supersede(
+    _ pending: ClaudePendingGrant,
+    stored: ResolvedClaudeCredentials,
+    now: Date
+  ) async -> ResolvedClaudeCredentials {
+    let reapplied = ClaudePendingGrant(
+      grant: pending.grant,
+      previousAccessToken: stored.credentials.accessToken,
+      consumedRefreshToken: pending.consumedRefreshToken
+    )
+    if let applied = await persisted(reapplied, resolved: stored, now: now) {
+      return applied
+    }
+    // Yet another concurrent write landed; at some point theirs is the truth.
+    return reloadedFromSource(stored, now: now) ?? inMemory(stored, pending.grant)
+  }
+
+  /// Persists the pending grant and returns the credentials to fetch with,
+  /// or nil when the source holds a different pair than the grant replaces.
+  /// A registry write failure keeps the grant queued for retry and still
+  /// returns it: the rotation already happened server-side, so the in-memory
+  /// pair is the freshest one there is.
+  private func persisted(
+    _ pending: ClaudePendingGrant,
+    resolved: ResolvedClaudeCredentials,
+    now: Date
+  ) async -> ResolvedClaudeCredentials? {
+    do {
+      try persister.persist(
+        pending.grant,
+        replacing: pending.previousAccessToken,
+        to: resolved.source
+      )
+    } catch ClaudeCredentialPersistError.staleSource {
+      return nil
     } catch {
       // The refresh already happened server-side, so dropping the fetch
-      // wouldn't undo the rotation — continue with the in-memory pair.
+      // wouldn't undo the rotation — continue with the in-memory pair, and
+      // for a registry source (no co-owner to heal it) queue the write.
       Self.logger.error("Persisting refreshed tokens failed: \(error.localizedDescription, privacy: .public)")
+      if case .quotariRegistry = resolved.source {
+        await refreshCoordinator.rememberUnpersisted(pending, sourceID: resolved.source.stableID)
+      }
     }
+    return inMemory(resolved, pending.grant)
+  }
+
+  /// The credentials patched with a grant that isn't (or isn't yet) stored —
+  /// good for fetching with while the source catches up.
+  private func inMemory(
+    _ resolved: ResolvedClaudeCredentials,
+    _ grant: ClaudeTokenGrant
+  ) -> ResolvedClaudeCredentials {
     var credentials = resolved.credentials
     credentials.accessToken = grant.accessToken
     credentials.refreshToken = grant.refreshToken ?? credentials.refreshToken
@@ -155,8 +281,10 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
     _ resolved: ResolvedClaudeCredentials,
     now: Date
   ) -> ResolvedClaudeCredentials? {
-    guard let reloaded = try? ClaudeCredentialsStore.load(source: resolved.source),
-          !reloaded.isExpired(now: now)
+    guard let reloaded = try? ClaudeCredentialsStore.load(
+      source: resolved.source,
+      capturedAccounts: capturedAccounts
+    ), !reloaded.isExpired(now: now)
     else { return nil }
     return ResolvedClaudeCredentials(credentials: reloaded, source: resolved.source)
   }
