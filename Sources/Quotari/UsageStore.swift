@@ -16,18 +16,24 @@ final class UsageStore {
   private(set) var isRefreshing = false
   private(set) var lastRefresh: Date?
 
-  var refreshInterval: TimeInterval = 60 {
-    didSet { startTimer() }
+  var refreshInterval: TimeInterval {
+    didSet {
+      defaults.set(refreshInterval, forKey: Self.refreshIntervalDefaultsKey)
+      startTimer()
+    }
   }
 
   static let localCostScanThrottle: TimeInterval = 15 * 60
+  static let refreshIntervalDefaultsKey = "refreshIntervalSeconds"
+  static let refreshIntervalRange: ClosedRange<TimeInterval> = 60 ... 1800
 
   let providers: [ProviderDescriptor]
   let costEstimator: any UsageCostEstimating
   private let accountDiscovery: any ProviderAccountDiscovering
   private let accountSelectionStore: ProviderAccountSelectionStore
+  private let defaults: UserDefaults
 
-  private var timerTask: Task<Void, Never>?
+  private(set) var timerTask: Task<Void, Never>?
   private var refreshRequested = false
   private(set) var accountRevisions: [UsageProvider: UInt] = [:]
   var costTasks: [UsageProvider: Task<Void, Never>] = [:]
@@ -43,6 +49,7 @@ final class UsageStore {
     costEstimator: any UsageCostEstimating = LocalUsageCostEstimator(),
     accountDiscovery: any ProviderAccountDiscovering = ProviderAccountDiscovery(),
     accountSelectionStore: ProviderAccountSelectionStore = ProviderAccountSelectionStore(),
+    defaults: UserDefaults = .standard,
     startsAutomatically: Bool = true
   ) {
     assert(ProviderRegistry.isComplete, "Every UsageProvider case needs a descriptor")
@@ -50,7 +57,16 @@ final class UsageStore {
     self.costEstimator = costEstimator
     self.accountDiscovery = accountDiscovery
     self.accountSelectionStore = accountSelectionStore
+    self.defaults = defaults
     selectedAccounts = accountSelectionStore.load()
+    // refreshInterval has no inline default: its first assignment runs the
+    // @Observable-generated init accessor instead of the setter, so restoring
+    // here neither rewrites defaults nor starts the timer via didSet.
+    let savedInterval = defaults.double(forKey: Self.refreshIntervalDefaultsKey)
+    let range = Self.refreshIntervalRange
+    refreshInterval = savedInterval > 0
+      ? min(max(savedInterval, range.lowerBound), range.upperBound)
+      : 60
     if startsAutomatically {
       startTimer()
       Task { await reloadAccounts() }
