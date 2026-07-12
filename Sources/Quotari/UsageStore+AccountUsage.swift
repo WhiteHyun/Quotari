@@ -41,7 +41,7 @@ extension UsageStore {
   }
 
   func accountUsage(for account: ProviderAccount) -> ProviderAccountUsage? {
-    if let usage = accountUsage[account.provider]?[account.id] {
+    if let usage = currentAccountUsage(for: account) {
       return usage
     }
     guard activeAccount(for: account.provider)?.id == account.id,
@@ -141,15 +141,19 @@ extension UsageStore {
 
   /// Cached usage older than this is not shown as current; selection falls
   /// back to a clean loading state and waits for the follow-up refresh.
-  static let cachedAccountUsageLifetime: TimeInterval = 30 * 60
+  nonisolated static let cachedAccountUsageLifetime: TimeInterval = 30 * 60
 
+  /// `carryingForwardFrom` lets a same-account mirror keep the local cost
+  /// chart already on the dashboard; account switches must leave it nil so
+  /// another account's cost never carries over.
   func applyCachedAccountUsage(
     _ usage: ProviderAccountUsage?,
     account: ProviderAccount?,
-    provider: UsageProvider
+    provider: UsageProvider,
+    carryingForwardFrom previous: UsageSnapshot? = nil
   ) {
     guard let account, let usage, let snapshot = usage.snapshot,
-          Date().timeIntervalSince(snapshot.updatedAt) < Self.cachedAccountUsageLifetime
+          !Self.isExpired(snapshot)
     else {
       snapshots[provider] = nil
       errors[provider] = nil
@@ -172,13 +176,23 @@ extension UsageStore {
       : nil
     snapshots[provider] = Self.displaySnapshot(
       from: snapshot,
-      previous: nil,
+      previous: previous,
       cachedCost: cachedCost,
       prefersLocalCost: needsLocalCost,
       hidesProviderCost: hidesProviderCost
     )
     errors[provider] = usage.error
     sourceLabels[provider] = usage.sourceLabel
+  }
+
+  /// The picker treats any snapshot it receives as current, so an expired
+  /// one is stripped here — mirroring the dashboard's lifetime gate — and
+  /// only a remaining error is worth surfacing.
+  private func currentAccountUsage(for account: ProviderAccount) -> ProviderAccountUsage? {
+    guard var usage = accountUsage[account.provider]?[account.id] else { return nil }
+    guard let snapshot = usage.snapshot, Self.isExpired(snapshot) else { return usage }
+    usage.snapshot = nil
+    return usage.error == nil ? nil : usage
   }
 
   private func accountsNeedingRefresh(
@@ -238,7 +252,12 @@ extension UsageStore {
       errors[provider] = usage.error // keep any prior snapshot
       return
     }
-    applyCachedAccountUsage(usage, account: account, provider: provider)
+    applyCachedAccountUsage(
+      usage,
+      account: account,
+      provider: provider,
+      carryingForwardFrom: snapshots[provider]
+    )
   }
 
   private func setAccountUsage(_ usage: ProviderAccountUsage, for account: ProviderAccount) {
@@ -254,6 +273,10 @@ extension UsageStore {
     return (accounts[provider] ?? []).first {
       $0.displayName.localizedCaseInsensitiveCompare(name) == .orderedSame
     }
+  }
+
+  private nonisolated static func isExpired(_ snapshot: UsageSnapshot) -> Bool {
+    Date().timeIntervalSince(snapshot.updatedAt) >= cachedAccountUsageLifetime
   }
 
   private nonisolated static func normalizedSnapshot(

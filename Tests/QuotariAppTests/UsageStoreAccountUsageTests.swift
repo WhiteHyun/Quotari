@@ -34,6 +34,21 @@ struct UsageStoreAccountUsageTests {
     #expect(context.selectionStore.load()[.codex] == context.work)
   }
 
+  @Test func expiredCachedUsageIsHiddenFromPicker() throws {
+    let context = try Self.makeContext()
+    defer { context.directory.remove() }
+    let stale = UsageSnapshot(
+      provider: .codex,
+      plan: "Team",
+      primary: RateWindow(kind: .session, usedPercent: 70),
+      secondary: nil,
+      updatedAt: Date(timeIntervalSinceNow: -UsageStore.cachedAccountUsageLifetime - 1)
+    )
+    context.store.accountUsage = [.codex: [context.work.id: ProviderAccountUsage(snapshot: stale)]]
+
+    #expect(context.store.accountUsage(for: context.work) == nil)
+  }
+
   private static func makeContext() throws -> TestContext {
     let directory = try AccountUsageDirectory()
     let selectionStore = ProviderAccountSelectionStore(
