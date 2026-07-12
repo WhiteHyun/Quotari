@@ -44,6 +44,29 @@ public extension ProviderHTTPTransport {
       request.setValue(value, forHTTPHeaderField: key)
     }
     let (data, response) = try await data(for: request)
+    return try payload(data: data, response: response)
+  }
+
+  /// Performs an unauthenticated JSON POST (e.g. an OAuth token exchange),
+  /// with the same status-to-error mapping as `getJSON`.
+  func postJSON(
+    url: URL,
+    body: Data,
+    headers: [String: String] = [:]
+  ) async throws -> Data {
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.httpBody = body
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    for (key, value) in headers {
+      request.setValue(value, forHTTPHeaderField: key)
+    }
+    let (data, response) = try await data(for: request)
+    return try payload(data: data, response: response)
+  }
+
+  private func payload(data: Data, response: HTTPURLResponse) throws -> Data {
     switch response.statusCode {
     case 200 ..< 300: return data
     case 401, 403: throw ProviderHTTPError.unauthorized
