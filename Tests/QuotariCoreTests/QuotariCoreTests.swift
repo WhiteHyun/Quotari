@@ -3,6 +3,10 @@ import Foundation
 import Testing
 
 struct RegistryTests {
+  @Test func supportsOnlyLiveProviderFamilies() {
+    #expect(UsageProvider.allCases == [.codex, .claude])
+  }
+
   @Test func everyProviderHasADescriptor() {
     #expect(ProviderRegistry.isComplete)
     for provider in UsageProvider.allCases {
@@ -85,11 +89,5 @@ struct CostTests {
     #expect(cost.monthSpend > 0)
     #expect(cost.peakSpend >= cost.todaySpend)
     #expect(cost.topModel == "gpt-5.5")
-  }
-
-  @Test func freePlanHasNoCost() async throws {
-    let result = try await MockProviders.glmStrategy
-      .fetch(ProviderFetchContext(provider: .glm, now: Date()))
-    #expect(result.usage.cost == nil)
   }
 }

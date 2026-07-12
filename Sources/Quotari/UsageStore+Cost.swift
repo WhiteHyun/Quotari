@@ -17,13 +17,12 @@ extension UsageStore {
     account: ProviderAccount?
   ) {
     let usage = recordAccountUsageSuccess(value, provider: provider, account: account)
-    let hidesProviderCost = Self.shouldHideProviderCost(provider: provider, sourceKind: value.sourceKind)
+    let hidesProviderCost = Self.shouldHideProviderCost(sourceKind: value.sourceKind)
     let reportedCostFallback = Self.reportedCostFallback(
       from: usage.cost,
       hidesProviderCost: hidesProviderCost
     )
     let needsLocalCost = Self.shouldUseLocalCost(
-      provider: provider,
       existing: usage.cost,
       sourceKind: value.sourceKind
     )
@@ -73,21 +72,17 @@ extension UsageStore {
   }
 
   nonisolated static func shouldUseLocalCost(
-    provider: UsageProvider,
     existing cost: CostSummary?,
     sourceKind: ProviderFetchKind?
   ) -> Bool {
-    if shouldHideProviderCost(provider: provider, sourceKind: sourceKind) {
+    if shouldHideProviderCost(sourceKind: sourceKind) {
       return true
     }
     return shouldUseLocalCost(existing: cost)
   }
 
-  nonisolated static func shouldHideProviderCost(
-    provider: UsageProvider,
-    sourceKind: ProviderFetchKind?
-  ) -> Bool {
-    sourceKind == .mock && provider != .glm
+  nonisolated static func shouldHideProviderCost(sourceKind: ProviderFetchKind?) -> Bool {
+    sourceKind == .mock
   }
 
   private func updateCostRefresh(

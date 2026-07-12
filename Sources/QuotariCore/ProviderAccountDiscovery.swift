@@ -25,8 +25,6 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
       codexAccounts()
     case .claude:
       claudeAccounts()
-    case .glm:
-      []
     }
   }
 

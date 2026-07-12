@@ -16,7 +16,6 @@ public struct MockFetchStrategy: ProviderFetchStrategy {
 public enum MockProviders {
   public static let codexStrategy = MockFetchStrategy(id: "codex.mock", make: codex)
   public static let claudeStrategy = MockFetchStrategy(id: "claude.mock", make: claude)
-  public static let glmStrategy = MockFetchStrategy(id: "glm.mock", make: glm)
 
   public static let descriptors: [ProviderDescriptor] = [
     ProviderDescriptor(
@@ -36,11 +35,6 @@ public enum MockProviders {
         supportsWeekly: true
       ), // Anthropic #D97757
       pipeline: .init { _ in [claudeStrategy] }
-    ),
-    ProviderDescriptor(
-      id: .glm,
-      metadata: .init(displayName: "GLM", accent: .init(0.25, 0.55, 0.90), supportsWeekly: false),
-      pipeline: .init { _ in [glmStrategy] }
     ),
   ]
 
@@ -120,15 +114,6 @@ public enum MockProviders {
         ),
       ],
       cost: cost(seed: 2.1, now: now),
-      updatedAt: now
-    )
-  }
-
-  private static let glm: @Sendable (UsageProvider, Date) -> UsageSnapshot = { provider, now in
-    UsageSnapshot(
-      provider: provider,
-      plan: "Free",
-      primary: window(.session, used: 6, resetInMinutes: 240, durationMinutes: 300, now: now),
       updatedAt: now
     )
   }

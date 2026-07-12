@@ -50,8 +50,6 @@ enum LocalCostSummaryBuilder {
       "Estimated from local Codex logs"
     case .claude:
       "Estimated from local Claude cache logs"
-    case .glm:
-      "Estimated from local logs"
     }
   }
 
@@ -226,7 +224,6 @@ enum BundledModelPricingCatalog {
     let rules: [BundledPricingRule] = switch key.provider {
     case .codex: codexRules
     case .claude: claudeRules
-    case .glm: []
     }
     return rules.first { $0.matches(key.modelID) }?.pricing
   }
