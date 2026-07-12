@@ -8,24 +8,57 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
   private let environment: [String: String]
   private let home: URL
   private let keychainData: @Sendable () -> Data?
+  private let capturedAccounts: CapturedAccountStore
 
   public init(
     environment: [String: String] = ProcessInfo.processInfo.environment,
     home: URL = FileManager.default.homeDirectoryForCurrentUser,
-    keychainData: (@Sendable () -> Data?)? = nil
+    keychainData: (@Sendable () -> Data?)? = nil,
+    capturedAccounts: CapturedAccountStore = CapturedAccountStore()
   ) {
     self.environment = environment
     self.home = home
     self.keychainData = keychainData ?? { ClaudeCredentialsStore.keychainItem() }
+    self.capturedAccounts = capturedAccounts
   }
 
   public func accounts(for provider: UsageProvider) async -> [ProviderAccount] {
-    switch provider {
-    case .codex:
-      codexAccounts()
-    case .claude:
-      claudeAccounts()
+    let live = switch provider {
+    case .codex: codexAccounts()
+    case .claude: claudeAccounts()
     }
+    // Captured snapshots join discovery so selection and usage reuse the same
+    // path. A captured entry is hidden when its identity matches a live login,
+    // so the same account isn't listed twice while it's the CLI credential.
+    let liveIdentities = Set(live.compactMap { identity(of: $0.credentialSource, provider: provider) })
+    let saved = capturedAccounts.load()
+      .filter { $0.provider == provider }
+      .filter { captured in
+        guard let key = ProviderCredentialIdentity.key(provider: provider, payload: captured.payload)
+        else { return true }
+        return !liveIdentities.contains(key)
+      }
+      .map { captured in
+        ProviderAccount(
+          provider: provider,
+          displayName: captured.displayName,
+          detail: captured.detail ?? "Saved in Quotari",
+          credentialSource: .quotariRegistry(id: captured.id)
+        )
+      }
+    return live + saved
+  }
+
+  private func identity(of source: ProviderCredentialSource, provider: UsageProvider) -> String? {
+    let payload: Data? = switch source {
+    case let .codexAuthFile(path), let .claudeCredentialsFile(path):
+      try? Data(contentsOf: URL(fileURLWithPath: path))
+    case .claudeKeychain:
+      keychainData()
+    case .claudeEnvironment, .quotariRegistry:
+      nil
+    }
+    return payload.flatMap { ProviderCredentialIdentity.key(provider: provider, payload: $0) }
   }
 
   private func codexAccounts() -> [ProviderAccount] {

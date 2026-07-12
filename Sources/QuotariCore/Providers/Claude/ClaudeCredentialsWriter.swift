@@ -34,13 +34,16 @@ public enum ClaudeCredentialPersistError: LocalizedError, Sendable {
 public struct ClaudeCredentialsWriter: ClaudeCredentialPersisting {
   private let keychainRead: @Sendable (String) -> Data?
   private let keychainWrite: @Sendable (Data, String) throws -> Void
+  private let capturedAccounts: CapturedAccountStore
 
   public init(
     keychainRead: (@Sendable (String) -> Data?)? = nil,
-    keychainWrite: (@Sendable (Data, String) throws -> Void)? = nil
+    keychainWrite: (@Sendable (Data, String) throws -> Void)? = nil,
+    capturedAccounts: CapturedAccountStore = CapturedAccountStore()
   ) {
     self.keychainRead = keychainRead ?? { ClaudeCredentialsStore.keychainItem(service: $0) }
     self.keychainWrite = keychainWrite ?? Self.writeKeychainItem
+    self.capturedAccounts = capturedAccounts
   }
 
   public func persist(
@@ -60,6 +63,16 @@ public struct ClaudeCredentialsWriter: ClaudeCredentialPersisting {
     case let .claudeKeychain(service):
       guard let data = keychainRead(service) else { throw ClaudeCredentialPersistError.sourceUnavailable }
       try keychainWrite(merge(grant, replacing: previousAccessToken, into: data), service)
+    case let .quotariRegistry(id):
+      // A captured account Quotari owns: refresh keeps the stored snapshot's
+      // token alive so the account stays usable while it's not the live one.
+      // updatePayload rewrites only this account's item (not the shared
+      // index), so concurrent refreshes of different accounts don't contend.
+      guard let captured = capturedAccounts.account(id: id) else {
+        throw ClaudeCredentialPersistError.sourceUnavailable
+      }
+      let merged = try merge(grant, replacing: previousAccessToken, into: captured.payload)
+      try capturedAccounts.updatePayload(id: id, payload: merged)
     case .codexAuthFile:
       throw ClaudeCredentialPersistError.sourceUnavailable
     }

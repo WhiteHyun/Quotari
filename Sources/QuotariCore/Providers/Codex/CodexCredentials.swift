@@ -49,9 +49,21 @@ public enum CodexCredentialsStore {
     return try parse(data)
   }
 
-  public static func load(source: ProviderCredentialSource) throws -> CodexCredentials {
-    guard case let .codexAuthFile(path) = source else { throw CodexCredentialsError.notFound }
-    return try load(url: URL(fileURLWithPath: path))
+  public static func load(
+    source: ProviderCredentialSource,
+    capturedAccounts: CapturedAccountStore = CapturedAccountStore()
+  ) throws -> CodexCredentials {
+    switch source {
+    case let .codexAuthFile(path):
+      return try load(url: URL(fileURLWithPath: path))
+    case let .quotariRegistry(id):
+      guard let captured = capturedAccounts.account(id: id), captured.provider == .codex else {
+        throw CodexCredentialsError.notFound
+      }
+      return try parse(captured.payload)
+    case .claudeEnvironment, .claudeKeychain, .claudeCredentialsFile:
+      throw CodexCredentialsError.notFound
+    }
   }
 
   static func parse(_ data: Data) throws -> CodexCredentials {

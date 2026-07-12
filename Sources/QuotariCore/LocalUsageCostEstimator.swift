@@ -275,7 +275,7 @@ struct LocalUsageCostScanner {
       "Estimated from selected account's local Codex logs"
     case .claudeCredentialsFile:
       "Estimated from selected account's local Claude cache logs"
-    case .claudeEnvironment, .claudeKeychain:
+    case .claudeEnvironment, .claudeKeychain, .quotariRegistry:
       "Estimated from local Claude cache logs (not account-specific)"
     }
   }

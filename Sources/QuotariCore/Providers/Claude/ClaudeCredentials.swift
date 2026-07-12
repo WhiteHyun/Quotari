@@ -102,7 +102,8 @@ public enum ClaudeCredentialsStore {
 
   public static func load(
     source: ProviderCredentialSource,
-    environment: [String: String] = ProcessInfo.processInfo.environment
+    environment: [String: String] = ProcessInfo.processInfo.environment,
+    capturedAccounts: CapturedAccountStore = CapturedAccountStore()
   ) throws -> ClaudeCredentials {
     switch source {
     case let .claudeEnvironment(name):
@@ -114,6 +115,11 @@ public enum ClaudeCredentialsStore {
     case let .claudeCredentialsFile(path):
       let data = try Data(contentsOf: URL(fileURLWithPath: path))
       return try parse(data)
+    case let .quotariRegistry(id):
+      guard let captured = capturedAccounts.account(id: id), captured.provider == .claude else {
+        throw ClaudeCredentialsError.notFound
+      }
+      return try parse(captured.payload)
     case .codexAuthFile:
       throw ClaudeCredentialsError.notFound
     }

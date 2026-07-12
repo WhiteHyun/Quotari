@@ -31,7 +31,9 @@ final class UsageStore {
   let costEstimator: any UsageCostEstimating
   private let accountDiscovery: any ProviderAccountDiscovering
   private let accountSelectionStore: ProviderAccountSelectionStore
+  private let accountCapture: AccountCaptureService
   private let defaults: UserDefaults
+  var captureErrors: [UsageProvider: String] = [:]
 
   private(set) var timerTask: Task<Void, Never>?
   private var refreshRequested = false
@@ -49,6 +51,7 @@ final class UsageStore {
     costEstimator: any UsageCostEstimating = LocalUsageCostEstimator(),
     accountDiscovery: any ProviderAccountDiscovering = ProviderAccountDiscovery(),
     accountSelectionStore: ProviderAccountSelectionStore = ProviderAccountSelectionStore(),
+    accountCapture: AccountCaptureService = AccountCaptureService(),
     defaults: UserDefaults = .standard,
     startsAutomatically: Bool = true
   ) {
@@ -57,6 +60,7 @@ final class UsageStore {
     self.costEstimator = costEstimator
     self.accountDiscovery = accountDiscovery
     self.accountSelectionStore = accountSelectionStore
+    self.accountCapture = accountCapture
     self.defaults = defaults
     selectedAccounts = accountSelectionStore.load()
     // refreshInterval has no inline default: its first assignment runs the
@@ -148,6 +152,46 @@ final class UsageStore {
   func selectAccount(id: String?, for provider: UsageProvider) {
     let account = id.flatMap { id in accounts[provider]?.first { $0.id == id } }
     selectAccount(account, for: provider)
+  }
+
+  /// Snapshots the account's live credentials into Quotari's own registry so
+  /// it survives the CLI credential slot being reused by another login. The
+  /// keychain/file I/O runs off the main actor so a slow (or prompting)
+  /// `security` call can't freeze the popover.
+  func captureAccount(_ account: ProviderAccount) async {
+    let capture = accountCapture
+    let now = Date()
+    do {
+      try await Task.detached { try capture.capture(account, now: now) }.value
+      captureErrors[account.provider] = nil
+      await reloadAccounts()
+    } catch {
+      captureErrors[account.provider] = error.localizedDescription
+    }
+  }
+
+  /// Whether an account can be saved: already-captured entries and static env
+  /// tokens (no refresh token to keep them alive) are excluded.
+  func isCapturable(_ account: ProviderAccount) -> Bool {
+    switch account.credentialSource {
+    case .quotariRegistry, .claudeEnvironment: false
+    case .codexAuthFile, .claudeKeychain, .claudeCredentialsFile: true
+    }
+  }
+
+  func removeCapturedAccount(_ account: ProviderAccount) async {
+    guard case let .quotariRegistry(id) = account.credentialSource else { return }
+    let capture = accountCapture
+    do {
+      try await Task.detached { try capture.remove(id: id) }.value
+      captureErrors[account.provider] = nil
+      if selectedAccounts[account.provider]?.id == account.id {
+        selectAccount(nil, for: account.provider)
+      }
+      await reloadAccounts()
+    } catch {
+      captureErrors[account.provider] = error.localizedDescription
+    }
   }
 
   func selectAccount(_ account: ProviderAccount?, for provider: UsageProvider) {
