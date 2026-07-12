@@ -110,9 +110,10 @@ struct PreferencesView: View {
   }
 
   private func accountLabel(_ account: ProviderAccount) -> String {
+    let name = store.accountLabel(for: account)
     guard let detail = account.detail, !detail.isEmpty else {
-      return account.displayName
+      return name
     }
-    return "\(account.displayName) (\(detail))"
+    return "\(name) (\(detail))"
   }
 }

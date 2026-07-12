@@ -174,13 +174,17 @@ public enum ProviderCredentialIdentity {
       return normalized(credentials.accountID) ?? normalized(credentials.email)
     case .claude:
       guard let credentials = try? ClaudeCredentialsStore.parse(payload) else { return nil }
-      // No durable account id in the payload, so fingerprint the refresh token
-      // (fall back to the access token) — stable enough to dedupe the same
-      // login now. Both empty ⇒ no identity.
-      guard let secret = normalized(credentials.refreshToken) ?? normalized(credentials.accessToken)
-      else { return nil }
-      return "fp:\(fingerprint(secret))"
+      return claudeIdentity(refreshToken: credentials.refreshToken, accessToken: credentials.accessToken)
     }
+  }
+
+  /// The Claude identity fingerprint for a token pair: the refresh token (or
+  /// the access token if there's no refresh token) hashed. Stable enough to
+  /// dedupe the same login and to detect when a credential slot's underlying
+  /// account has changed. Both empty ⇒ no identity.
+  public static func claudeIdentity(refreshToken: String?, accessToken: String?) -> String? {
+    guard let secret = normalized(refreshToken) ?? normalized(accessToken) else { return nil }
+    return "fp:\(fingerprint(secret))"
   }
 
   public static func displayName(provider: UsageProvider, payload: Data) -> String? {
@@ -197,6 +201,14 @@ public enum ProviderCredentialIdentity {
     guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty
     else { return nil }
     return trimmed
+  }
+
+  /// A collision-resistant fingerprint of an arbitrary secret string. Exposed
+  /// so callers that need to detect *any* token change (not just the durable
+  /// account identity) — e.g. profile-fetch retry eligibility keyed on the
+  /// access token — can derive one consistently.
+  public static func fingerprint(of value: String) -> String {
+    fingerprint(value)
   }
 
   private static func fingerprint(_ value: String) -> String {

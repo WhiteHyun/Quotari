@@ -125,7 +125,14 @@ struct ProviderCardView: View {
   }
 
   private var accountDisplayName: String? {
-    store.activeAccount(for: descriptor.id)?.displayName ?? snapshot?.account
+    // Use the account's label (a fetched Claude email when available) rather
+    // than its raw display name, so the card doesn't regress to the generic
+    // "Claude Code" once the profile cache populates and activeAccount starts
+    // resolving. Fall back to the snapshot's own account name.
+    if let active = store.activeAccount(for: descriptor.id) {
+      return store.accountLabel(for: active)
+    }
+    return snapshot?.account
   }
 
   @ViewBuilder

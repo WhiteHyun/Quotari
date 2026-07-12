@@ -70,6 +70,25 @@ struct NullCostEstimator: UsageCostEstimating {
   }
 }
 
+/// Profile fetcher stub so tests never hit the real `/api/oauth/profile`
+/// endpoint (the production default `ClaudeProfileFetcher` would).
+struct NullProfileFetcher: ClaudeProfileFetching {
+  func fetchProfile(accessToken: String) async throws -> ClaudeProfile {
+    ClaudeProfile()
+  }
+}
+
+extension ClaudeProfileStore {
+  /// A profile cache backed by a throwaway temp file, so tests neither read
+  /// nor overwrite the user's real Application Support profiles.
+  static func temporaryForTesting() -> ClaudeProfileStore {
+    ClaudeProfileStore(
+      url: FileManager.default.temporaryDirectory
+        .appendingPathComponent("quotari-profiles-\(UUID().uuidString).json")
+    )
+  }
+}
+
 extension AccountCaptureService {
   /// A capture service backed by an in-memory keychain, so tests never touch
   /// the real keychain when a store constructs its default.
@@ -136,6 +155,9 @@ extension UsageStore {
     accountDiscovery: any ProviderAccountDiscovering = StaticAccountDiscovery(),
     accountSelectionStore: ProviderAccountSelectionStore = .temporaryForTesting(),
     accountCapture: AccountCaptureService = .inMemoryForTesting(),
+    profileFetcher: any ClaudeProfileFetching = NullProfileFetcher(),
+    profileStore: ClaudeProfileStore = .temporaryForTesting(),
+    claudeCredentialLoader: @escaping @Sendable (ProviderCredentialSource) -> ClaudeCredentials? = { _ in nil },
     defaults: UserDefaults? = nil,
     startsAutomatically: Bool = true
   ) -> UsageStore {
@@ -145,6 +167,9 @@ extension UsageStore {
       accountDiscovery: accountDiscovery,
       accountSelectionStore: accountSelectionStore,
       accountCapture: accountCapture,
+      profileFetcher: profileFetcher,
+      profileStore: profileStore,
+      claudeCredentialLoader: claudeCredentialLoader,
       defaults: defaults ?? ephemeralDefaults(),
       startsAutomatically: startsAutomatically
     )

@@ -43,9 +43,23 @@ extension UsageStore {
       return selected
     }
     guard let accountName = snapshots[provider]?.account else { return nil }
-    return (accounts[provider] ?? []).first {
-      $0.displayName.localizedCaseInsensitiveCompare(accountName) == .orderedSame
+    return (accounts[provider] ?? []).first { accountMatchesSnapshot($0, name: accountName) }
+  }
+
+  /// Whether the snapshot's account name names this account. The provider
+  /// usage payload reports the email, so this matches the fetched profile
+  /// email (the visible label) as well as the discovered display name —
+  /// otherwise a Claude row labeled by email would never match its own usage.
+  private func accountMatchesSnapshot(_ account: ProviderAccount, name: String) -> Bool {
+    if account.displayName.localizedCaseInsensitiveCompare(name) == .orderedSame {
+      return true
     }
+    if account.provider == .claude,
+       let email = claudeProfiles[account.id]?.email,
+       email.localizedCaseInsensitiveCompare(name) == .orderedSame {
+      return true
+    }
+    return false
   }
 
   /// Where a previously selected account landed after rediscovery, evaluated
@@ -155,6 +169,13 @@ extension UsageStore {
       // Per-account fetches can rotate a live token too; keep any hidden
       // saved copy of that identity in step.
       await syncCapturedCopies(of: capturedCopyCandidates.filter { $0.provider == provider })
+      // A per-account usage fetch can rotate/persist a Claude token (via the
+      // strategy's refresh), so resolve email labels afterward too — otherwise
+      // a label stuck behind an expired token wouldn't update until a full
+      // dashboard refresh or reload.
+      if provider == .claude {
+        refreshClaudeProfiles()
+      }
     }
     accountUsageRefreshTasks[provider] = AccountUsageRefreshTask(task: task, force: force)
     await task.value
@@ -345,9 +366,7 @@ extension UsageStore {
   /// being credited to an arbitrary account.
   private func matchedAccount(for snapshot: UsageSnapshot, provider: UsageProvider) -> ProviderAccount? {
     guard let name = snapshot.account else { return nil }
-    return (accounts[provider] ?? []).first {
-      $0.displayName.localizedCaseInsensitiveCompare(name) == .orderedSame
-    }
+    return (accounts[provider] ?? []).first { accountMatchesSnapshot($0, name: name) }
   }
 
   private nonisolated static func isExpired(_ snapshot: UsageSnapshot) -> Bool {
