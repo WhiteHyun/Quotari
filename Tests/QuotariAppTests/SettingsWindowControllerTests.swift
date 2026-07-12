@@ -6,17 +6,12 @@ import Testing
 @MainActor
 struct SettingsWindowControllerTests {
   @Test func showsSettingsWindowWithoutAnAppBundle() {
-    let selectionURL = FileManager.default.temporaryDirectory
-      .appendingPathComponent("quotari-settings-\(UUID().uuidString).json")
-    let store = UsageStore(
-      accountSelectionStore: ProviderAccountSelectionStore(url: selectionURL),
+    let store = UsageStore.isolatedForTesting(
+      providers: ProviderRegistry.all,
       startsAutomatically: false
     )
     let controller = SettingsWindowController()
-    defer {
-      controller.close()
-      try? FileManager.default.removeItem(at: selectionURL)
-    }
+    defer { controller.close() }
 
     controller.show(store: store)
 

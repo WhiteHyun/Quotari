@@ -16,7 +16,7 @@ struct UsageStoreReportedCostTests {
       sourceDescription: "Reported by provider",
       daily: [DailyCost(date: Self.day, spend: 3.70, tokens: 0)]
     )
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [Self.descriptor(cost: reportedCost)],
       costEstimator: EmptyReportedCostEstimator()
     )
@@ -46,7 +46,7 @@ struct UsageStoreReportedCostTests {
       sourceDescription: "Reported by provider",
       daily: [DailyCost(date: Self.day, spend: 0, tokens: 0)]
     )
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [Self.descriptor(cost: reportedCost)],
       costEstimator: DelayedReportedCostEstimator(cost: localCost, delay: .milliseconds(250))
     )

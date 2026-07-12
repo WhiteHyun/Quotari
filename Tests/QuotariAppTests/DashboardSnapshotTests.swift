@@ -11,14 +11,22 @@ import Testing
 struct DashboardSnapshotTests {
   @Test func renderDashboardSnapshots() async throws {
     _ = NSApplication.shared
-    let store = UsageStore(providers: MockProviders.descriptors)
+    // A deterministic estimator keeps CostSectionView in the render without
+    // scanning the machine's real usage logs (mock provider cost is discarded,
+    // so a null estimator would drop the section entirely).
+    let store = UsageStore.isolatedForTesting(
+      providers: MockProviders.descriptors,
+      costEstimator: SnapshotCostEstimator()
+    )
     for _ in 0 ..< 100 {
-      if store.snapshots.count >= ProviderRegistry.all.count {
+      if store.snapshots.count >= ProviderRegistry.all.count,
+         store.snapshots.values.allSatisfy({ $0.cost != nil }) {
         break
       }
       try? await Task.sleep(for: .milliseconds(50))
     }
     #expect(store.snapshots.count == ProviderRegistry.all.count)
+    #expect(store.snapshots.values.allSatisfy { $0.cost != nil })
 
     let outputDirectory = Self.outputDirectory()
     try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
@@ -47,6 +55,28 @@ struct DashboardSnapshotTests {
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .appendingPathComponent("Snapshots", isDirectory: true)
+  }
+
+  private struct SnapshotCostEstimator: UsageCostEstimating {
+    static let day = Date(timeIntervalSince1970: 1_783_478_400)
+
+    func costSummary(provider: UsageProvider, now: Date, historyDays: Int) async -> CostSummary? {
+      CostSummary(
+        todaySpend: 4.20,
+        monthSpend: 38.75,
+        monthTokens: 12_500_000,
+        latestTokens: 48000,
+        topModel: "gpt-5",
+        sourceDescription: "Estimated from local logs",
+        daily: (0 ..< 7).map { offset in
+          DailyCost(
+            date: Self.day.addingTimeInterval(TimeInterval(offset - 6) * 86400),
+            spend: [1.10, 0.40, 2.30, 0.85, 3.10, 1.75, 4.20][offset],
+            tokens: 250_000 * (offset + 1)
+          )
+        }
+      )
+    }
   }
 
   /// Renders in an off-screen NSWindow and captures via `cacheDisplay` (this

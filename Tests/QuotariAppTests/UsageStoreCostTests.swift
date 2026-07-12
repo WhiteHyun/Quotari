@@ -21,7 +21,7 @@ struct UsageStoreCostTests {
       sourceDescription: "Reported by provider",
       daily: [DailyCost(date: Self.day, spend: 0, tokens: 0)]
     )
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [Self.descriptor(cost: reportedCost)],
       costEstimator: StubCostEstimator(cost: localCost)
     )
@@ -47,7 +47,7 @@ struct UsageStoreCostTests {
       latestTokens: 200,
       daily: Self.dailySeries(tokens: 1000)
     )
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [Self.descriptor(cost: providerCost)],
       costEstimator: StubCostEstimator(cost: localCost)
     )
@@ -73,7 +73,7 @@ struct UsageStoreCostTests {
       sourceDescription: "Reported by provider",
       daily: [DailyCost(date: Self.day, spend: 0, tokens: 0)]
     )
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [Self.descriptor(cost: reportedCost)],
       costEstimator: DelayedCostEstimator(cost: localCost, delay: .milliseconds(250))
     )
@@ -109,7 +109,7 @@ struct UsageStoreCostTests {
       sourceDescription: "Reported by provider",
       daily: [DailyCost(date: Self.day, spend: 0, tokens: 0)]
     )
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [Self.descriptor(cost: reportedCost)],
       costEstimator: CachedThenDelayedCostEstimator(
         cachedCost: cachedCost,
@@ -141,7 +141,7 @@ struct UsageStoreCostTests {
       sourceDescription: "Reported by provider",
       daily: [DailyCost(date: Self.day, spend: 0, tokens: 0)]
     )
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [Self.descriptor(cost: reportedCost)],
       costEstimator: StubCostEstimator(cost: localCost)
     )
@@ -170,7 +170,7 @@ struct UsageStoreCostTests {
       daily: [DailyCost(date: Self.day, spend: 0, tokens: 0)]
     )
     let estimator = CountingDelayedCostEstimator(cost: localCost, delay: .milliseconds(250))
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [Self.descriptor(cost: reportedCost)],
       costEstimator: estimator
     )

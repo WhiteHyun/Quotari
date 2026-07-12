@@ -63,7 +63,7 @@ struct UsageStoreAccountUsageTests {
       metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
       pipeline: ProviderFetchPipeline { _ in [strategy] }
     )
-    let store = UsageStore(
+    let store = UsageStore.isolatedForTesting(
       providers: [descriptor],
       costEstimator: NoAccountUsageCostEstimator(),
       accountDiscovery: AccountUsageDiscovery(accounts: [.codex: [personal, work]]),
