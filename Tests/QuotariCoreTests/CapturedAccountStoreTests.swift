@@ -146,7 +146,7 @@ struct CapturedAccountStoreTests {
     try store.save(Self.account(id: "a", capturedAt: Date(timeIntervalSince1970: 100), token: "old"))
     let indexWritesAfterSave = keychain.writeCount(of: "UpdateTest-Index")
 
-    try store.updatePayload(id: "a", payload: Data(#"{"tokens":{"access_token":"rotated"}}"#.utf8))
+    try store.updatePayload(id: "a") { _ in Data(#"{"tokens":{"access_token":"rotated"}}"#.utf8) }
 
     // A refresh writes the account item but must not write the index at all.
     #expect(keychain.writeCount(of: "UpdateTest-Index") == indexWritesAfterSave)
@@ -173,7 +173,7 @@ struct CapturedAccountStoreTests {
 
     await withThrowingTaskGroup(of: Void.self) { group in
       group.addTask { try store.remove(id: "a") }
-      group.addTask { try? store.updatePayload(id: "a", payload: Data(#"{"tokens":{"access_token":"x"}}"#.utf8)) }
+      group.addTask { try? store.updatePayload(id: "a") { _ in Data(#"{"tokens":{"access_token":"x"}}"#.utf8) } }
     }
     // Whichever ordering wins, the account must not linger in the index.
     #expect(!store.load().contains { $0.id == "a" })

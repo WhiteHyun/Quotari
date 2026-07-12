@@ -5,11 +5,29 @@ public struct CodexCredentials: Equatable, Sendable {
   public var accessToken: String
   public var accountID: String?
   public var email: String?
+  public var refreshToken: String?
+  public var expiresAt: Date?
 
-  public init(accessToken: String, accountID: String?, email: String? = nil) {
+  public init(
+    accessToken: String,
+    accountID: String?,
+    email: String? = nil,
+    refreshToken: String? = nil,
+    expiresAt: Date? = nil
+  ) {
     self.accessToken = accessToken
     self.accountID = accountID
     self.email = email
+    self.refreshToken = refreshToken
+    self.expiresAt = expiresAt
+  }
+
+  /// Whether the access token is past (or within `leeway` of) its expiry.
+  /// Tokens whose JWT carries no `exp` claim never report expired — the
+  /// API's 401 stays the arbiter for those.
+  public func isExpired(now: Date, leeway: TimeInterval = 60) -> Bool {
+    guard let expiresAt else { return false }
+    return now >= expiresAt.addingTimeInterval(-leeway)
   }
 }
 
@@ -75,13 +93,29 @@ public enum CodexCredentialsStore {
     return CodexCredentials(
       accessToken: accessToken,
       accountID: tokens["account_id"] as? String,
-      email: (tokens["id_token"] as? String).flatMap(jwtEmail)
+      email: (tokens["id_token"] as? String).flatMap(jwtEmail),
+      refreshToken: (tokens["refresh_token"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+      expiresAt: jwtExpiry(of: accessToken)
     )
   }
 
   /// The usage payload carries no account identity, but the OpenID `id_token`
   /// does. Claims are read unverified — display-only, never authorization.
   private static func jwtEmail(from token: String) -> String? {
+    guard let claims = jwtClaims(of: token) else { return nil }
+    let profile = claims["https://api.openai.com/profile"] as? [String: Any]
+    let email = (claims["email"] as? String) ?? (profile?["email"] as? String)
+    return email.flatMap { $0.isEmpty ? nil : $0 }
+  }
+
+  /// The access token's `exp` claim — `auth.json` stores no expiry of its
+  /// own. Read unverified: it only decides when a saved account refreshes,
+  /// never authorization.
+  static func jwtExpiry(of token: String) -> Date? {
+    (jwtClaims(of: token)?["exp"] as? Double).map(Date.init(timeIntervalSince1970:))
+  }
+
+  private static func jwtClaims(of token: String) -> [String: Any]? {
     let parts = token.split(separator: ".")
     guard parts.count >= 2 else { return nil }
     var payload = String(parts[1])
@@ -90,11 +124,7 @@ public enum CodexCredentialsStore {
     while payload.count % 4 != 0 {
       payload.append("=")
     }
-    guard let data = Data(base64Encoded: payload),
-          let claims = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-    else { return nil }
-    let profile = claims["https://api.openai.com/profile"] as? [String: Any]
-    let email = (claims["email"] as? String) ?? (profile?["email"] as? String)
-    return email.flatMap { $0.isEmpty ? nil : $0 }
+    guard let data = Data(base64Encoded: payload) else { return nil }
+    return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
   }
 }

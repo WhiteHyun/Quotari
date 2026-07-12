@@ -6,9 +6,19 @@ import Foundation
 /// credentials of the machine running the tests.
 struct StaticAccountDiscovery: ProviderAccountDiscovering {
   var accounts: [UsageProvider: [ProviderAccount]] = [:]
+  /// Saved-account id → the live account hiding it, mirroring the production
+  /// discovery's identity-equivalence lookup.
+  var liveEquivalents: [String: ProviderAccount] = [:]
 
   func accounts(for provider: UsageProvider) async -> [ProviderAccount] {
     accounts[provider] ?? []
+  }
+
+  func liveAccount(
+    equivalentTo account: ProviderAccount,
+    among accounts: [ProviderAccount]
+  ) async -> ProviderAccount? {
+    liveEquivalents[account.id]
   }
 }
 

@@ -123,6 +123,51 @@ struct UsageStoreAccountRefreshTests {
     #expect(selectionStore.load()[.codex] == refreshedAccount)
   }
 
+  @Test func reloadAccountsReconcilesSelectedSavedAccountToItsLiveCopy() async throws {
+    // The saved copy of an identity that logged back into the CLI is hidden
+    // from discovery; a selection still pointing at it must move to the live
+    // account rather than re-listing the stale snapshot next to it.
+    let directory = try TemporaryDirectory()
+    let selectionStore = ProviderAccountSelectionStore(
+      url: directory.url.appendingPathComponent("ProviderAccounts.json")
+    )
+    let savedAccount = ProviderAccount(
+      provider: .codex,
+      displayName: "Saved",
+      detail: "Saved in Quotari",
+      credentialSource: .quotariRegistry(id: "codex:acct-1")
+    )
+    let liveAccount = ProviderAccount(
+      provider: .codex,
+      displayName: "Live",
+      detail: "Default",
+      credentialSource: .codexAuthFile(path: "/tmp/auth.json"),
+      credentialIdentity: "acct-1"
+    )
+    try selectionStore.save([.codex: savedAccount])
+    let descriptor = ProviderDescriptor(
+      id: .codex,
+      metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
+      pipeline: ProviderFetchPipeline { _ in [RecordingAccountStrategy(recorder: AccountRecorder())] }
+    )
+    let store = UsageStore.isolatedForTesting(
+      providers: [descriptor],
+      costEstimator: EmptyCostEstimator(),
+      accountDiscovery: StaticAccountDiscovery(
+        accounts: [.codex: [liveAccount]],
+        liveEquivalents: [savedAccount.id: liveAccount]
+      ),
+      accountSelectionStore: selectionStore,
+      startsAutomatically: false
+    )
+
+    await store.reloadAccounts()
+
+    #expect(store.selectedAccounts[.codex] == liveAccount)
+    #expect(store.accounts[.codex] == [liveAccount])
+    #expect(selectionStore.load()[.codex] == liveAccount)
+  }
+
   private static func waitForSnapshot(
     in store: UsageStore,
     account: String,

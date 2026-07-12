@@ -108,12 +108,15 @@ public struct CapturedAccountStore: Sendable {
 
   /// Refresh path: overwrites only the account's own item, never the index,
   /// so concurrent refreshes of different accounts don't contend on the index.
-  public func updatePayload(id: String, payload: Data) throws {
+  /// `transform` runs under the mutation lock on the freshly read payload, so
+  /// a check-then-write (e.g. a stale-token guard) can't race a concurrent
+  /// capture or refresh into clobbering the newer pair.
+  public func updatePayload(id: String, transform: (Data) throws -> Data) throws {
     try Self.mutationLock.withLock {
       guard var account = account(id: id) else {
         throw KeychainItemStore.KeychainError.commandFailed(status: 44)
       }
-      account.payload = payload
+      account.payload = try transform(account.payload)
       try keychain.write(encode(account), service: itemService(id))
     }
   }

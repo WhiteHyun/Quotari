@@ -29,7 +29,7 @@ final class UsageStore {
 
   let providers: [ProviderDescriptor]
   let costEstimator: any UsageCostEstimating
-  private let accountDiscovery: any ProviderAccountDiscovering
+  let accountDiscovery: any ProviderAccountDiscovering
   private let accountSelectionStore: ProviderAccountSelectionStore
   private let accountCapture: AccountCaptureService
   private let defaults: UserDefaults
@@ -127,14 +127,9 @@ final class UsageStore {
     for descriptor in providers {
       let previousAccounts = accounts[descriptor.id] ?? []
       var providerAccounts = await accountDiscovery.accounts(for: descriptor.id)
-      if let selected = selectedAccounts[descriptor.id] {
-        if let refreshed = providerAccounts.first(where: { $0.id == selected.id }) {
-          if refreshed != selected {
-            refreshedSelections.append((descriptor.id, refreshed))
-          }
-        } else {
-          providerAccounts.append(selected)
-        }
+      if let selected = selectedAccounts[descriptor.id],
+         let updated = await reconciledSelection(selected, in: &providerAccounts) {
+        refreshedSelections.append((descriptor.id, updated))
       }
       reconcileAccountUsage(
         provider: descriptor.id,

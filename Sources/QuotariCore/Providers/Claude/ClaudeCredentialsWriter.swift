@@ -66,13 +66,15 @@ public struct ClaudeCredentialsWriter: ClaudeCredentialPersisting {
     case let .quotariRegistry(id):
       // A captured account Quotari owns: refresh keeps the stored snapshot's
       // token alive so the account stays usable while it's not the live one.
-      // updatePayload rewrites only this account's item (not the shared
-      // index), so concurrent refreshes of different accounts don't contend.
-      guard let captured = capturedAccounts.account(id: id) else {
+      // The merge runs inside updatePayload's mutation lock so the stale-token
+      // guard is atomic with the write — a concurrent re-capture can't be
+      // clobbered by a merge based on the pair it just replaced.
+      guard capturedAccounts.account(id: id) != nil else {
         throw ClaudeCredentialPersistError.sourceUnavailable
       }
-      let merged = try merge(grant, replacing: previousAccessToken, into: captured.payload)
-      try capturedAccounts.updatePayload(id: id, payload: merged)
+      try capturedAccounts.updatePayload(id: id) { payload in
+        try merge(grant, replacing: previousAccessToken, into: payload)
+      }
     case .codexAuthFile:
       throw ClaudeCredentialPersistError.sourceUnavailable
     }

@@ -2,6 +2,23 @@ import Foundation
 
 public protocol ProviderAccountDiscovering: Sendable {
   func accounts(for provider: UsageProvider) async -> [ProviderAccount]
+
+  /// The live account among `accounts` holding the same underlying credential
+  /// identity as the given saved (registry) account, if any. Lets a selection
+  /// pointing at a saved copy be reconciled to the live login that hides it.
+  func liveAccount(
+    equivalentTo account: ProviderAccount,
+    among accounts: [ProviderAccount]
+  ) async -> ProviderAccount?
+}
+
+public extension ProviderAccountDiscovering {
+  func liveAccount(
+    equivalentTo account: ProviderAccount,
+    among accounts: [ProviderAccount]
+  ) async -> ProviderAccount? {
+    nil
+  }
 }
 
 public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
@@ -47,6 +64,20 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
         )
       }
     return live + saved
+  }
+
+  public func liveAccount(
+    equivalentTo account: ProviderAccount,
+    among accounts: [ProviderAccount]
+  ) async -> ProviderAccount? {
+    guard case let .quotariRegistry(id) = account.credentialSource,
+          let captured = capturedAccounts.account(id: id),
+          let key = ProviderCredentialIdentity.key(provider: captured.provider, payload: captured.payload)
+    else { return nil }
+    return accounts.first { candidate in
+      !candidate.credentialSource.isCaptured
+        && identity(of: candidate.credentialSource, provider: candidate.provider) == key
+    }
   }
 
   private func identity(of source: ProviderCredentialSource, provider: UsageProvider) -> String? {

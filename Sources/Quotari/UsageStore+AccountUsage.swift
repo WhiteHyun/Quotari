@@ -40,6 +40,26 @@ extension UsageStore {
     }
   }
 
+  /// Where a previously selected account landed after rediscovery: the same
+  /// account (with possibly refreshed metadata), the live login whose re-use
+  /// of the CLI slot now hides the selected saved copy — re-listing that copy
+  /// would keep fetching with the older, eventually expiring snapshot — or,
+  /// when neither exists, appended as-is so the selection isn't silently
+  /// dropped. Returns the account to re-select, or nil if nothing changed.
+  func reconciledSelection(
+    _ selected: ProviderAccount,
+    in accounts: inout [ProviderAccount]
+  ) async -> ProviderAccount? {
+    if let refreshed = accounts.first(where: { $0.id == selected.id }) {
+      return refreshed == selected ? nil : refreshed
+    }
+    if let live = await accountDiscovery.liveAccount(equivalentTo: selected, among: accounts) {
+      return live
+    }
+    accounts.append(selected)
+    return nil
+  }
+
   func accountUsage(for account: ProviderAccount) -> ProviderAccountUsage? {
     if let usage = currentAccountUsage(for: account) {
       return usage

@@ -70,4 +70,67 @@ struct ProviderAccountDiscoveryCaptureTests {
     #expect(accounts.count == 1)
     #expect(accounts.allSatisfy { !$0.credentialSource.isCaptured })
   }
+
+  @Test func hiddenSavedAccountResolvesToItsLiveEquivalent() async throws {
+    let liveHome = try codexHome(accountID: "acct-1")
+    defer { try? FileManager.default.removeItem(at: liveHome) }
+    let keychain = InMemoryKeychain()
+    let store = CapturedAccountStore(keychain: keychain.store, service: "Test-Disc-\(UUID().uuidString)")
+    try store.save(CapturedAccount(
+      id: "codex:acct-1",
+      provider: .codex,
+      displayName: "Codex",
+      detail: "Default",
+      capturedAt: Date(timeIntervalSince1970: 1000),
+      origin: .codexAuthFile(path: liveHome.appendingPathComponent("auth.json").path),
+      payload: Data(#"{"tokens":{"access_token":"tok","account_id":"acct-1"}}"#.utf8)
+    ))
+    let discovery = ProviderAccountDiscovery(
+      environment: ["CODEX_HOME": liveHome.path],
+      home: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
+      keychainData: { nil },
+      capturedAccounts: store
+    )
+    let accounts = await discovery.accounts(for: .codex)
+    let saved = ProviderAccount(
+      provider: .codex,
+      displayName: "Codex",
+      detail: "Saved in Quotari",
+      credentialSource: .quotariRegistry(id: "codex:acct-1")
+    )
+
+    let live = await discovery.liveAccount(equivalentTo: saved, among: accounts)
+
+    #expect(live != nil)
+    #expect(live?.credentialSource.isCaptured == false)
+    #expect(live == accounts.first)
+  }
+
+  @Test func savedAccountWithADifferentIdentityHasNoLiveEquivalent() async throws {
+    let liveHome = try codexHome(accountID: "acct-live")
+    defer { try? FileManager.default.removeItem(at: liveHome) }
+    let keychain = InMemoryKeychain()
+    let store = CapturedAccountStore(keychain: keychain.store, service: "Test-Disc-\(UUID().uuidString)")
+    try store.save(CapturedAccount(
+      id: "codex:acct-saved",
+      provider: .codex,
+      displayName: "Saved Codex",
+      detail: "Personal",
+      capturedAt: Date(timeIntervalSince1970: 1000),
+      origin: .codexAuthFile(path: "/tmp/old.json"),
+      payload: Data(#"{"tokens":{"access_token":"saved","account_id":"acct-saved"}}"#.utf8)
+    ))
+    let discovery = ProviderAccountDiscovery(
+      environment: ["CODEX_HOME": liveHome.path],
+      home: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
+      keychainData: { nil },
+      capturedAccounts: store
+    )
+    let accounts = await discovery.accounts(for: .codex)
+    let saved = accounts.first { $0.credentialSource.isCaptured }
+
+    let live = try await discovery.liveAccount(equivalentTo: #require(saved), among: accounts)
+
+    #expect(live == nil)
+  }
 }
