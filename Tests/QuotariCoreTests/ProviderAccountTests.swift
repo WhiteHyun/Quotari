@@ -140,11 +140,14 @@ struct ProviderAccountStrategyTests {
     let recorder = StubTransport.Recorder()
     let strategy = ClaudeUsageStrategy(
       transport: StubTransport(json: Self.claudeUsageJSON, recorder: recorder),
-      loadCredentials: {
-        ClaudeCredentials(
-          accessToken: "default-token",
-          subscriptionType: "max",
-          rateLimitTier: "default_claude_max_5x"
+      resolveCredentials: {
+        ResolvedClaudeCredentials(
+          credentials: ClaudeCredentials(
+            accessToken: "default-token",
+            subscriptionType: "max",
+            rateLimitTier: "default_claude_max_5x"
+          ),
+          source: .claudeEnvironment(name: "QUOTARI_TEST")
         )
       }
     )
@@ -192,7 +195,12 @@ struct ProviderAccountStrategyTests {
     )
     let live = ClaudeUsageStrategy(
       transport: StubTransport(json: Self.claudeUsageJSON),
-      loadCredentials: { ClaudeCredentials(accessToken: "default-token") }
+      resolveCredentials: {
+        ResolvedClaudeCredentials(
+          credentials: ClaudeCredentials(accessToken: "default-token"),
+          source: .claudeEnvironment(name: "QUOTARI_TEST")
+        )
+      }
     )
     let pipeline = ProviderFetchPipeline { _ in [live, MockProviders.claudeStrategy] }
 

@@ -207,11 +207,14 @@ struct ClaudeUsageTests {
   @Test func parsesUsageWithRenamedModelWindow() async throws {
     let strategy = ClaudeUsageStrategy(
       transport: StubTransport(json: claudeJSON),
-      loadCredentials: {
-        ClaudeCredentials(
-          accessToken: "tok",
-          subscriptionType: "max",
-          rateLimitTier: "default_claude_max_20x"
+      resolveCredentials: {
+        ResolvedClaudeCredentials(
+          credentials: ClaudeCredentials(
+            accessToken: "tok",
+            subscriptionType: "max",
+            rateLimitTier: "default_claude_max_20x"
+          ),
+          source: .claudeEnvironment(name: "QUOTARI_TEST")
         )
       }
     )
@@ -247,7 +250,7 @@ struct ClaudeUsageTests {
   @Test func unavailableWithoutCredentials() async {
     let strategy = ClaudeUsageStrategy(
       transport: StubTransport(json: "{}"),
-      loadCredentials: { throw ClaudeCredentialsError.notFound }
+      resolveCredentials: { throw ClaudeCredentialsError.notFound }
     )
     #expect(await strategy.isAvailable(ProviderFetchContext(provider: .claude, now: Date())) == false)
   }

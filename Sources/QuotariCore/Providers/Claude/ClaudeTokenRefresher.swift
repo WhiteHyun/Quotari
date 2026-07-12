@@ -1,0 +1,117 @@
+import Foundation
+
+/// A refreshed token pair as returned by the OAuth token endpoint.
+public struct ClaudeTokenGrant: Equatable, Sendable {
+  public var accessToken: String
+  public var refreshToken: String?
+  public var expiresAt: Date?
+  public var scopes: [String]?
+
+  public init(
+    accessToken: String,
+    refreshToken: String? = nil,
+    expiresAt: Date? = nil,
+    scopes: [String]? = nil
+  ) {
+    self.accessToken = accessToken
+    self.refreshToken = refreshToken
+    self.expiresAt = expiresAt
+    self.scopes = scopes
+  }
+}
+
+public protocol ClaudeTokenRefreshing: Sendable {
+  func refresh(refreshToken: String, scopes: [String], now: Date) async throws -> ClaudeTokenGrant
+}
+
+public enum ClaudeTokenRefreshError: LocalizedError, Sendable {
+  case malformedResponse
+
+  public var errorDescription: String? {
+    switch self {
+    case .malformedResponse: "The OAuth token endpoint returned an unexpected payload."
+    }
+  }
+}
+
+/// Exchanges Claude Code's refresh token for a fresh access token, mirroring
+/// the request the CLI itself sends (verified against Claude Code 2.1.207:
+/// JSON body with `grant_type`, `refresh_token`, `client_id`, and `scope`).
+public struct ClaudeTokenRefresher: ClaudeTokenRefreshing {
+  public static let tokenURL = URL(string: "https://platform.claude.com/v1/oauth/token")!
+
+  /// Claude Code's public OAuth client identifier (no secret; PKCE client).
+  public static let clientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+
+  /// The scopes Claude Code requests when the stored credential has none.
+  public static let defaultScopes = [
+    "user:profile",
+    "user:inference",
+    "user:sessions:claude_code",
+    "user:mcp_servers",
+    "user:file_upload",
+  ]
+
+  private let transport: any ProviderHTTPTransport
+  private let tokenURL: URL
+
+  public init(
+    transport: any ProviderHTTPTransport = URLSession.shared,
+    tokenURL: URL = ClaudeTokenRefresher.tokenURL
+  ) {
+    self.transport = transport
+    self.tokenURL = tokenURL
+  }
+
+  public func refresh(refreshToken: String, scopes: [String], now: Date) async throws -> ClaudeTokenGrant {
+    let scope = (scopes.isEmpty ? Self.defaultScopes : scopes).joined(separator: " ")
+    let body = try JSONSerialization.data(withJSONObject: [
+      "grant_type": "refresh_token",
+      "refresh_token": refreshToken,
+      "client_id": Self.clientID,
+      "scope": scope,
+    ])
+    let data = try await transport.postJSON(url: tokenURL, body: body)
+    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let accessToken = root["access_token"] as? String,
+          !accessToken.isEmpty
+    else { throw ClaudeTokenRefreshError.malformedResponse }
+    let rotated = (root["refresh_token"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    return ClaudeTokenGrant(
+      accessToken: accessToken,
+      refreshToken: rotated,
+      expiresAt: (root["expires_in"] as? Double).map { now.addingTimeInterval($0) },
+      scopes: (root["scope"] as? String).flatMap { scope in
+        let scopes = scope.split(separator: " ").map(String.init)
+        return scopes.isEmpty ? nil : scopes
+      }
+    )
+  }
+}
+
+/// Runs the whole refresh-and-persist transaction once per key: Quotari can
+/// fetch the same provider from more than one place at once (dashboard
+/// refresh + account popover), and burning the rotating refresh token twice
+/// would invalidate the pair the first caller just obtained. The key includes
+/// the refresh-token generation, so a caller that already holds a newer pair
+/// never joins (or clobbers) an older generation's transaction.
+public actor ClaudeTokenRefreshCoordinator {
+  public static let shared = ClaudeTokenRefreshCoordinator()
+
+  private var inFlight: [String: Task<ResolvedClaudeCredentials, Never>] = [:]
+
+  public init() {}
+
+  public func resolve(
+    key: String,
+    operation: @escaping @Sendable () async -> ResolvedClaudeCredentials
+  ) async -> ResolvedClaudeCredentials {
+    if let task = inFlight[key] {
+      return await task.value
+    }
+    let task = Task { await operation() }
+    inFlight[key] = task
+    defer { inFlight[key] = nil }
+    return await task.value
+  }
+}
