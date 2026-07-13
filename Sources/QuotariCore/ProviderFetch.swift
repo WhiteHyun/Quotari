@@ -9,17 +9,23 @@ public struct ProviderFetchContext: Sendable {
   public let now: Date
   public let credential: String?
   public let account: ProviderAccount?
+  /// Saved registry row proven equivalent to the live account at discovery
+  /// time. Claude refresh uses this explicit id to mirror a rotated grant
+  /// without deriving identity from the newly-rotated refresh token.
+  public let capturedRegistryID: String?
 
   public init(
     provider: UsageProvider,
     now: Date,
     credential: String? = nil,
-    account: ProviderAccount? = nil
+    account: ProviderAccount? = nil,
+    capturedRegistryID: String? = nil
   ) {
     self.provider = provider
     self.now = now
     self.credential = credential
     self.account = account
+    self.capturedRegistryID = capturedRegistryID
   }
 }
 

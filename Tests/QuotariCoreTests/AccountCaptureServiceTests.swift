@@ -1,3 +1,5 @@
+// Capture and maintenance scenarios share the same credential fixtures.
+// swiftlint:disable file_length
 import Foundation
 @testable import QuotariCore
 import Testing
@@ -200,8 +202,8 @@ struct AccountCaptureServiceTests {
 
   @Test func codexMinimizerKeepsRefreshTokenAndDropsRootApiKey() throws {
     // Real Codex auth.json shape: OPENAI_API_KEY and last_refresh are root
-    // siblings; the tokens object (incl. refresh_token) must survive so the
-    // saved account can refresh a stale session.
+    // siblings. Drop the unrelated API key, but retain both tokens and their
+    // refresh timestamp because Codex requires last_refresh to load them.
     let payload = Data("""
     {"tokens":{"access_token":"a","account_id":"acct","id_token":"jwt","refresh_token":"REFRESH"},
      "OPENAI_API_KEY":"sk-KEEP-OUT","last_refresh":"2026-01-01"}
@@ -211,7 +213,8 @@ struct AccountCaptureServiceTests {
 
     #expect(!text.contains("OPENAI_API_KEY"))
     #expect(!text.contains("sk-KEEP-OUT"))
-    #expect(!text.contains("last_refresh"))
+    #expect(text.contains("last_refresh"))
+    #expect(text.contains("2026-01-01"))
     #expect(text.contains("refresh_token"))
     #expect(text.contains("REFRESH"))
     #expect(text.contains("account_id"))
@@ -241,6 +244,41 @@ struct AccountCaptureServiceTests {
     // one "codex:" id — each gets a distinct UUID-based entry.
     #expect(capturedA.id != capturedB.id)
     #expect(store.load().count == 2)
+  }
+
+  @Test func recapturingAnIDLessCodexLoginReusesItsLegacyUUIDEntry() throws {
+    let store = makeStore(InMemoryKeychain())
+    let legacyID = "codex:550e8400-e29b-41d4-a716-446655440000"
+    try store.save(CapturedAccount(
+      id: legacyID,
+      provider: .codex,
+      displayName: "Codex account",
+      detail: "Default",
+      capturedAt: captureNow,
+      origin: .codexAuthFile(path: "/tmp/legacy-auth.json"),
+      payload: Data(#"{"tokens":{"access_token":"old-token","refresh_token":"stable-refresh"}}"#.utf8)
+    ))
+    let liveURL = try codexAuthFile(
+      #"{"tokens":{"access_token":"new-token","refresh_token":"stable-refresh"}}"#
+    )
+    defer { try? FileManager.default.removeItem(at: liveURL) }
+    let service = AccountCaptureService(capturedAccounts: store)
+
+    let captured = try service.capture(ProviderAccount(
+      provider: .codex,
+      displayName: "Codex account",
+      detail: "Default",
+      credentialSource: .codexAuthFile(path: liveURL.path)
+    ), now: captureNow.addingTimeInterval(60))
+
+    #expect(captured.id == legacyID)
+    #expect(store.load().map(\.id) == [legacyID])
+    let credentials = try CodexCredentialsStore.load(
+      source: .quotariRegistry(id: legacyID),
+      capturedAccounts: store
+    )
+    #expect(credentials.accessToken == "new-token")
+    #expect(credentials.refreshToken == "stable-refresh")
   }
 
   @Test func capturingAPayloadWithoutARefreshTokenIsRejected() throws {

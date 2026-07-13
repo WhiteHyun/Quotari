@@ -86,4 +86,17 @@ public enum ProviderCredentialSource: Codable, Equatable, Sendable {
     }
     return false
   }
+
+  /// Namespaces durable recovery data for a CLI-owned Claude credential
+  /// source. Both the refresh and account-switch paths must derive this key
+  /// identically so a rotated grant cannot be stranded beside the slot it
+  /// protects.
+  var claudeLivePendingGrantID: String? {
+    switch self {
+    case .claudeKeychain, .claudeCredentialsFile:
+      "claude-live:\(ProviderCredentialIdentity.fingerprint(of: stableID))"
+    case .codexAuthFile, .claudeEnvironment, .quotariRegistry:
+      nil
+    }
+  }
 }

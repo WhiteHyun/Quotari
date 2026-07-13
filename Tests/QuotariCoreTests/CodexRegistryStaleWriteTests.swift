@@ -270,6 +270,55 @@ struct CodexRegistryStaleWriteTests {
   }
 }
 
+struct CodexRegistryDurableRebaseTests {
+  @Test func aFailedSupersedingWriteKeepsTheOriginalDurableGrant() async throws {
+    // The durable grant must survive when rebasing it onto the stored pair
+    // fails both the registry write and the replacement pending-grant write.
+    // Otherwise quitting here loses the only refresh token that still works.
+    let stored = codexJWT(claims: ["exp": 1500])
+    let fresh = codexJWT(claims: ["exp": 100_000])
+    let keychain = InMemoryKeychain()
+    let service = "Test-CodexDurableRebase-\(UUID().uuidString)"
+    let store = CapturedAccountStore(keychain: keychain.store, service: service)
+    try store.save(CapturedAccount(
+      id: "codex:acct-1",
+      provider: .codex,
+      displayName: "Saved",
+      detail: nil,
+      capturedAt: Date(timeIntervalSince1970: 0),
+      origin: .codexAuthFile(path: "/tmp/old.json"),
+      payload: codexAuthPayload(accessToken: stored, refreshToken: "ref-1")
+    ))
+    let pending = CodexPendingGrant(
+      grant: CodexTokenGrant(accessToken: fresh, refreshToken: "ref-2"),
+      previousAccessToken: codexJWT(claims: ["exp": 1000]),
+      consumedRefreshToken: "ref-1"
+    )
+    try store.savePendingGrant(JSONEncoder().encode(pending), id: "codex:acct-1")
+    keychain.failWrites(of: "\(service).codex:acct-1")
+    keychain.failWrites(of: "\(service).pending.codex:acct-1")
+    let coordinator = CodexTokenRefreshCoordinator()
+    let strategy = CodexUsageStrategy(
+      transport: RefreshStubTransport(json: codexUsageStubJSON),
+      refresher: StubCodexRefresher(result: .failure(CodexTokenRefreshError.malformedResponse)),
+      capturedAccounts: store,
+      refreshCoordinator: coordinator
+    )
+
+    _ = try await strategy.fetch(ProviderFetchContext(
+      provider: .codex,
+      now: Date(timeIntervalSince1970: 2000),
+      account: codexRegistryAccount()
+    ))
+
+    let loadedDurableData = try store.loadPendingGrantData(id: "codex:acct-1")
+    let durableData = try #require(loadedDurableData)
+    #expect(try JSONDecoder().decode(CodexPendingGrant.self, from: durableData) == pending)
+    let rebased = await coordinator.takeUnpersisted(registryID: "codex:acct-1")
+    #expect(rebased?.previousAccessToken == stored)
+  }
+}
+
 /// Reread failures after a stale write must not lose the only working pair.
 struct CodexRegistryRereadFailureTests {
   @Test func aRereadFailureAfterAStaleWriteKeepsTheGrantQueued() async throws {

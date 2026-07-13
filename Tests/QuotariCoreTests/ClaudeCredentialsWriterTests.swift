@@ -84,6 +84,32 @@ struct ClaudeCredentialsWriterTests {
     #expect(permissions == 0o600)
   }
 
+  @Test func permissionFailureLeavesTheCredentialFileUntouchedAndCleansTheTemporaryFile() throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("claude-writer-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let url = directory.appendingPathComponent(".credentials.json")
+    let original = Data(Self.storedPayload.utf8)
+    try original.write(to: url)
+    let writer = ClaudeCredentialsWriter(
+      setOwnerOnlyPermissions: { _ in throw WriterPermissionError() }
+    )
+
+    #expect(throws: WriterPermissionError.self) {
+      try writer.persist(
+        ClaudeTokenGrant(accessToken: "new-tok"),
+        replacing: "old-tok",
+        to: .claudeCredentialsFile(path: url.path)
+      )
+    }
+
+    #expect(try Data(contentsOf: url) == original)
+    let leftovers = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+      .filter { $0.hasPrefix(".credentials.json.quotari.") }
+    #expect(leftovers.isEmpty)
+  }
+
   @Test func persistsToKeychainThroughInjectedSeam() throws {
     final class Box: @unchecked Sendable { var written: (data: Data, service: String)? }
     let box = Box()
@@ -112,6 +138,8 @@ struct ClaudeCredentialsWriterTests {
     )
   }
 }
+
+private struct WriterPermissionError: Error {}
 
 struct ClaudeStrategyRefreshTests {
   private static let now = Date(timeIntervalSince1970: 1_767_744_000)

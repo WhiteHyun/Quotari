@@ -1,38 +1,6 @@
 import Foundation
 import QuotariCore
 
-struct ProviderAccountUsage: Sendable {
-  var snapshot: UsageSnapshot?
-  var sourceLabel: String?
-  var sourceKind: ProviderFetchKind?
-  var error: String?
-
-  init(
-    snapshot: UsageSnapshot? = nil,
-    sourceLabel: String? = nil,
-    sourceKind: ProviderFetchKind? = nil,
-    error: String? = nil
-  ) {
-    self.snapshot = snapshot
-    self.sourceLabel = sourceLabel
-    self.sourceKind = sourceKind
-    self.error = error
-  }
-}
-
-struct AccountUsageRefreshTask {
-  let task: Task<Void, Never>
-  let force: Bool
-}
-
-/// A selection change decided during account rediscovery: the account to
-/// select now, and — when it is a live stand-in for a hidden saved copy —
-/// the saved account the selection logically remains on.
-struct SelectionUpdate {
-  var account: ProviderAccount
-  var origin: ProviderAccount?
-}
-
 extension UsageStore {
   /// The explicitly selected account, or the discovered account the current
   /// provider snapshot confidently names. Without either there is no active
@@ -143,6 +111,9 @@ extension UsageStore {
   }
 
   func refreshAccountUsage(for provider: UsageProvider, force: Bool = false) async {
+    // A per-account fetch can rotate/persist a live token; never start one
+    // while a switch is rewriting a credential slot.
+    guard !isSwitching, isProviderEnabled(provider) else { return }
     if let current = accountUsageRefreshTasks[provider] {
       await current.task.value
       if force, !current.force {
@@ -319,8 +290,16 @@ extension UsageStore {
   ) async {
     await withTaskGroup(of: (ProviderAccount, Result<ProviderFetchResult, Error>).self) { group in
       for account in accounts {
+        let capturedRegistryID = capturedRegistryID(for: account)
         group.addTask {
-          await (account, descriptor.fetch(now: now, account: account))
+          await (
+            account,
+            descriptor.fetch(
+              now: now,
+              account: account,
+              capturedRegistryID: capturedRegistryID
+            )
+          )
         }
       }
       for await (account, result) in group {

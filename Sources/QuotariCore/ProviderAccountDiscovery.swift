@@ -84,10 +84,37 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
           let captured = capturedAccounts.account(id: id),
           let key = ProviderCredentialIdentity.key(provider: captured.provider, payload: captured.payload)
     else { return nil }
-    return accounts.first { candidate in
-      !candidate.credentialSource.isCaptured
-        && identity(of: candidate.credentialSource, provider: candidate.provider) == key
+    // Prefer the canonical source when more than one live row shares the
+    // identity: for Claude the keychain (what Claude Code and `loadResolved`
+    // read first) over the credentials file; for Codex the *effective* slot
+    // (`CODEX_HOME` over the default) — a refresh of the selected account must
+    // rotate the store the CLI actually reads.
+    return accounts
+      .filter { !$0.credentialSource.isCaptured
+        && identity(of: $0.credentialSource, provider: $0.provider) == key
+      }
+      .min { sourceRank($0.credentialSource) < sourceRank($1.credentialSource) }
+  }
+
+  private func sourceRank(_ source: ProviderCredentialSource) -> Int {
+    switch source {
+    case .claudeKeychain: 0
+    case let .codexAuthFile(path): path == effectiveCodexSlotPath ? 0 : 1
+    case .claudeCredentialsFile: 2
+    case .claudeEnvironment: 3
+    case .quotariRegistry: 4
     }
+  }
+
+  /// The `auth.json` path the Codex CLI actually reads: `CODEX_HOME` over the
+  /// default. Nil when neither is resolvable.
+  private var effectiveCodexSlotPath: String? {
+    let url: URL = if let codexHome = environment["CODEX_HOME"], !codexHome.isEmpty {
+      URL(fileURLWithPath: codexHome).appendingPathComponent("auth.json")
+    } else {
+      CodexCredentialsStore.defaultURL(home: home)
+    }
+    return url.standardizedFileURL.path
   }
 
   public func capturedCopies(among accounts: [ProviderAccount]) async -> [String: ProviderAccount] {
@@ -156,7 +183,10 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
           displayName: credentials.email ?? credentials.accountID ?? "Codex account",
           detail: label,
           credentialSource: source,
-          credentialIdentity: credentials.accountID ?? credentials.accessToken
+          credentialIdentity: credentials.accountID
+            ?? credentials.email
+            ?? credentials.refreshToken
+            ?? credentials.accessToken
         )
       }
   }
@@ -191,7 +221,12 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
         source: .claudeCredentialsFile(path: fileURL.standardizedFileURL.path)
       ))
     }
-    return accounts.deduplicated(on: \.id)
+    // Collapse stores that hold the SAME login (keychain + credentials file
+    // after a switch mirror one login, sharing a refresh token). Listing both
+    // would let their per-account refreshes rotate that shared token
+    // concurrently and consume it out from under each other; keep the first
+    // (env, then keychain — the canonical store the CLI reads before the file).
+    return accounts.deduplicated(on: { identity(of: $0.credentialSource, provider: .claude) ?? $0.id })
   }
 
   private func claudeAccount(

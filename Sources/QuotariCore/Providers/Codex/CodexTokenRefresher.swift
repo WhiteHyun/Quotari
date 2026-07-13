@@ -5,11 +5,20 @@ public struct CodexTokenGrant: Codable, Equatable, Sendable {
   public var accessToken: String
   public var refreshToken: String?
   public var idToken: String?
+  /// When Quotari received this grant. Saved `auth.json` snapshots carry the
+  /// value as `last_refresh`, which Codex requires alongside ChatGPT tokens.
+  public var refreshedAt: Date?
 
-  public init(accessToken: String, refreshToken: String? = nil, idToken: String? = nil) {
+  public init(
+    accessToken: String,
+    refreshToken: String? = nil,
+    idToken: String? = nil,
+    refreshedAt: Date? = nil
+  ) {
     self.accessToken = accessToken
     self.refreshToken = refreshToken
     self.idToken = idToken
+    self.refreshedAt = refreshedAt
   }
 }
 

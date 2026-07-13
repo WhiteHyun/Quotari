@@ -8,6 +8,18 @@ struct ProviderAccountPopover: View {
   let descriptor: ProviderDescriptor
 
   @State private var isReloadingAccounts = false
+  @State private var pendingCLISwitch: ProviderAccount?
+
+  private var isConfirmingCLISwitch: Binding<Bool> {
+    Binding(
+      get: { pendingCLISwitch != nil },
+      set: { isPresented in
+        if !isPresented {
+          pendingCLISwitch = nil
+        }
+      }
+    )
+  }
 
   private var accent: Color {
     Color(
@@ -46,6 +58,20 @@ struct ProviderAccountPopover: View {
     .frame(width: 330)
     .task {
       await store.refreshAccountUsage(for: descriptor.id)
+    }
+    .alert(
+      "Close active CLI sessions first",
+      isPresented: isConfirmingCLISwitch,
+      presenting: pendingCLISwitch
+    ) { account in
+      Button("Switch Account") {
+        Task { await store.switchCLIAccount(to: account) }
+      }
+      Button("Cancel", role: .cancel) {}
+    } message: { _ in
+      Text(
+        "Quit Claude Code or Codex before switching. A running CLI can rotate credentials after Quotari's final check."
+      )
     }
   }
 
@@ -96,6 +122,11 @@ struct ProviderAccountPopover: View {
       }
     }
     if account.credentialSource.isCaptured {
+      // Rewrites the CLI's credential slot after a warning about the one
+      // remaining cross-process race.
+      Button("Use in CLI (Switch)") {
+        pendingCLISwitch = account
+      }
       Button("Remove Saved Account", role: .destructive) {
         Task { await store.removeCapturedAccount(account) }
       }

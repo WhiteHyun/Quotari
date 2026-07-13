@@ -15,6 +15,7 @@ struct ClaudeProfileFetcherTests {
     let request = try #require(recorder.requests.first)
     #expect(request.url == ClaudeProfileFetcher.profileURL)
     #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer tok")
+    #expect(profile.accountID == "u1")
     #expect(profile.email == "dev@example.com")
     #expect(profile.organizationName == "Acme")
   }
@@ -51,11 +52,33 @@ struct ClaudeProfileStoreTests {
     defer { try? FileManager.default.removeItem(at: url) }
     let store = ClaudeProfileStore(url: url)
 
-    try store.save(["claude:keychain": ClaudeProfile(email: "a@b.com", organizationName: "Org")])
+    var profile = ClaudeProfile(
+      email: "a@b.com",
+      organizationName: "Org",
+      fingerprint: "access-fingerprint"
+    )
+    profile.accountID = "account-uuid"
+    try store.save(["claude:keychain": profile])
     let loaded = store.load()
 
+    #expect(loaded["claude:keychain"]?.accountID == "account-uuid")
     #expect(loaded["claude:keychain"]?.email == "a@b.com")
     #expect(loaded["claude:keychain"]?.organizationName == "Org")
+    #expect(loaded["claude:keychain"]?.fingerprint == "access-fingerprint")
+  }
+
+  @Test func loadsAProfilePersistedBeforeAccountIDsWereAdded() throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("claude-profiles-legacy-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try Data(#"{"claude:keychain":{"email":"legacy@example.com","fingerprint":"legacy-fingerprint"}}"#.utf8)
+      .write(to: url)
+
+    let profile = try #require(ClaudeProfileStore(url: url).load()["claude:keychain"])
+
+    #expect(profile.accountID == nil)
+    #expect(profile.email == "legacy@example.com")
+    #expect(profile.fingerprint == "legacy-fingerprint")
   }
 
   @Test func missingFileLoadsEmpty() {

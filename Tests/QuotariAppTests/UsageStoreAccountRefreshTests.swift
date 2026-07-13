@@ -5,6 +5,43 @@ import Testing
 
 @MainActor
 struct UsageStoreAccountRefreshTests {
+  @Test func implicitRefreshCarriesTheFirstLiveAccountsSavedCopyLink() async {
+    let live = ProviderAccount(
+      provider: .claude,
+      displayName: "Claude Code",
+      detail: "Keychain",
+      credentialSource: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+      credentialIdentity: "live-fingerprint"
+    )
+    let saved = ProviderAccount(
+      provider: .claude,
+      displayName: "Saved Claude",
+      detail: "Saved in Quotari",
+      credentialSource: .quotariRegistry(id: "claude:saved")
+    )
+    let recorder = CapturedRegistryIDRecorder()
+    let descriptor = ProviderDescriptor(
+      id: .claude,
+      metadata: ProviderMetadata(displayName: "Claude", accent: .init(0.7, 0.4, 0.8), supportsWeekly: true),
+      pipeline: ProviderFetchPipeline { _ in [RecordingCapturedRegistryIDStrategy(recorder: recorder)] }
+    )
+    let discovery = StaticAccountDiscovery(
+      accounts: [.claude: [live]],
+      capturedCopies: [live.id: saved]
+    )
+    let store = UsageStore.isolatedForTesting(
+      providers: [descriptor],
+      accountDiscovery: discovery,
+      startsAutomatically: false
+    )
+    await store.reloadAccounts()
+
+    await store.refresh()
+
+    #expect(store.selectedAccounts[.claude] == nil)
+    #expect(await recorder.ids == ["claude:saved"])
+  }
+
   @Test func refreshUsesPersistedSelectedAccount() async throws {
     let directory = try TemporaryDirectory()
     let selectionStore = ProviderAccountSelectionStore(
@@ -135,5 +172,32 @@ struct UsageStoreAccountRefreshTests {
       try? await Task.sleep(for: .milliseconds(50))
     }
     return nil
+  }
+}
+
+private actor CapturedRegistryIDRecorder {
+  private(set) var ids: [String?] = []
+
+  func record(_ id: String?) {
+    ids.append(id)
+  }
+}
+
+private struct RecordingCapturedRegistryIDStrategy: ProviderFetchStrategy {
+  let recorder: CapturedRegistryIDRecorder
+  let id = "recording-captured-registry-id"
+  let kind = ProviderFetchKind.mock
+
+  func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
+    await recorder.record(context.capturedRegistryID)
+    return ProviderFetchResult(
+      usage: UsageSnapshot(
+        provider: context.provider,
+        plan: "Test",
+        primary: RateWindow(kind: .session, usedPercent: 10),
+        updatedAt: context.now
+      ),
+      sourceLabel: "Stub"
+    )
   }
 }

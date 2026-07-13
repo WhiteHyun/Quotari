@@ -34,12 +34,6 @@ public struct CapturedAccount: Codable, Equatable, Sendable, Identifiable {
     self.origin = origin
     self.payload = payload
   }
-
-  /// The `ProviderAccount.id` this snapshot takes when it joins discovery as a
-  /// registry account — the key profile/usage state is stored under.
-  public var registryAccountID: String {
-    ProviderAccount.id(provider: provider, source: .quotariRegistry(id: id))
-  }
 }
 
 /// Persists captured account snapshots in Quotari-owned keychain items. Each
@@ -145,12 +139,99 @@ public struct CapturedAccountStore: Sendable {
   }
 
   public func pendingGrantData(id: String) -> Data? {
-    keychain.readOptional(service: pendingService(id))
+    try? loadPendingGrantData(id: id)
+  }
+
+  /// Safety-critical pending-grant read. Unlike `pendingGrantData`, this
+  /// distinguishes a missing item from a keychain failure so a caller never
+  /// falls back to an older, already-consumed credential pair by accident.
+  public func loadPendingGrantData(id: String) throws -> Data? {
+    try keychain.read(service: pendingService(id))
   }
 
   public func removePendingGrant(id: String) throws {
     try Self.mutationLock.withLock {
       try keychain.delete(service: pendingService(id))
+    }
+  }
+
+  /// Installs a recovery grant only when no different recovery is already in
+  /// flight for the account. A linked live refresh must never overwrite an
+  /// unrelated saved-account rotation that owns the same pending slot.
+  @discardableResult
+  public func savePendingGrantIfAbsent(_ data: Data, id: String) throws -> Bool {
+    try Self.mutationLock.withLock {
+      if let current = try keychain.read(service: pendingService(id)) {
+        return current == data
+      }
+      guard try keychain.read(service: itemService(id)) != nil else { return false }
+      try keychain.write(data, service: pendingService(id))
+      return true
+    }
+  }
+
+  /// Installs recovery data for a live credential source that has no captured
+  /// account item to anchor it. The caller owns the namespaced id and must
+  /// compare-and-delete the item after the source accepts the grant or moves
+  /// to another login. Keeping this separate from `savePendingGrantIfAbsent`
+  /// preserves the latter's removal guard for user-managed saved accounts.
+  @discardableResult
+  func saveLivePendingGrantIfAbsent(_ data: Data, id: String) throws -> Bool {
+    try Self.mutationLock.withLock {
+      if let current = try keychain.read(service: pendingService(id)) {
+        return current == data
+      }
+      try keychain.write(data, service: pendingService(id))
+      return true
+    }
+  }
+
+  /// Compare-and-delete for a recovery that was previously read or created.
+  /// A newer concurrent pending grant survives instead of being mistaken for
+  /// the one this caller just resolved.
+  @discardableResult
+  public func removePendingGrant(id: String, matching expected: Data) throws -> Bool {
+    try Self.mutationLock.withLock {
+      guard let current = try keychain.read(service: pendingService(id)), current == expected else {
+        return false
+      }
+      try keychain.delete(service: pendingService(id))
+      return true
+    }
+  }
+
+  /// Typed callers can compare decoded grants atomically. JSON object key
+  /// ordering is not stable across encoders or app versions, so safety-
+  /// critical compare-and-delete must not depend only on byte equality.
+  @discardableResult
+  public func removePendingGrant(
+    id: String,
+    when matches: (Data) throws -> Bool
+  ) throws -> Bool {
+    try Self.mutationLock.withLock {
+      guard let current = try keychain.read(service: pendingService(id)), try matches(current) else {
+        return false
+      }
+      try keychain.delete(service: pendingService(id))
+      return true
+    }
+  }
+
+  /// Compare-and-replace for a recovery item whose metadata advances while
+  /// retaining the same grant. A concurrent owner wins instead of being
+  /// overwritten by a stale account-switch snapshot.
+  @discardableResult
+  func replacePendingGrant(
+    id: String,
+    when matches: (Data) throws -> Bool,
+    with replacement: Data
+  ) throws -> Bool {
+    try Self.mutationLock.withLock {
+      guard let current = try keychain.read(service: pendingService(id)), try matches(current) else {
+        return false
+      }
+      try keychain.write(replacement, service: pendingService(id))
+      return true
     }
   }
 

@@ -12,6 +12,7 @@ final class InMemoryKeychain: @unchecked Sendable {
   private var items: [String: Data] = [:]
   private var failing: Set<String> = []
   private var writeCounts: [String: Int] = [:]
+  private var failingDeletes: Set<String> = []
 
   func read(_ service: String) throws -> Data? {
     try lock.withLock {
@@ -46,8 +47,17 @@ final class InMemoryKeychain: @unchecked Sendable {
     lock.withLock { items[service] != nil }
   }
 
-  func delete(_ service: String) {
-    lock.withLock { items[service] = nil }
+  func delete(_ service: String) throws {
+    try lock.withLock {
+      if failingDeletes.contains(service) {
+        throw InjectedFailure()
+      }
+      items[service] = nil
+    }
+  }
+
+  func failDeletes(of service: String) {
+    lock.withLock { _ = failingDeletes.insert(service) }
   }
 
   func failReads(of service: String) {
@@ -66,7 +76,7 @@ final class InMemoryKeychain: @unchecked Sendable {
     KeychainItemStore(
       read: { try self.read($0) },
       write: { try self.write($0, $1) },
-      delete: { self.delete($0) }
+      delete: { try self.delete($0) }
     )
   }
 }
@@ -215,6 +225,23 @@ struct CapturedAccountStoreTests {
     keychain.stopFailing("PendTest.a")
 
     #expect(store.pendingGrantData(id: "a") == Data("pending".utf8))
+  }
+
+  @Test func livePendingGrantPreservesItsOwnerUntilAnExactDelete() throws {
+    let store = makeStore(InMemoryKeychain())
+    let id = "claude-live:test-source"
+    let owner = Data("owner".utf8)
+    let competitor = Data("competitor".utf8)
+
+    #expect(try store.saveLivePendingGrantIfAbsent(owner, id: id))
+    #expect(try store.saveLivePendingGrantIfAbsent(owner, id: id))
+    #expect(try !store.saveLivePendingGrantIfAbsent(competitor, id: id))
+    #expect(store.pendingGrantData(id: id) == owner)
+
+    #expect(try !store.removePendingGrant(id: id, matching: competitor))
+    #expect(store.pendingGrantData(id: id) == owner)
+    #expect(try store.removePendingGrant(id: id, matching: owner))
+    #expect(store.pendingGrantData(id: id) == nil)
   }
 
   @Test func saveFaultAfterIndexLeavesNoOrphanedSecret() throws {

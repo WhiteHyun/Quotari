@@ -4,6 +4,9 @@ import Foundation
 /// Fetched from the OAuth profile endpoint so a Claude account can be labeled
 /// by its email instead of the generic "Claude Code".
 public struct ClaudeProfile: Codable, Equatable, Sendable {
+  /// Stable account UUID returned by Claude's profile endpoint. Unlike OAuth
+  /// token fingerprints, this survives ordinary access/refresh rotation.
+  public var accountID: String?
   public var email: String?
   public var organizationName: String?
   /// The access-token fingerprint this profile was fetched for. Drives retry
@@ -11,14 +14,22 @@ public struct ClaudeProfile: Codable, Equatable, Sendable {
   /// cache entry left over from a now-replaced token.
   public var fingerprint: String?
 
-  public init(email: String? = nil, organizationName: String? = nil, fingerprint: String? = nil) {
+  public init(
+    accountID: String? = nil,
+    email: String? = nil,
+    organizationName: String? = nil,
+    fingerprint: String? = nil
+  ) {
+    self.accountID = accountID
     self.email = email
     self.organizationName = organizationName
     self.fingerprint = fingerprint
   }
 
   public var isEmpty: Bool {
-    (email?.isEmpty ?? true) && (organizationName?.isEmpty ?? true)
+    (accountID?.isEmpty ?? true)
+      && (email?.isEmpty ?? true)
+      && (organizationName?.isEmpty ?? true)
   }
 }
 
@@ -54,6 +65,7 @@ public struct ClaudeProfileFetcher: ClaudeProfileFetching {
     let account = root["account"] as? [String: Any]
     let organization = root["organization"] as? [String: Any]
     return ClaudeProfile(
+      accountID: string(account?["uuid"]),
       email: string(account?["email"]) ?? string(root["account_email"]),
       organizationName: string(organization?["name"]) ?? string(root["organization_name"])
     )

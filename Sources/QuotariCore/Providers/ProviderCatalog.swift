@@ -22,7 +22,10 @@ public enum ProviderCatalog {
       }
     case .claude:
       ProviderFetchPipeline { context in
-        let live = ClaudeUsageStrategy()
+        let live = ClaudeUsageStrategy(
+          mirroredCredentialsFileURL: FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claude/.credentials.json")
+        )
         return context.account == nil ? [live, MockProviders.claudeStrategy] : [live]
       }
     }

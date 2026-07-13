@@ -109,6 +109,9 @@ struct CodexRegistryRefreshStrategyTests {
     )
     #expect(saved.accessToken == fresh)
     #expect(saved.refreshToken == "ref-2")
+    let payload = try #require(store.account(id: "codex:acct-1")?.payload)
+    let root = try JSONSerialization.jsonObject(with: payload) as? [String: Any]
+    #expect(root?["last_refresh"] as? String == "1970-01-01T00:33:20Z")
   }
 
   @Test func savedAccountWithALiveTokenIsNotRefreshed() async throws {

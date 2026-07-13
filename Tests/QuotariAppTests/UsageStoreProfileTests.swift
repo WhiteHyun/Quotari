@@ -53,6 +53,8 @@ final class Gate: @unchecked Sendable {
 }
 
 @MainActor
+// Profile fetch, cache, and identity matching share the same scripted fixtures.
+// swiftlint:disable:next type_body_length
 struct UsageStoreProfileTests {
   private static let claudeProviders = MockProviders.descriptors.filter { $0.id == .claude }
 
@@ -225,12 +227,133 @@ struct UsageStoreProfileTests {
     try await waitFor { store.accountLabel(for: Self.claudeAccount()) == "Claude Code" }
   }
 
+  @Test func verifiedAccountUUIDIdentifiesTheRotatedLiveTargetBeforeEmail() async throws {
+    let outcome = try await switchOutcome(
+      savedAccountID: "account-uuid",
+      savedEmail: "old-address@example.com",
+      liveAccountID: "account-uuid",
+      liveEmail: "new-address@example.com",
+      liveProfileAccessToken: "live-access"
+    )
+
+    #expect(outcome.savedAccessToken == "live-access")
+    #expect(outcome.capturedCount == 1)
+  }
+
+  @Test func verifiedEmailIdentifiesTheRotatedLiveTargetWhenUUIDIsUnavailable() async throws {
+    let outcome = try await switchOutcome(
+      savedAccountID: nil,
+      savedEmail: "Dev@Example.com",
+      liveAccountID: nil,
+      liveEmail: "dev@example.com",
+      liveProfileAccessToken: "live-access"
+    )
+
+    #expect(outcome.savedAccessToken == "live-access")
+    #expect(outcome.capturedCount == 1)
+  }
+
+  @Test func staleProfileFingerprintCannotIdentifyTheLiveTarget() async throws {
+    let outcome = try await switchOutcome(
+      savedAccountID: "account-uuid",
+      savedEmail: "dev@example.com",
+      liveAccountID: "account-uuid",
+      liveEmail: "dev@example.com",
+      liveProfileAccessToken: "stale-access"
+    )
+
+    // The unverified profile is ignored. The live login is preserved as its
+    // own saved row instead of being mistaken for a fresher copy of the target.
+    #expect(outcome.savedAccessToken == "saved-access")
+    #expect(outcome.capturedCount == 2)
+  }
+
   @Test func fallsBackToDisplayNameWithoutAProfile() {
     let store = UsageStore.isolatedForTesting(
       providers: Self.claudeProviders,
       startsAutomatically: false
     )
     #expect(store.accountLabel(for: Self.claudeAccount()) == "Claude Code")
+  }
+
+  // Keep the registry row, live keychain, and verified profiles together so assertions cannot drift from setup.
+  // swiftlint:disable:next function_body_length
+  private func switchOutcome(
+    savedAccountID: String?,
+    savedEmail: String,
+    liveAccountID: String?,
+    liveEmail: String,
+    liveProfileAccessToken: String
+  ) async throws -> SwitchOutcome {
+    let directory = try TemporaryDirectory()
+    let registry = CapturedAccountStore.inMemoryForTesting()
+    let savedRegistryID = "claude:legacy-saved"
+    let savedPayload = Data(
+      #"{"claudeAiOauth":{"accessToken":"saved-access","refreshToken":"saved-refresh"}}"#.utf8
+    )
+    let livePayload = Data(
+      #"{"claudeAiOauth":{"accessToken":"live-access","refreshToken":"live-refresh"}}"#.utf8
+    )
+    try registry.save(CapturedAccount(
+      id: savedRegistryID,
+      provider: .claude,
+      displayName: "Saved Claude",
+      detail: "Saved in Quotari",
+      capturedAt: Date(timeIntervalSince1970: 1000),
+      origin: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+      payload: savedPayload
+    ))
+    let savedAccount = ProviderAccount(
+      provider: .claude,
+      displayName: "Saved Claude",
+      detail: "Saved in Quotari",
+      credentialSource: .quotariRegistry(id: savedRegistryID)
+    )
+    let liveAccount = Self.claudeAccount()
+    let profileStore = ClaudeProfileStore.temporaryForTesting()
+    try profileStore.save([
+      savedAccount.id: ClaudeProfile(
+        accountID: savedAccountID,
+        email: savedEmail,
+        fingerprint: ProviderCredentialIdentity.fingerprint(of: "saved-access")
+      ),
+      liveAccount.id: ClaudeProfile(
+        accountID: liveAccountID,
+        email: liveEmail,
+        fingerprint: ProviderCredentialIdentity.fingerprint(of: liveProfileAccessToken)
+      ),
+    ])
+    let keychain = PayloadBox(livePayload)
+    let store = UsageStore.isolatedForTesting(
+      providers: Self.claudeProviders,
+      accountDiscovery: StaticAccountDiscovery(accounts: [.claude: [savedAccount, liveAccount]]),
+      accountSwitch: .isolatedForTesting(
+        capturedAccounts: registry,
+        home: directory.url,
+        keychainRead: { _ in keychain.value },
+        keychainWrite: { payload, _ in keychain.value = payload }
+      ),
+      profileStore: profileStore,
+      claudeCredentialLoader: { source in
+        let payload: Data? = switch source {
+        case let .quotariRegistry(id): registry.account(id: id)?.payload
+        case .claudeKeychain: keychain.value
+        default: nil
+        }
+        return payload.flatMap { try? ClaudeCredentialsStore.parse($0) }
+      },
+      startsAutomatically: false
+    )
+    await store.reloadAccounts()
+
+    await store.switchCLIAccount(to: savedAccount)
+
+    let saved = try #require(registry.account(id: savedRegistryID))
+    let credentials = try ClaudeCredentialsStore.parse(saved.payload)
+    return SwitchOutcome(
+      savedAccessToken: credentials.accessToken,
+      capturedCount: registry.load().count
+    )
   }
 
   private func waitFor(_ condition: () -> Bool, attempts: Int = 40) async throws {
@@ -251,6 +374,25 @@ struct UsageStoreProfileTests {
     }
 
     var value: String {
+      get { lock.withLock { storage } }
+      set { lock.withLock { storage = newValue } }
+    }
+  }
+
+  private struct SwitchOutcome {
+    var savedAccessToken: String
+    var capturedCount: Int
+  }
+
+  private final class PayloadBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: Data
+
+    init(_ value: Data) {
+      storage = value
+    }
+
+    var value: Data {
       get { lock.withLock { storage } }
       set { lock.withLock { storage = newValue } }
     }
