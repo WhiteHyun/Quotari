@@ -38,17 +38,30 @@ struct DashboardContent: View {
 
   private var sectionStack: some View {
     VStack(spacing: 0) {
-      let providers = store.providers
-      ForEach(Array(providers.enumerated()), id: \.element.id) { index, descriptor in
-        ProviderCardView(
-          descriptor: descriptor,
-          snapshot: store.snapshots[descriptor.id],
-          sourceLabel: store.sourceLabels[descriptor.id],
-          error: store.errors[descriptor.id]
-        )
-        if index < providers.count - 1 {
-          Divider()
-            .padding(.leading, 14)
+      let providers = store.enabledProviderDescriptors
+      if providers.isEmpty {
+        VStack(spacing: 4) {
+          Text("No providers enabled")
+            .font(.headline)
+          Text("Enable one in Settings to show usage.")
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 24)
+      } else {
+        ForEach(Array(providers.enumerated()), id: \.element.id) { index, descriptor in
+          ProviderCardView(
+            descriptor: descriptor,
+            snapshot: store.snapshots[descriptor.id],
+            sourceLabel: store.sourceLabels[descriptor.id],
+            error: store.errors[descriptor.id]
+          )
+          if index < providers.count - 1 {
+            Divider()
+              .padding(.leading, 14)
+          }
         }
       }
     }

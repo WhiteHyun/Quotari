@@ -10,6 +10,8 @@ final class UsageStore {
   var errors: [UsageProvider: String] = [:]
   var sourceLabels: [UsageProvider: String] = [:]
   private(set) var accounts: [UsageProvider: [ProviderAccount]] = [:]
+  private(set) var providersWithDiscoveredCredentials = Set<UsageProvider>()
+  private(set) var credentialDiscoveryCompleted = Set<UsageProvider>()
   private(set) var selectedAccounts: [UsageProvider: ProviderAccount] = [:]
   /// The hidden saved registry copy behind each live account, keyed by the
   /// live account's id — identities that are saved while also being live.
@@ -21,7 +23,8 @@ final class UsageStore {
   var accountUsage: [UsageProvider: [String: ProviderAccountUsage]] = [:]
   var refreshingAccountUsageProviders = Set<UsageProvider>()
   private(set) var isRefreshing = false
-  private(set) var lastRefresh: Date?
+  // Settable from the refresh extension (a sibling file) that records it.
+  var lastRefresh: Date?
   /// The most recent spawned dashboard refresh, so a credential-slot mutation
   /// (an account switch) can await any in-flight refresh — which can rotate
   /// and persist a live token — before reading and overwriting the slot.
@@ -52,6 +55,7 @@ final class UsageStore {
   let accountSwitch: AccountSwitchService
   let profileFetcher: any ClaudeProfileFetching
   let profileStore: ClaudeProfileStore
+  let providerActivation: ProviderActivationController
   let menuBarPreferences: MenuBarPreferencesController
   let quotaNotifications: QuotaNotificationController
   let codexCredentialLoader: @Sendable (ProviderCredentialSource) -> CodexCredentials?
@@ -75,7 +79,7 @@ final class UsageStore {
   private(set) var timerTask: Task<Void, Never>?
   private var refreshRequested = false
   var accountRevisions: [UsageProvider: UInt] = [:]
-  var costTasks: [UsageProvider: Task<Void, Never>] = [:]
+  var costTasks: [UsageProvider: CostRefreshTask] = [:]
   var lastCostScans: [UsageProvider: Date] = [:]
   var lastEmptyCostScans: [UsageProvider: Date] = [:]
   var latestReportedCostFallbacks: [UsageProvider: ReportedCostFallback] = [:]
@@ -105,6 +109,7 @@ final class UsageStore {
       try? ClaudeCredentialsStore.load(source: $0)
     },
     defaults: UserDefaults = .standard,
+    providerActivation: ProviderActivationController? = nil,
     menuBarPreferences: MenuBarPreferencesController? = nil,
     quotaNotifications: QuotaNotificationController? = nil,
     startsAutomatically: Bool = true
@@ -121,6 +126,7 @@ final class UsageStore {
     self.codexCredentialLoader = codexCredentialLoader
     self.claudeCredentialLoader = claudeCredentialLoader
     self.defaults = defaults
+    self.providerActivation = providerActivation ?? ProviderActivationController(defaults: defaults)
     self.menuBarPreferences = menuBarPreferences ?? MenuBarPreferencesController(defaults: defaults)
     self.quotaNotifications = quotaNotifications ?? QuotaNotificationController(defaults: defaults)
     selectedAccounts = accountSelectionStore.load()
@@ -133,6 +139,7 @@ final class UsageStore {
     refreshInterval = savedInterval > 0
       ? min(max(savedInterval, range.lowerBound), range.upperBound)
       : 60
+    reconcileMenuBarUsageSource()
     // Seed attempts from the cache so a stable account isn't re-fetched on
     // every launch — only when its credential fingerprint changes.
     profileFetchAttempts = claudeProfiles.compactMapValues(\.fingerprint)
@@ -145,93 +152,9 @@ final class UsageStore {
     }
   }
 
-  private func performRefresh() async {
-    let now = Date()
-    await withTaskGroup(
-      of: (UsageProvider, ProviderAccount?, UInt, Result<ProviderFetchResult, Error>).self
-    ) { group in
-      for descriptor in providers {
-        let account = selectedAccounts[descriptor.id]
-        let capturedRegistryID = capturedRegistryIDForFetch(
-          provider: descriptor.id,
-          selectedAccount: account
-        )
-        let revision = accountRevisions[descriptor.id] ?? 0
-        group.addTask {
-          await (
-            descriptor.id,
-            account,
-            revision,
-            self.serializedProviderFetch(
-              descriptor: descriptor,
-              now: now,
-              account: account,
-              capturedRegistryID: capturedRegistryID,
-              expectedRevision: revision
-            )
-          )
-        }
-      }
-      for await (provider, account, revision, result) in group {
-        guard (accountRevisions[provider] ?? 0) == revision else { continue }
-        apply(provider: provider, account: account, result: result)
-      }
-    }
-    lastRefresh = Date()
-    // Hidden saved copies must track live-token rotations between account
-    // reloads too — a slot swapped right after a rotation would otherwise
-    // strand the copy on a consumed refresh token.
-    await syncCapturedCopies(of: capturedCopyCandidates.filter { isProviderEnabled($0.provider) })
-  }
-
-  func refresh(
-    provider: UsageProvider,
-    serializesProviderFetch: Bool = false
-  ) async {
-    // A superseded selection fetch (cancelled when the selection changed) or a
-    // fetch that a switch has since started must not hit the network and
-    // rotate a credential slot out from under the switch.
-    guard !Task.isCancelled, !isSwitching, isProviderEnabled(provider),
-          let descriptor = providers.first(where: { $0.id == provider })
-    else { return }
-    let account = selectedAccounts[provider]
-    let capturedRegistryID = capturedRegistryIDForFetch(
-      provider: provider,
-      selectedAccount: account
-    )
-    let revision = accountRevisions[provider] ?? 0
-    let now = Date()
-    let result: Result<ProviderFetchResult, Error> = if serializesProviderFetch {
-      await serializedProviderFetch(
-        descriptor: descriptor,
-        now: now,
-        account: account,
-        capturedRegistryID: capturedRegistryID,
-        expectedRevision: revision
-      )
-    } else {
-      await descriptor.fetch(
-        now: now,
-        account: account,
-        capturedRegistryID: capturedRegistryID
-      )
-    }
-    guard !Task.isCancelled,
-          isProviderEnabled(provider),
-          (accountRevisions[provider] ?? 0) == revision
-    else { return }
-    apply(provider: provider, account: account, result: result)
-    lastRefresh = Date()
-    await syncCapturedCopies(of: capturedCopyCandidates.filter { $0.provider == provider })
-    // The fetch may have rotated a Claude token; the email label's retry key
-    // is the access-token fingerprint, so this re-fetches exactly once.
-    if provider == .claude {
-      refreshClaudeProfiles()
-    }
-  }
-
   func reloadAccounts() async {
     var next: [UsageProvider: [ProviderAccount]] = [:]
+    var nextProvidersWithDiscoveredCredentials = Set<UsageProvider>()
     var refreshedSelections: [(UsageProvider, SelectionUpdate)] = []
     var alreadyCaptured: [String: ProviderAccount] = [:]
     var syncCandidates: [ProviderAccount] = []
@@ -243,6 +166,9 @@ final class UsageStore {
       )
       let previousAccounts = accounts[descriptor.id] ?? []
       var providerAccounts = await accountDiscovery.accounts(for: descriptor.id)
+      if !providerAccounts.isEmpty {
+        nextProvidersWithDiscoveredCredentials.insert(descriptor.id)
+      }
       if let selected = selectedAccounts[descriptor.id],
          let update = await reconciledSelection(
            selected,
@@ -262,6 +188,8 @@ final class UsageStore {
       next[descriptor.id] = providerAccounts
     }
     accounts = next
+    providersWithDiscoveredCredentials = nextProvidersWithDiscoveredCredentials
+    credentialDiscoveryCompleted = Set(providers.map(\.id))
     capturedEquivalents = alreadyCaptured
     for (provider, update) in refreshedSelections {
       selectAccount(update.account, for: provider, standingInFor: update.origin)
@@ -301,8 +229,7 @@ final class UsageStore {
     accountRevisions[provider, default: 0] &+= 1
     try? accountSelectionStore.save(persistableSelections())
     applyCachedAccountUsage(cachedUsage, account: account, provider: provider)
-    costTasks[provider]?.cancel()
-    costTasks[provider] = nil
+    costTasks[provider]?.task.cancel()
     lastCostScans[provider] = nil
     lastEmptyCostScans[provider] = nil
     latestReportedCostFallbacks[provider] = nil
@@ -363,22 +290,6 @@ extension UsageStore {
     // Self-heal email labels after a usage refresh may have rotated a token:
     // the access-token fingerprint changes, so this re-fetches exactly once.
     refreshClaudeProfiles()
-  }
-}
-
-private extension UsageStore {
-  private func apply(
-    provider: UsageProvider,
-    account: ProviderAccount?,
-    result: Result<ProviderFetchResult, Error>
-  ) {
-    switch result {
-    case let .success(value):
-      applySuccessfulFetch(value, provider: provider, account: account)
-    case let .failure(error):
-      errors[provider] = error.localizedDescription // keep any prior snapshot
-      recordAccountUsageFailure(error, provider: provider, account: account)
-    }
   }
 
   private func startTimer() {

@@ -10,6 +10,8 @@ struct PreferencesView: View {
   @Bindable private var loginItems = LoginItemController.shared
 
   var body: some View {
+    @Bindable var store = store
+
     Form {
       Section("General") {
         Toggle("Launch at Login", isOn: $loginItems.launchesAtLogin)
@@ -37,12 +39,30 @@ struct PreferencesView: View {
             .foregroundStyle(.red)
         }
       }
+      Section("Providers") {
+        ForEach(store.providers, id: \.id) { descriptor in
+          VStack(alignment: .leading, spacing: 2) {
+            Toggle(
+              descriptor.metadata.displayName,
+              isOn: $store[providerEnabled: descriptor.id]
+            )
+            if store.credentialDiscoveryState(for: descriptor.id) == .absent {
+              Text("No credentials detected. When enabled, Quotari may show demo data until an account is available.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+          }
+        }
+        Text("These switches control providers across Quotari. Quota alerts are configured separately below.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      }
       Section("Menu Bar") {
         Toggle("Show remaining quota", isOn: menuBarRemainingBinding)
         Picker("Quota source", selection: menuBarUsageSourceBinding) {
           Text("Most constrained")
             .tag(MenuBarUsageSource.mostConstrained)
-          ForEach(store.providers, id: \.id) { descriptor in
+          ForEach(store.enabledProviderDescriptors, id: \.id) { descriptor in
             Text(descriptor.metadata.displayName)
               .tag(MenuBarUsageSource.provider(descriptor.id))
           }
@@ -87,11 +107,14 @@ struct PreferencesView: View {
         .disabled(!notificationControlsEnabled)
         ForEach(store.providers, id: \.id) { descriptor in
           Toggle(
-            descriptor.metadata.displayName,
+            "\(descriptor.metadata.displayName) alerts",
             isOn: notificationProviderBinding(descriptor.id)
           )
           .disabled(!notificationControlsEnabled)
         }
+        Text("Provider alert switches only control notifications, not global provider availability.")
+          .font(.caption)
+          .foregroundStyle(.secondary)
       }
       Section("Accounts") {
         ForEach(store.providers, id: \.id) { descriptor in
@@ -228,5 +251,12 @@ struct PreferencesView: View {
       return name
     }
     return "\(name) (\(detail))"
+  }
+}
+
+private extension UsageStore {
+  subscript(providerEnabled provider: UsageProvider) -> Bool {
+    get { isProviderEnabled(provider) }
+    set { setProviderEnabled(provider, enabled: newValue) }
   }
 }

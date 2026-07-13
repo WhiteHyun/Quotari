@@ -16,12 +16,14 @@ extension UsageStore {
     let accountUsageRefresh = waitingForProviderActivity
       ? accountUsageRefreshTasks[provider]?.task
       : nil
+    let costRefresh = costTasks[provider]?.task
     previousRefresh?.cancel()
     selectionRefreshTasks[provider] = Task { [weak self] in
       await previousRefresh?.value
       await dashboardRefresh?.value
       _ = await providerFetch?.value
       await accountUsageRefresh?.value
+      await costRefresh?.value
       guard !Task.isCancelled else { return }
       await self?.refresh(
         provider: provider,

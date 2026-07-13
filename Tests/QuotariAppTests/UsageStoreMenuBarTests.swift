@@ -131,6 +131,62 @@ struct UsageStoreMenuBarTests {
     #expect(!label.contains("Claude"))
     #expect(label.contains("40 percent"))
   }
+
+  @Test func disabledProviderSnapshotsDoNotContributeToMenuBarUsage() throws {
+    let context = try makeStore("disabled-snapshot")
+    defer { context.removeDefaults() }
+    context.store.setProviderEnabled(.claude, enabled: false)
+    context.store.snapshots = [
+      .codex: snapshot(provider: .codex, primary: 42, secondary: 68),
+      .claude: snapshot(provider: .claude, primary: 95, secondary: 80),
+    ]
+
+    #expect(context.store.highestUsedPercent == 68)
+    #expect(context.store.menuBarUsedPercent == 68)
+  }
+
+  @Test func allDisabledProvidersHaveAFinalAccessibilityState() throws {
+    let context = try makeStore("all-disabled-accessibility")
+    defer { context.removeDefaults() }
+    for descriptor in context.store.providers {
+      context.store.setProviderEnabled(descriptor.id, enabled: false)
+    }
+
+    #expect(context.store.menuBarUsedPercent == nil)
+    #expect(context.store.menuBarAccessibilityLabel == "Quotari, no providers enabled")
+  }
+
+  @Test func disablingTheSelectedProviderResetsToMostConstrained() throws {
+    let context = try makeStore("disabled-selected-source")
+    defer { context.removeDefaults() }
+    context.store.snapshots = [
+      .codex: snapshot(provider: .codex, primary: 42, secondary: 68),
+      .claude: snapshot(provider: .claude, primary: 95, secondary: 80),
+    ]
+    context.store.menuBarPreferences.setUsageSource(.provider(.claude))
+
+    context.store.setProviderEnabled(.claude, enabled: false)
+
+    #expect(context.store.menuBarPreferences.preferences.usageSource == .mostConstrained)
+    #expect(context.store.menuBarUsedPercent == 68)
+  }
+
+  @Test func staleDisabledProviderSourceDoesNotFallBackToAnotherProvider() throws {
+    let context = try makeStore("stale-disabled-source")
+    defer { context.removeDefaults() }
+    context.store.setProviderEnabled(.claude, enabled: false)
+    context.store.snapshots = [
+      .codex: snapshot(provider: .codex, primary: 42, secondary: 68),
+      .claude: snapshot(provider: .claude, primary: 95, secondary: 80),
+    ]
+
+    // Simulate stale persisted state that bypassed UsageStore's validated setter.
+    context.store.menuBarPreferences.setUsageSource(.provider(.claude))
+
+    #expect(context.store.menuBarUsedPercent == nil)
+    #expect(context.store.menuBarRemainingPercent == nil)
+    #expect(context.store.menuBarRemainingText == nil)
+  }
 }
 
 private extension UsageStoreMenuBarTests {

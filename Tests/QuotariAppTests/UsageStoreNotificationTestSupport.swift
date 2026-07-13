@@ -78,3 +78,83 @@ actor GatedNotificationUsageStrategy: ProviderFetchStrategy {
     firstRequestContinuation = nil
   }
 }
+
+@MainActor
+struct UsageNotificationHarness {
+  var store: UsageStore
+  var controller: QuotaNotificationController
+  var center: UsageNotificationCenterStub
+}
+
+@MainActor
+final class UsageNotificationCenterStub: QuotaNotificationCenterTransport {
+  var attemptedRequests: [QuotaNotificationRequest] = []
+  private(set) var pendingIDs: Set<String> = []
+  private(set) var deliveredIDs: Set<String> = []
+  var authorizationGate: UsageNotificationQueueGate?
+  var addGate: UsageNotificationQueueGate?
+  var addError: Error?
+
+  func authorizationStatus() async -> QuotaNotificationAuthorizationStatus {
+    await authorizationGate?.wait()
+    return .authorized
+  }
+
+  func requestAuthorization() async throws -> Bool {
+    true
+  }
+
+  func pendingScheduledRequestIdentifiers() async -> Set<String> {
+    pendingIDs
+  }
+
+  func add(_ request: QuotaNotificationRequest) async throws {
+    attemptedRequests.append(request)
+    await addGate?.wait()
+    if let addError {
+      throw addError
+    }
+    if request.kind == .weeklyReset {
+      pendingIDs.insert(request.requestID)
+    } else {
+      deliveredIDs.insert(request.requestID)
+    }
+  }
+
+  func removePendingRequests(withIdentifiers identifiers: [String]) {
+    pendingIDs.subtract(identifiers)
+  }
+
+  func removeRequests(withIdentifiers identifiers: [String]) {
+    pendingIDs.subtract(identifiers)
+    deliveredIDs.subtract(identifiers)
+  }
+
+  func configureForegroundPresentation() {}
+}
+
+actor UsageNotificationQueueGate {
+  private var isReleased = false
+  private var hasWaiter = false
+  private var waiters: [CheckedContinuation<Void, Never>] = []
+  private var arrivalWaiters: [CheckedContinuation<Void, Never>] = []
+
+  func wait() async {
+    hasWaiter = true
+    arrivalWaiters.forEach { $0.resume() }
+    arrivalWaiters.removeAll()
+    guard !isReleased else { return }
+    await withCheckedContinuation { waiters.append($0) }
+  }
+
+  func waitUntilBlocked() async {
+    guard !hasWaiter else { return }
+    await withCheckedContinuation { arrivalWaiters.append($0) }
+  }
+
+  func release() {
+    isReleased = true
+    waiters.forEach { $0.resume() }
+    waiters.removeAll()
+  }
+}
