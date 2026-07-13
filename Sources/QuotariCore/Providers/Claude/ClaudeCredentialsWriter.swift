@@ -17,6 +17,7 @@ public enum ClaudeCredentialPersistError: LocalizedError, Sendable {
   case malformedPayload
   case staleSource
   case keychainWriteFailed(status: Int32)
+  case recoveryJournalFailed(underlying: String)
 
   public var errorDescription: String? {
     switch self {
@@ -24,6 +25,8 @@ public enum ClaudeCredentialPersistError: LocalizedError, Sendable {
     case .malformedPayload: "The stored credentials payload is malformed."
     case .staleSource: "The credential source changed since the refresh started."
     case let .keychainWriteFailed(status): "Writing the keychain item failed (security exited \(status))."
+    case let .recoveryJournalFailed(underlying):
+      "Saving Claude's mirror recovery journal failed: \(underlying)"
     }
   }
 }
@@ -90,6 +93,16 @@ public struct ClaudeCredentialsWriter: ClaudeCredentialPersisting {
         previousAccessToken: previousAccessToken,
         canonicalPayload: data
       )
+      let canonicalJournal = try canonicalRecoveryJournal(
+        pending: pending,
+        keychainService: service
+      )
+      if let canonicalJournal {
+        // Protect the consumed canonical generation before any mirror I/O.
+        // A crash during file reads or temporary-file preparation must not
+        // lose the only grant that can replace the now-dead refresh token.
+        try installRecoveryJournal(canonicalJournal)
+      }
       let recovery = try mirrorRecovery(
         grant,
         replacing: previousAccessToken,
@@ -98,15 +111,20 @@ public struct ClaudeCredentialsWriter: ClaudeCredentialPersisting {
       )
       defer { secureFileWriter.discard(recovery.preparation.temporary) }
       if let journal = recovery.journal {
-        try installMirrorRecoveryJournal(journal)
+        try installRecoveryJournal(journal)
       }
       try keychainWrite(mergedKeychain, service)
+      if let canonicalJournal {
+        // The canonical source now owns the grant. Its short-lived journal is
+        // no longer needed; the file journal remains until the mirror lands.
+        removeRecoveryJournal(canonicalJournal)
+      }
       let mirrorResolved = commitMirrorIfUnchanged(
         recovery.preparation,
         pending: recovery.journal?.pending ?? pending
       )
       if mirrorResolved, let journal = recovery.journal {
-        removeMirrorRecoveryJournal(journal)
+        removeRecoveryJournal(journal)
       }
     case let .quotariRegistry(id):
       // A captured account Quotari owns: refresh keeps the stored snapshot's
@@ -215,14 +233,24 @@ private extension ClaudeCredentialsWriter {
       // The file may be one rotation behind the canonical keychain. Only an
       // exact existing journal can bridge that lineage; an unrelated file is
       // intentionally left alone.
-      guard let existing = try loadMirrorRecoveryJournal(id: id),
-            existing.liveSourceBackupRecorded != true,
-            let chained = pending.chaining(after: existing)
-      else { return MirrorRecovery(preparation: initial, journal: nil) }
-      let preparation = preparedMirror(
+      guard let existing = try loadRecoveryJournal(id: id) else {
+        return MirrorRecovery(preparation: initial, journal: nil)
+      }
+      let effective: ClaudePendingGrant
+      if let merged = pending.mergingLineage(with: existing) {
+        effective = merged
+      } else if let chained = pending.chaining(after: existing) {
+        // Chaining takes precedence even when the predecessor was marked as
+        // backed up: it may still be the only bridge to a stale file.
+        effective = chained
+      } else {
+        return MirrorRecovery(preparation: initial, journal: nil)
+      }
+      let preparation = reprepareMirror(
+        discarding: initial,
         grant,
         replacing: previousAccessToken,
-        pending: chained,
+        pending: effective,
         keychainService: keychainService
       )
       guard preparation.requiresJournal else {
@@ -230,21 +258,23 @@ private extension ClaudeCredentialsWriter {
       }
       return MirrorRecovery(
         preparation: preparation,
-        journal: MirrorRecoveryJournal(id: id, pending: chained, previous: existing)
+        journal: MirrorRecoveryJournal(id: id, pending: effective, previous: existing)
       )
 
     case .failed, .prepared:
-      let existing = try loadMirrorRecoveryJournal(id: id)
+      let existing = try loadRecoveryJournal(id: id)
       let effective: ClaudePendingGrant
       if let existing {
         if existing == pending {
           effective = pending
-        } else if existing.liveSourceBackupRecorded == true {
-          // A marked record is only cleanup debt: its resolved generation was
-          // already saved durably by AccountSwitchService.
-          effective = pending
+        } else if let merged = pending.mergingLineage(with: existing) {
+          effective = merged
         } else if let chained = pending.chaining(after: existing) {
           effective = chained
+        } else if existing.liveSourceBackupRecorded == true {
+          // A marked record that cannot bridge the current generation is only
+          // cleanup debt whose resolved generation was backed up durably.
+          effective = pending
         } else {
           throw ClaudeCredentialPersistError.recoveryJournalFailed(
             underlying: "A different unbacked grant already owns the mirrored credential source."
@@ -253,7 +283,8 @@ private extension ClaudeCredentialsWriter {
       } else {
         effective = pending
       }
-      let preparation = effective == pending ? initial : preparedMirror(
+      let preparation = effective == pending ? initial : reprepareMirror(
+        discarding: initial,
         grant,
         replacing: previousAccessToken,
         pending: effective,
@@ -267,6 +298,22 @@ private extension ClaudeCredentialsWriter {
         journal: MirrorRecoveryJournal(id: id, pending: effective, previous: existing)
       )
     }
+  }
+
+  func reprepareMirror(
+    discarding initial: MirrorPreparation,
+    _ grant: ClaudeTokenGrant,
+    replacing previousAccessToken: String,
+    pending: ClaudePendingGrant,
+    keychainService: String
+  ) -> MirrorPreparation {
+    secureFileWriter.discard(initial.temporary)
+    return preparedMirror(
+      grant,
+      replacing: previousAccessToken,
+      pending: pending,
+      keychainService: keychainService
+    )
   }
 
   /// The switch mirrors only the canonical Claude keychain and default file.
@@ -399,7 +446,7 @@ private extension ClaudeCredentialsWriter {
     return pending.rotatedRefreshToken ? pending : nil
   }
 
-  func loadMirrorRecoveryJournal(id: String) throws -> ClaudePendingGrant? {
+  func loadRecoveryJournal(id: String) throws -> ClaudePendingGrant? {
     do {
       guard let data = try capturedAccounts.loadPendingGrantData(id: id) else { return nil }
       guard let pending = try? JSONDecoder().decode(ClaudePendingGrant.self, from: data) else {
@@ -413,19 +460,45 @@ private extension ClaudeCredentialsWriter {
     }
   }
 
-  /// Installs or advances the exact file-source journal before publishing the
-  /// canonical keychain generation. A concurrent unbacked owner wins. The
-  /// only differing record that may be replaced outright is marked cleanup
-  /// debt whose resolved generation was already backed up durably.
-  func installMirrorRecoveryJournal(_ journal: MirrorRecoveryJournal) throws {
+  /// The canonical journal exists only across the keychain write. The file
+  /// journal has a separate id and survives until its mirror commit succeeds.
+  func canonicalRecoveryJournal(
+    pending: ClaudePendingGrant?,
+    keychainService: String
+  ) throws -> MirrorRecoveryJournal? {
+    guard let pending,
+          let id = ProviderCredentialSource
+          .claudeKeychain(service: keychainService)
+          .claudeLivePendingGrantID
+    else { return nil }
+    guard let existing = try loadRecoveryJournal(id: id) else {
+      return MirrorRecoveryJournal(id: id, pending: pending, previous: nil)
+    }
+    let effective: ClaudePendingGrant
+    if existing == pending {
+      effective = pending
+    } else if let merged = pending.mergingLineage(with: existing) {
+      effective = merged
+    } else if let chained = pending.chaining(after: existing) {
+      effective = chained
+    } else if existing.liveSourceBackupRecorded == true {
+      effective = pending
+    } else {
+      throw ClaudeCredentialPersistError.recoveryJournalFailed(
+        underlying: "A different unbacked grant already owns the canonical credential source."
+      )
+    }
+    return MirrorRecoveryJournal(id: id, pending: effective, previous: existing)
+  }
+
+  /// Installs or advances an exact source journal before publishing the
+  /// canonical keychain generation. A concurrent unbacked owner wins.
+  func installRecoveryJournal(_ journal: MirrorRecoveryJournal) throws {
     let data: Data
     do {
       data = try JSONEncoder().encode(journal.pending)
       let installed: Bool
       if let previous = journal.previous {
-        if previous == journal.pending {
-          return
-        }
         installed = try capturedAccounts.replacePendingGrant(
           id: journal.id,
           when: { current in
@@ -450,7 +523,7 @@ private extension ClaudeCredentialsWriter {
     }
   }
 
-  func removeMirrorRecoveryJournal(_ journal: MirrorRecoveryJournal) {
+  func removeRecoveryJournal(_ journal: MirrorRecoveryJournal) {
     do {
       _ = try capturedAccounts.removePendingGrant(id: journal.id) { data in
         try JSONDecoder().decode(ClaudePendingGrant.self, from: data) == journal.pending

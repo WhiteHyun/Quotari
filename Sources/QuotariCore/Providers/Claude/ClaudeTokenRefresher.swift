@@ -131,6 +131,93 @@ public struct ClaudePendingGrant: Codable, Equatable, Sendable {
   public var rotatedRefreshToken: Bool {
     grant.refreshToken.map { $0 != consumedRefreshToken } ?? false
   }
+
+  /// Whether this grant supersedes the generation currently stored in a
+  /// credential source. Refresh-token lineage is usable only when the final
+  /// grant actually rotates away from that exact token.
+  func supersedes(accessToken: String, refreshToken: String?) -> Bool {
+    if accessToken == previousAccessToken || (priorAccessTokens ?? []).contains(accessToken) {
+      return true
+    }
+    guard let refreshToken,
+          refreshToken == consumedRefreshToken
+          || (priorConsumedRefreshTokens ?? []).contains(refreshToken),
+          let rotatedRefreshToken = grant.refreshToken,
+          rotatedRefreshToken != refreshToken
+    else { return false }
+    return true
+  }
+
+  /// Collapses an older A -> B recovery into this B -> C recovery. The
+  /// resulting journal can repair either the stale A mirror or the canonical
+  /// B source directly to C, so every crash point around the two writes keeps
+  /// a usable final grant.
+  func chaining(after predecessor: ClaudePendingGrant) -> ClaudePendingGrant? {
+    guard predecessor.grant.accessToken == previousAccessToken
+      || (predecessor.grant.refreshToken != nil
+        && predecessor.grant.refreshToken == consumedRefreshToken)
+    else { return nil }
+    var chained = self
+    chained.priorAccessTokens = Self.lineage(
+      primary: previousAccessToken,
+      values: (priorAccessTokens ?? [])
+        + [predecessor.previousAccessToken]
+        + (predecessor.priorAccessTokens ?? [])
+    )
+    chained.priorConsumedRefreshTokens = Self.lineage(
+      primary: consumedRefreshToken,
+      values: (priorConsumedRefreshTokens ?? [])
+        + [predecessor.consumedRefreshToken]
+        + (predecessor.priorConsumedRefreshTokens ?? [])
+    )
+    // The final C generation has not been backed up merely because A -> B
+    // was. A composed journal always starts as unbacked recovery work.
+    chained.liveSourceBackupRecorded = nil
+    return chained
+  }
+
+  /// Combines two recovery records that protect the same final grant. This
+  /// occurs when a retry is rebased to the canonical source while the mirror
+  /// journal still carries older generations that can reach that same grant.
+  func mergingLineage(with other: ClaudePendingGrant) -> ClaudePendingGrant? {
+    guard grant == other.grant else { return nil }
+    var merged = self
+    merged.priorAccessTokens = Self.lineage(
+      primary: previousAccessToken,
+      values: (priorAccessTokens ?? [])
+        + [other.previousAccessToken]
+        + (other.priorAccessTokens ?? [])
+    )
+    merged.priorConsumedRefreshTokens = Self.lineage(
+      primary: consumedRefreshToken,
+      values: (priorConsumedRefreshTokens ?? [])
+        + [other.consumedRefreshToken]
+        + (other.priorConsumedRefreshTokens ?? [])
+    )
+    // If either owner still needs recovery, the combined record is unbacked.
+    merged.liveSourceBackupRecorded = liveSourceBackupRecorded == true
+      && other.liveSourceBackupRecorded == true ? true : nil
+    return merged
+  }
+
+  /// Re-targets a guarded retry to the exact source access token while
+  /// retaining every older generation that the durable journal can repair.
+  func rebased(replacing accessToken: String) -> ClaudePendingGrant {
+    var rebased = self
+    rebased.previousAccessToken = accessToken
+    rebased.priorAccessTokens = Self.lineage(
+      primary: accessToken,
+      values: [previousAccessToken] + (priorAccessTokens ?? [])
+    )
+    rebased.liveSourceBackupRecorded = nil
+    return rebased
+  }
+
+  private static func lineage(primary: String, values: [String]) -> [String]? {
+    var seen = Set([primary])
+    let unique = values.filter { seen.insert($0).inserted }
+    return unique.isEmpty ? nil : unique
+  }
 }
 
 /// Runs the whole refresh-and-persist transaction once per key: Quotari can

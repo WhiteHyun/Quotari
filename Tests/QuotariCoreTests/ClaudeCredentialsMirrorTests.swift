@@ -32,9 +32,14 @@ struct ClaudeCredentialsMirrorTests {
       #"{"claudeAiOauth":{"accessToken":"old-tok","refreshToken":"old-ref"},"fileOnly":"kept"}"#.utf8
     )
     try filePayload.write(to: url)
+    let store = CapturedAccountStore(
+      keychain: InMemoryKeychain().store,
+      service: "Test-ClaudeCanonicalMirror-\(UUID().uuidString)"
+    )
     let writer = ClaudeCredentialsWriter(
       keychainRead: { _ in Data(Self.storedPayload.utf8) },
       keychainWrite: { data, _ in box.keychainData = data },
+      capturedAccounts: store,
       mirroredCredentialsFileURL: url
     )
 
@@ -112,9 +117,14 @@ struct ClaudeCredentialsMirrorTests {
       #"{"claudeAiOauth":{"accessToken":"file-old-tok","refreshToken":"old-ref"},"fileOnly":"kept"}"#.utf8
     )
     try filePayload.write(to: url)
+    let store = CapturedAccountStore(
+      keychain: InMemoryKeychain().store,
+      service: "Test-ClaudeSharedRefreshMirror-\(UUID().uuidString)"
+    )
     let writer = ClaudeCredentialsWriter(
       keychainRead: { _ in Data(Self.storedPayload.utf8) },
       keychainWrite: { data, _ in box.keychainData = data },
+      capturedAccounts: store,
       mirroredCredentialsFileURL: url
     )
 

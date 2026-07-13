@@ -304,7 +304,10 @@ private extension ClaudeUsageStrategy {
         acceptedGrant: fallback.source.isCaptured ? nil : pending
       ))
     }
-    if current.refreshToken == pending.consumedRefreshToken, pending.rotatedRefreshToken {
+    if pending.supersedes(
+      accessToken: current.accessToken,
+      refreshToken: current.refreshToken
+    ) {
       return await .resolved(supersede(pending, stored: stored, now: now))
     }
     // The grant is obsolete on the remaining paths — clear any durable copy
@@ -329,11 +332,7 @@ private extension ClaudeUsageStrategy {
     stored: ResolvedClaudeCredentials,
     now: Date
   ) async -> ClaudeRefreshResolution {
-    let reapplied = ClaudePendingGrant(
-      grant: pending.grant,
-      previousAccessToken: stored.credentials.accessToken,
-      consumedRefreshToken: pending.consumedRefreshToken
-    )
+    let reapplied = pending.rebased(replacing: stored.credentials.accessToken)
     if let applied = await persisted(reapplied, resolved: stored) {
       guard let installed = try? ClaudeCredentialsStore.load(
         source: stored.source,
