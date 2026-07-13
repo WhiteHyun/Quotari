@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
@@ -12,6 +12,8 @@ let package = Package(
     .executable(name: "Quotari", targets: ["Quotari"]),
   ],
   dependencies: [
+    .package(url: "https://github.com/orchetect/MenuBarExtraAccess", from: "1.3.0"),
+    .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", from: "3.0.1"),
     .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0"),
     .package(url: "https://github.com/SimplyDanny/SwiftLintPlugins", from: "0.65.0"),
   ],
@@ -28,6 +30,8 @@ let package = Package(
       name: "Quotari",
       dependencies: [
         "QuotariCore",
+        .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
+        .product(name: "MenuBarExtraAccess", package: "MenuBarExtraAccess"),
         .product(name: "Sparkle", package: "Sparkle"),
       ],
       resources: [
