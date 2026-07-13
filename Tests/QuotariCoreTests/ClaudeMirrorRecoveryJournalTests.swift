@@ -136,11 +136,7 @@ struct ClaudeMirrorRecoveryJournalTests {
   }
 
   @Test func canonicalJournalRecoversACrashBeforeTheKeychainWrite() throws {
-    final class Box: @unchecked Sendable {
-      var keychain: Data?
-      var failWrite = true
-    }
-    let box = Box()
+    let box = CrashingKeychainBox()
     let fixture = try MirrorJournalFixture()
     defer { fixture.remove() }
     let fileA = fixture.payload(access: "a-token", refresh: "a-refresh")
@@ -155,7 +151,9 @@ struct ClaudeMirrorRecoveryJournalTests {
     let crashingWriter = ClaudeCredentialsWriter(
       keychainRead: { _ in keychainB },
       keychainWrite: { data, _ in
-        if box.failWrite { throw MirrorJournalFixture.InjectedFailure() }
+        if box.failWrite {
+          throw MirrorJournalFixture.InjectedFailure()
+        }
         box.keychain = data
       },
       capturedAccounts: fixture.store,
@@ -224,7 +222,9 @@ struct ClaudeMirrorRecoveryJournalTests {
     )
     #expect(files.filter { $0.lastPathComponent.contains(".quotari.") }.isEmpty)
   }
+}
 
+extension ClaudeMirrorRecoveryJournalTests {
   @Test func markedCleanupDebtIsReplacedByTheNextMirrorGrant() throws {
     final class Box: @unchecked Sendable { var keychain: Data? }
     let box = Box()
@@ -349,4 +349,9 @@ private struct MirrorJournalFixture {
   func remove() {
     try? FileManager.default.removeItem(at: directory)
   }
+}
+
+private final class CrashingKeychainBox: @unchecked Sendable {
+  var keychain: Data?
+  var failWrite = true
 }
