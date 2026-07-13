@@ -238,6 +238,43 @@ extension UsageStoreNotificationTests {
     #expect(center.attemptedRequests.first?.key.logicalAccountID == fetched.credentialScopeID)
   }
 
+  @Test func selectedCodexRegistryResultUsesItsLoadedCredentialStamp() async throws {
+    let saved = account(
+      name: "Saved Codex login",
+      source: .quotariRegistry(id: "codex:saved")
+    )
+    let fetched = ProviderAccount(
+      provider: .codex,
+      displayName: saved.displayName,
+      detail: saved.detail,
+      credentialSource: saved.credentialSource,
+      credentialIdentity: "acct-saved"
+    )
+    let harness = try await makeStore(
+      "selected-codex-registry-stamp",
+      codexCredentialLoader: { _ in
+        CodexCredentials(accessToken: "codex-token", accountID: "acct-saved")
+      }
+    )
+    let store = harness.store
+    let center = harness.center
+
+    store.applySuccessfulFetch(
+      ProviderFetchResult(
+        usage: usage(accountName: nil),
+        sourceLabel: "Codex",
+        sourceKind: .oauth,
+        credentialScopeID: fetched.credentialScopeID
+      ),
+      provider: .codex,
+      account: saved
+    )
+    await store.waitForPendingQuotaNotifications()
+
+    #expect(center.attemptedRequests.count == 1)
+    #expect(center.attemptedRequests.first?.key.logicalAccountID == saved.id)
+  }
+
   @Test func automaticClaudeCapturedCopyUsesTheLiveVerifiedProfile() async throws {
     let source = ProviderCredentialSource.claudeKeychain(
       service: ClaudeCredentialsStore.keychainService
@@ -342,12 +379,35 @@ extension UsageStoreNotificationTests {
       credentialSource: source,
       credentialIdentity: "claude-token-replacement"
     )
+    let token = NotificationTokenBox("claude-token-fetched")
     let harness = try await makeStore(
       "selected-claude-post-fetch-replacement",
-      claudeCredentialLoader: { _ in ClaudeCredentials(accessToken: "claude-token-replacement") }
+      claudeCredentialLoader: { _ in ClaudeCredentials(accessToken: token.value) }
     )
     let store = harness.store
+    let controller = harness.controller
     let center = harness.center
+    store.claudeProfiles[fetched.id] = ClaudeProfile(
+      accountID: "fetched-claude-account",
+      fingerprint: ProviderCredentialIdentity.fingerprint(of: "claude-token-fetched")
+    )
+    store.synchronizeQuotaNotificationScope(
+      account: fetched,
+      origin: nil,
+      provider: .claude
+    )
+    store.applySuccessfulFetch(
+      claudeFetchResult(credentialScopeID: fetched.credentialScopeID),
+      provider: .claude,
+      account: fetched
+    )
+    await store.waitForPendingQuotaNotifications()
+    let scheduledReset = try #require(
+      center.attemptedRequests.first(where: { $0.kind == .weeklyReset })
+    )
+    #expect(center.pendingIDs == [scheduledReset.requestID])
+
+    token.value = "claude-token-replacement"
     store.claudeProfiles[replacement.id] = ClaudeProfile(
       accountID: "replacement-claude-account",
       fingerprint: ProviderCredentialIdentity.fingerprint(of: "claude-token-replacement")
@@ -360,7 +420,87 @@ extension UsageStoreNotificationTests {
     )
     await store.waitForPendingQuotaNotifications()
 
-    #expect(center.attemptedRequests.isEmpty)
+    #expect(center.attemptedRequests.count == 2)
+    #expect(center.pendingIDs.isEmpty)
+    #expect(controller.ledger.windows[scheduledReset.key]?.scheduledReset == nil)
+  }
+
+  @Test func selectedClaudeRotationAcceptsTheFinalFetchCredential() async throws {
+    let source = ProviderCredentialSource.claudeKeychain(
+      service: ClaudeCredentialsStore.keychainService
+    )
+    let selectedBeforeRotation = ProviderAccount(
+      provider: .claude,
+      displayName: "Claude before rotation",
+      detail: nil,
+      credentialSource: source,
+      credentialIdentity: "claude-token-before"
+    )
+    let finalCredential = ProviderAccount(
+      provider: .claude,
+      displayName: "Claude after rotation",
+      detail: nil,
+      credentialSource: source,
+      credentialIdentity: "claude-token-after"
+    )
+    let harness = try await makeStore(
+      "selected-claude-final-fetch-credential",
+      claudeCredentialLoader: { _ in ClaudeCredentials(accessToken: "claude-token-after") }
+    )
+    let store = harness.store
+    let center = harness.center
+    let accountID = "stable-selected-claude-account"
+    store.claudeProfiles[selectedBeforeRotation.id] = ClaudeProfile(
+      accountID: accountID,
+      fingerprint: ProviderCredentialIdentity.fingerprint(of: "claude-token-after")
+    )
+
+    store.applySuccessfulFetch(
+      claudeFetchResult(credentialScopeID: finalCredential.credentialScopeID),
+      provider: .claude,
+      account: selectedBeforeRotation
+    )
+    await store.waitForPendingQuotaNotifications()
+
+    let logicalAccountID = "claude:account:\(ProviderCredentialIdentity.fingerprint(of: "id:\(accountID)"))"
+    #expect(center.attemptedRequests.map(\.key.logicalAccountID) == [logicalAccountID, logicalAccountID])
+  }
+
+  @Test func selectedClaudeRegistryResultUsesItsLoadedCredentialStamp() async throws {
+    let saved = ProviderAccount(
+      provider: .claude,
+      displayName: "Saved Claude login",
+      detail: nil,
+      credentialSource: .quotariRegistry(id: "claude:saved")
+    )
+    let fetched = ProviderAccount(
+      provider: .claude,
+      displayName: saved.displayName,
+      detail: saved.detail,
+      credentialSource: saved.credentialSource,
+      credentialIdentity: "saved-claude-token"
+    )
+    let harness = try await makeStore(
+      "selected-claude-registry-stamp",
+      claudeCredentialLoader: { _ in ClaudeCredentials(accessToken: "saved-claude-token") }
+    )
+    let store = harness.store
+    let center = harness.center
+    let accountID = "stable-saved-claude-account"
+    store.claudeProfiles[saved.id] = ClaudeProfile(
+      accountID: accountID,
+      fingerprint: ProviderCredentialIdentity.fingerprint(of: "saved-claude-token")
+    )
+
+    store.applySuccessfulFetch(
+      claudeFetchResult(credentialScopeID: fetched.credentialScopeID),
+      provider: .claude,
+      account: saved
+    )
+    await store.waitForPendingQuotaNotifications()
+
+    let logicalAccountID = "claude:account:\(ProviderCredentialIdentity.fingerprint(of: "id:\(accountID)"))"
+    #expect(center.attemptedRequests.map(\.key.logicalAccountID) == [logicalAccountID, logicalAccountID])
   }
 
   @Test func matchedClaudeResultRejectsAPostFetchSlotReplacement() async throws {

@@ -53,6 +53,7 @@ final class UsageStore {
   let profileFetcher: any ClaudeProfileFetching
   let profileStore: ClaudeProfileStore
   let quotaNotifications: QuotaNotificationController
+  let codexCredentialLoader: @Sendable (ProviderCredentialSource) -> CodexCredentials?
   let claudeCredentialLoader: @Sendable (ProviderCredentialSource) -> ClaudeCredentials?
   private let defaults: UserDefaults
   var captureErrors: [UsageProvider: String] = [:]
@@ -92,6 +93,9 @@ final class UsageStore {
     accountSwitch: AccountSwitchService = AccountSwitchService(),
     profileFetcher: any ClaudeProfileFetching = ClaudeProfileFetcher(),
     profileStore: ClaudeProfileStore = ClaudeProfileStore(),
+    codexCredentialLoader: @escaping @Sendable (ProviderCredentialSource) -> CodexCredentials? = {
+      try? CodexCredentialsStore.load(source: $0)
+    },
     claudeCredentialLoader: @escaping @Sendable (ProviderCredentialSource) -> ClaudeCredentials? = {
       try? ClaudeCredentialsStore.load(source: $0)
     },
@@ -108,6 +112,7 @@ final class UsageStore {
     self.accountSwitch = accountSwitch
     self.profileFetcher = profileFetcher
     self.profileStore = profileStore
+    self.codexCredentialLoader = codexCredentialLoader
     self.claudeCredentialLoader = claudeCredentialLoader
     self.defaults = defaults
     self.quotaNotifications = quotaNotifications ?? QuotaNotificationController(defaults: defaults)

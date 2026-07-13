@@ -12,6 +12,7 @@ struct DeferredClaudeQuotaNotification {
 private enum QuotaNotificationAccountResolution {
   case resolved(String)
   case deferredClaudeIdentity
+  case staleCredential
   case unattributed
 
   var logicalAccountID: String? {
@@ -84,6 +85,12 @@ extension UsageStore {
         credentialScopeID: credentialScopeID,
         revision: revision
       )
+      return
+    case .staleCredential:
+      if provider == .claude {
+        deferredClaudeQuotaNotification = nil
+      }
+      quotaNotifications.setActiveLogicalAccountID(nil, for: provider)
       return
     case .resolved:
       if provider == .claude {
@@ -195,31 +202,40 @@ extension UsageStore {
   ) async -> QuotaNotificationAccountResolution {
     guard sourceKind != .mock else { return .unattributed }
     if let account {
-      guard notificationFetchCredentialIsCurrent(
+      guard case let .current(claudeCredentialFingerprint) = notificationFetchCredentialValidation(
         account: account,
         sourceKind: sourceKind,
         credentialScopeID: credentialScopeID
-      ) else { return .unattributed }
+      ) else { return .staleCredential }
       let logicalAccount = provider == .claude
         ? account
         : reconciledSelectionOrigins[provider] ?? account
-      return notificationScopeResolution(for: logicalAccount)
+      return notificationScopeResolution(
+        for: logicalAccount,
+        claudeCredentialFingerprint: claudeCredentialFingerprint
+      )
     }
     if let origin = reconciledSelectionOrigins[provider] {
-      guard notificationFetchCredentialIsCurrent(
+      guard case let .current(claudeCredentialFingerprint) = notificationFetchCredentialValidation(
         account: origin,
         sourceKind: sourceKind,
         credentialScopeID: credentialScopeID
-      ) else { return .unattributed }
-      return notificationScopeResolution(for: origin)
+      ) else { return .staleCredential }
+      return notificationScopeResolution(
+        for: origin,
+        claudeCredentialFingerprint: claudeCredentialFingerprint
+      )
     }
     if let matchedAccount = matchedAccount(for: snapshot, provider: provider) {
-      guard notificationFetchCredentialIsCurrent(
+      guard case let .current(claudeCredentialFingerprint) = notificationFetchCredentialValidation(
         account: matchedAccount,
         sourceKind: sourceKind,
         credentialScopeID: credentialScopeID
-      ) else { return .unattributed }
-      return notificationScopeResolution(for: matchedAccount)
+      ) else { return .staleCredential }
+      return notificationScopeResolution(
+        for: matchedAccount,
+        claudeCredentialFingerprint: claudeCredentialFingerprint
+      )
     }
     guard snapshot.account == nil else { return .unattributed }
     return await automaticNotificationAccountResolution(
@@ -229,23 +245,52 @@ extension UsageStore {
     )
   }
 
-  private func notificationFetchCredentialIsCurrent(
+  private enum NotificationFetchCredentialValidation {
+    case current(claudeCredentialFingerprint: String?)
+    case stale
+  }
+
+  private func notificationFetchCredentialValidation(
     account: ProviderAccount,
     sourceKind: ProviderFetchKind?,
     credentialScopeID: String?
-  ) -> Bool {
-    guard sourceKind == .oauth, let credentialScopeID else { return true }
-    guard account.credentialScopeID == credentialScopeID else { return false }
-    guard account.provider == .claude else { return true }
-    guard let credentials = claudeCredentialLoader(account.credentialSource) else { return false }
-    let currentAccount = ProviderAccount(
-      provider: account.provider,
-      displayName: account.displayName,
-      detail: account.detail,
-      credentialSource: account.credentialSource,
-      credentialIdentity: credentials.accessToken
-    )
-    return currentAccount.credentialScopeID == credentialScopeID
+  ) -> NotificationFetchCredentialValidation {
+    guard sourceKind == .oauth, let credentialScopeID else {
+      return .current(claudeCredentialFingerprint: nil)
+    }
+    switch account.provider {
+    case .codex:
+      guard let credentials = codexCredentialLoader(account.credentialSource) else { return .stale }
+      let identity = credentials.accountID
+        ?? credentials.email
+        ?? credentials.refreshToken
+        ?? credentials.accessToken
+      let currentAccount = ProviderAccount(
+        provider: account.provider,
+        displayName: account.displayName,
+        detail: account.detail,
+        credentialSource: account.credentialSource,
+        credentialIdentity: identity
+      )
+      return currentAccount.credentialScopeID == credentialScopeID
+        ? .current(claudeCredentialFingerprint: nil)
+        : .stale
+    case .claude:
+      guard let credentials = claudeCredentialLoader(account.credentialSource) else { return .stale }
+      let currentAccount = ProviderAccount(
+        provider: account.provider,
+        displayName: account.displayName,
+        detail: account.detail,
+        credentialSource: account.credentialSource,
+        credentialIdentity: credentials.accessToken
+      )
+      guard currentAccount.credentialScopeID == credentialScopeID else { return .stale }
+      return .current(
+        claudeCredentialFingerprint: ProviderCredentialIdentity.fingerprint(
+          of: credentials.accessToken
+        )
+      )
+    }
   }
 
   private func automaticNotificationAccountResolution(
@@ -296,16 +341,21 @@ extension UsageStore {
   }
 
   private func notificationScopeResolution(
-    for account: ProviderAccount
+    for account: ProviderAccount,
+    claudeCredentialFingerprint: String? = nil
   ) -> QuotaNotificationAccountResolution {
     let logicalAccount = account.provider == .claude
       ? account
       : capturedEquivalents[account.id] ?? account
-    return notificationScopeResolution(forLogicalAccount: logicalAccount)
+    return notificationScopeResolution(
+      forLogicalAccount: logicalAccount,
+      claudeCredentialFingerprint: claudeCredentialFingerprint
+    )
   }
 
   private func notificationScopeResolution(
-    forLogicalAccount account: ProviderAccount
+    forLogicalAccount account: ProviderAccount,
+    claudeCredentialFingerprint: String? = nil
   ) -> QuotaNotificationAccountResolution {
     switch account.provider {
     case .codex:
@@ -316,7 +366,10 @@ extension UsageStore {
       // the source's current token distinguishes those cases safely. Delay
       // alerts until that stable identity is available instead of assigning
       // another account's snapshot or ledger history to this slot.
-      guard let profile = verifiedClaudeNotificationProfile(for: account) else {
+      guard let profile = verifiedClaudeNotificationProfile(
+        for: account,
+        credentialFingerprint: claudeCredentialFingerprint
+      ) else {
         return .deferredClaudeIdentity
       }
       guard let identity = stableClaudeNotificationIdentity(from: profile) else {
@@ -326,10 +379,18 @@ extension UsageStore {
     }
   }
 
-  private func verifiedClaudeNotificationProfile(for account: ProviderAccount) -> ClaudeProfile? {
+  private func verifiedClaudeNotificationProfile(
+    for account: ProviderAccount,
+    credentialFingerprint: String? = nil
+  ) -> ClaudeProfile? {
     guard let profile = claudeProfiles[account.id],
-          let expectedFingerprint = profile.fingerprint,
-          let credentials = claudeCredentialLoader(account.credentialSource),
+          let expectedFingerprint = profile.fingerprint
+    else { return nil }
+    if let credentialFingerprint {
+      guard credentialFingerprint == expectedFingerprint else { return nil }
+      return profile
+    }
+    guard let credentials = claudeCredentialLoader(account.credentialSource),
           ProviderCredentialIdentity.fingerprint(of: credentials.accessToken) == expectedFingerprint
     else { return nil }
     return profile

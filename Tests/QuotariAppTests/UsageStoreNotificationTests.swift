@@ -248,6 +248,7 @@ extension UsageStoreNotificationTests {
     _ name: String,
     providers: [ProviderDescriptor] = [],
     discovery: any ProviderAccountDiscovering = StaticAccountDiscovery(),
+    codexCredentialLoader: @escaping @Sendable (ProviderCredentialSource) -> CodexCredentials? = { _ in nil },
     claudeCredentialLoader: @escaping @Sendable (ProviderCredentialSource) -> ClaudeCredentials? = { _ in nil },
     startsAutomatically: Bool = false
   ) async throws -> UsageNotificationHarness {
@@ -259,6 +260,7 @@ extension UsageStoreNotificationTests {
     let store = UsageStore.isolatedForTesting(
       providers: providers,
       accountDiscovery: discovery,
+      codexCredentialLoader: codexCredentialLoader,
       claudeCredentialLoader: claudeCredentialLoader,
       defaults: defaults,
       quotaNotifications: controller,
