@@ -17,6 +17,12 @@ extension UsageStore {
     account: ProviderAccount?
   ) {
     let usage = recordAccountUsageSuccess(value, provider: provider, account: account)
+    enqueueQuotaNotification(
+      snapshot: value.usage,
+      provider: provider,
+      account: account,
+      sourceKind: value.sourceKind
+    )
     let hidesProviderCost = Self.shouldHideProviderCost(sourceKind: value.sourceKind)
     let reportedCostFallback = Self.reportedCostFallback(
       from: usage.cost,
