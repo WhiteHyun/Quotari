@@ -272,6 +272,34 @@ extension QuotaNotificationControllerTests {
     #expect(center.pendingScheduledIDs == [requestID])
   }
 
+  @Test func staleReconciliationSnapshotDoesNotClearANewerResetJournal() async throws {
+    let defaults = try makeDefaults("stale-reconciliation-snapshot")
+    let center = QuotaNotificationCenterStub(status: .authorized)
+    let controller = QuotaNotificationController(center: center, defaults: defaults)
+    _ = await controller.setNotificationsEnabled(true)
+    center.suspendNextPendingQuery = true
+
+    let reconciliation = Task {
+      await controller.refreshAuthorizationStatus()
+    }
+    await center.waitForSuspendedPendingQuery()
+
+    let result = await controller.process(
+      snapshot: snapshot(weeklyUsed: 10, resetAt: now.addingTimeInterval(86400)),
+      logicalAccountID: "account-a",
+      sourceKind: .api,
+      now: now
+    )
+    let requestID = try #require(result.acceptedRequestIDs.first)
+    #expect(controller.ledger.scheduledID(provider: .codex) == requestID)
+    #expect(center.pendingScheduledIDs == [requestID])
+
+    center.resumePendingQueries()
+    _ = await reconciliation.value
+    #expect(controller.ledger.scheduledID(provider: .codex) == requestID)
+    #expect(center.pendingScheduledIDs == [requestID])
+  }
+
   @Test func missingSystemScheduleIsReconciledAndRetriedAfterRelaunch() async throws {
     let defaults = try makeDefaults("pending-reconcile")
     let center = QuotaNotificationCenterStub(status: .authorized)
@@ -323,6 +351,8 @@ final class QuotaNotificationCenterStub: QuotaNotificationCenterTransport {
   var suspendAdds = false
   var publishesScheduledBeforeSuspending = false
   private var suspendedAdds: [CheckedContinuation<Void, Never>] = []
+  var suspendNextPendingQuery = false
+  private var suspendedPendingQueries: [CheckedContinuation<Void, Never>] = []
 
   var suspendedAddCount: Int {
     suspendedAdds.count
@@ -343,7 +373,14 @@ final class QuotaNotificationCenterStub: QuotaNotificationCenterTransport {
   }
 
   func pendingScheduledRequestIdentifiers() async -> Set<String> {
-    pendingScheduledIDs
+    let snapshot = pendingScheduledIDs
+    if suspendNextPendingQuery {
+      suspendNextPendingQuery = false
+      await withCheckedContinuation { continuation in
+        suspendedPendingQueries.append(continuation)
+      }
+    }
+    return snapshot
   }
 
   func add(_ request: QuotaNotificationRequest) async throws {
@@ -391,6 +428,20 @@ final class QuotaNotificationCenterStub: QuotaNotificationCenterTransport {
     suspendAdds = false
     let continuations = suspendedAdds
     suspendedAdds.removeAll()
+    for continuation in continuations {
+      continuation.resume()
+    }
+  }
+
+  func waitForSuspendedPendingQuery() async {
+    while suspendedPendingQueries.isEmpty {
+      await Task.yield()
+    }
+  }
+
+  func resumePendingQueries() {
+    let continuations = suspendedPendingQueries
+    suspendedPendingQueries.removeAll()
     for continuation in continuations {
       continuation.resume()
     }

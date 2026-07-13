@@ -22,6 +22,7 @@ final class QuotaNotificationController {
   @ObservationIgnored private var policy: QuotaNotificationPolicy
   @ObservationIgnored private var processingTail: Task<QuotaNotificationProcessingResult, Never>?
   @ObservationIgnored private var inFlightRequestIDs = Set<String>()
+  @ObservationIgnored private var scheduledRequestRevision: UInt = 0
   @ObservationIgnored private var scopedProviders = Set<UsageProvider>()
   @ObservationIgnored private var activeLogicalAccountIDs: [UsageProvider: String] = [:]
 
@@ -254,6 +255,9 @@ private extension QuotaNotificationController {
           continue
         }
         policy.recordSuccess(for: request)
+        if request.kind == .weeklyReset {
+          scheduledRequestRevision &+= 1
+        }
         persistLedger()
         result.acceptedRequestIDs.append(request.requestID)
       } catch {
@@ -352,10 +356,13 @@ private extension QuotaNotificationController {
   }
 
   func reconcilePendingRequests() async {
+    let revision = scheduledRequestRevision
     let actual = await center.pendingScheduledRequestIdentifiers()
     let journaled = Set(policy.ledger.windows.values.compactMap(\.scheduledReset?.requestID))
     let protected = journaled.union(inFlightRequestIDs)
-    let missing = journaled.subtracting(actual)
+    let missing = revision == scheduledRequestRevision
+      ? journaled.subtracting(actual)
+      : []
     for identifier in missing {
       policy.recordCancellationSuccess(requestID: identifier)
     }
