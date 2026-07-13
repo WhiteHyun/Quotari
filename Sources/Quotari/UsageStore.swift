@@ -13,6 +13,10 @@ final class UsageStore {
   private(set) var selectedAccounts: [UsageProvider: ProviderAccount] = [:]
   /// Live accounts whose identity already has a (hidden) saved registry copy.
   private(set) var capturedEquivalentIDs: Set<String> = []
+  /// The saved account a reconciled live selection stands in for; kept so the
+  /// persisted selection stays on the saved account and a later slot reuse
+  /// falls back to it instead of silently following the slot.
+  var reconciledSelectionOrigins: [UsageProvider: ProviderAccount] = [:]
   var accountUsage: [UsageProvider: [String: ProviderAccountUsage]] = [:]
   var refreshingAccountUsageProviders = Set<UsageProvider>()
   private(set) var isRefreshing = false
@@ -33,7 +37,7 @@ final class UsageStore {
   let costEstimator: any UsageCostEstimating
   let accountDiscovery: any ProviderAccountDiscovering
   private let accountSelectionStore: ProviderAccountSelectionStore
-  private let accountCapture: AccountCaptureService
+  let accountCapture: AccountCaptureService
   private let defaults: UserDefaults
   var captureErrors: [UsageProvider: String] = [:]
 
@@ -125,30 +129,36 @@ final class UsageStore {
 
   func reloadAccounts() async {
     var next: [UsageProvider: [ProviderAccount]] = [:]
-    var refreshedSelections: [(UsageProvider, ProviderAccount)] = []
+    var refreshedSelections: [(UsageProvider, SelectionUpdate)] = []
     var alreadyCaptured: Set<String> = []
+    var syncCandidates: [ProviderAccount] = []
     for descriptor in providers {
       let previousAccounts = accounts[descriptor.id] ?? []
       var providerAccounts = await accountDiscovery.accounts(for: descriptor.id)
       if let selected = selectedAccounts[descriptor.id],
-         let updated = await reconciledSelection(selected, in: &providerAccounts) {
-        refreshedSelections.append((descriptor.id, updated))
+         let update = await reconciledSelection(
+           selected,
+           origin: reconciledSelectionOrigins[descriptor.id],
+           in: &providerAccounts
+         ) {
+        refreshedSelections.append((descriptor.id, update))
       }
       reconcileAccountUsage(
         provider: descriptor.id,
         previousAccounts: previousAccounts,
         currentAccounts: providerAccounts
       )
-      await alreadyCaptured.formUnion(
-        accountDiscovery.accountsWithCapturedCopies(among: providerAccounts)
-      )
+      let flagged = await accountDiscovery.accountsWithCapturedCopies(among: providerAccounts)
+      alreadyCaptured.formUnion(flagged)
+      syncCandidates += providerAccounts.filter { flagged.contains($0.id) }
       next[descriptor.id] = providerAccounts
     }
     accounts = next
     capturedEquivalentIDs = alreadyCaptured
-    for (provider, account) in refreshedSelections {
-      selectAccount(account, for: provider)
+    for (provider, update) in refreshedSelections {
+      selectAccount(update.account, for: provider, standingInFor: update.origin)
     }
+    await syncCapturedCopies(of: syncCandidates)
   }
 
   func selectAccount(id: String?, for provider: UsageProvider) {
@@ -156,39 +166,27 @@ final class UsageStore {
     selectAccount(account, for: provider)
   }
 
-  /// Snapshots the account's live credentials into Quotari's own registry so
-  /// it survives the CLI credential slot being reused by another login. The
-  /// keychain/file I/O runs off the main actor so a slow (or prompting)
-  /// `security` call can't freeze the popover.
-  func captureAccount(_ account: ProviderAccount) async {
-    let capture = accountCapture
-    let now = Date()
-    do {
-      try await Task.detached { try capture.capture(account, now: now) }.value
-      captureErrors[account.provider] = nil
-      await reloadAccounts()
-    } catch {
-      captureErrors[account.provider] = error.localizedDescription
-    }
-  }
-
-  func removeCapturedAccount(_ account: ProviderAccount) async {
-    guard case let .quotariRegistry(id) = account.credentialSource else { return }
-    let capture = accountCapture
-    do {
-      try await Task.detached { try capture.remove(id: id) }.value
-      captureErrors[account.provider] = nil
-      if selectedAccounts[account.provider]?.id == account.id {
-        selectAccount(nil, for: account.provider)
-      }
-      await reloadAccounts()
-    } catch {
-      captureErrors[account.provider] = error.localizedDescription
-    }
-  }
-
   func selectAccount(_ account: ProviderAccount?, for provider: UsageProvider) {
-    guard selectedAccounts[provider] != account else { return }
+    selectAccount(account, for: provider, standingInFor: nil)
+  }
+
+  /// `origin` is the saved account a reconciled live selection stands in for
+  /// (nil for a direct user choice). The persisted selection always records
+  /// the origin, so a relaunch — or a slot reused by another login — comes
+  /// back to the account the user actually selected.
+  func selectAccount(
+    _ account: ProviderAccount?,
+    for provider: UsageProvider,
+    standingInFor origin: ProviderAccount?
+  ) {
+    let originChanged = reconciledSelectionOrigins[provider] != origin
+    reconciledSelectionOrigins[provider] = origin
+    guard selectedAccounts[provider] != account else {
+      if originChanged {
+        try? accountSelectionStore.save(persistableSelections())
+      }
+      return
+    }
     let cachedUsage = account.flatMap { accountUsage[provider]?[$0.id] }
     if let account {
       selectedAccounts[provider] = account
@@ -196,7 +194,7 @@ final class UsageStore {
       selectedAccounts[provider] = nil
     }
     accountRevisions[provider, default: 0] &+= 1
-    try? accountSelectionStore.save(selectedAccounts)
+    try? accountSelectionStore.save(persistableSelections())
     applyCachedAccountUsage(cachedUsage, account: account, provider: provider)
     costTasks[provider]?.cancel()
     costTasks[provider] = nil
