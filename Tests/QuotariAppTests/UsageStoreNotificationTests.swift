@@ -175,12 +175,18 @@ struct UsageStoreNotificationTests {
     let harness = try await makeStore(
       "automatic-claude",
       providers: [ProviderRegistry.descriptor(for: .claude)],
-      discovery: discovery
+      discovery: discovery,
+      claudeCredentialLoader: { _ in ClaudeCredentials(accessToken: "live-token") }
     )
     let store = harness.store
     let controller = harness.controller
     let center = harness.center
     await store.reloadAccounts()
+    let accountID = "automatic-claude-account"
+    store.claudeProfiles[live.id] = ClaudeProfile(
+      accountID: accountID,
+      fingerprint: ProviderCredentialIdentity.fingerprint(of: "live-token")
+    )
     let value = claudeFetchResult(credentialScopeID: live.credentialScopeID)
 
     store.applySuccessfulFetch(value, provider: .claude, account: nil)
@@ -189,8 +195,9 @@ struct UsageStoreNotificationTests {
     await store.waitForPendingQuotaNotifications()
 
     #expect(center.attemptedRequests.map(\.kind) == [.warning, .weeklyReset])
-    #expect(Set(center.attemptedRequests.map(\.key.logicalAccountID)) == [live.id])
-    #expect(controller.ledger.windows.keys.allSatisfy { $0.logicalAccountID == live.id })
+    let logicalAccountID = "claude:account:\(ProviderCredentialIdentity.fingerprint(of: "id:\(accountID)"))"
+    #expect(Set(center.attemptedRequests.map(\.key.logicalAccountID)) == [logicalAccountID])
+    #expect(controller.ledger.windows.keys.allSatisfy { $0.logicalAccountID == logicalAccountID })
   }
 
   @Test func accountlessClaudeResultWithoutADiscoveredLiveSourceRemainsUnattributed() async throws {
@@ -241,6 +248,7 @@ extension UsageStoreNotificationTests {
     _ name: String,
     providers: [ProviderDescriptor] = [],
     discovery: any ProviderAccountDiscovering = StaticAccountDiscovery(),
+    claudeCredentialLoader: @escaping @Sendable (ProviderCredentialSource) -> ClaudeCredentials? = { _ in nil },
     startsAutomatically: Bool = false
   ) async throws -> UsageNotificationHarness {
     let defaults = try #require(UserDefaults(suiteName: "UsageStoreNotificationTests.\(name)"))
@@ -251,6 +259,7 @@ extension UsageStoreNotificationTests {
     let store = UsageStore.isolatedForTesting(
       providers: providers,
       accountDiscovery: discovery,
+      claudeCredentialLoader: claudeCredentialLoader,
       defaults: defaults,
       quotaNotifications: controller,
       startsAutomatically: startsAutomatically

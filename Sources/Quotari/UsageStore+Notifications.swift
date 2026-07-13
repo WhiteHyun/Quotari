@@ -55,7 +55,7 @@ extension UsageStore {
     origin: ProviderAccount?,
     provider: UsageProvider
   ) {
-    let scopeID = (origin ?? account).map { notificationScopeID(for: $0) }
+    let scopeID = (origin ?? account).flatMap { notificationScopeID(for: $0) }
     quotaNotifications.setActiveLogicalAccountID(
       scopeID,
       for: provider
@@ -109,7 +109,7 @@ extension UsageStore {
         }
         return false
       }
-      account = liveAccounts.count == 1 ? liveAccounts[0] : nil
+      account = liveAccounts.first { $0.credentialScopeID == credentialScopeID }
     case .claude:
       account = discoveredAccounts
         .compactMap { account -> (rank: Int, account: ProviderAccount)? in
@@ -125,20 +125,45 @@ extension UsageStore {
     )
   }
 
-  private func notificationScopeID(for account: ProviderAccount) -> String {
+  private func notificationScopeID(for account: ProviderAccount) -> String? {
     notificationScopeID(forLogicalAccount: capturedEquivalents[account.id] ?? account)
   }
 
-  private func notificationScopeID(forLogicalAccount account: ProviderAccount) -> String {
+  private func notificationScopeID(forLogicalAccount account: ProviderAccount) -> String? {
     switch account.provider {
     case .codex:
-      account.credentialScopeID
+      return account.credentialScopeID
     case .claude:
-      // Claude discovery can only key an unsaved live account by its access
-      // token. That token rotates during routine refreshes, so keep the
-      // notification ledger on the durable source/registry id instead.
-      account.id
+      // A Claude source can be reused by a different login, while its access
+      // token also rotates for the same login. Only a profile verified against
+      // the source's current token distinguishes those cases safely. Delay
+      // alerts until that stable identity is available instead of assigning
+      // another account's snapshot or ledger history to this slot.
+      guard let profile = verifiedClaudeNotificationProfile(for: account),
+            let identity = stableClaudeNotificationIdentity(from: profile)
+      else { return nil }
+      return "claude:account:\(ProviderCredentialIdentity.fingerprint(of: identity))"
     }
+  }
+
+  private func verifiedClaudeNotificationProfile(for account: ProviderAccount) -> ClaudeProfile? {
+    guard let profile = claudeProfiles[account.id],
+          let expectedFingerprint = profile.fingerprint,
+          let credentials = claudeCredentialLoader(account.credentialSource),
+          ProviderCredentialIdentity.fingerprint(of: credentials.accessToken) == expectedFingerprint
+    else { return nil }
+    return profile
+  }
+
+  private func stableClaudeNotificationIdentity(from profile: ClaudeProfile) -> String? {
+    if let accountID = profile.accountID?.trimmingCharacters(in: .whitespacesAndNewlines),
+       !accountID.isEmpty {
+      return "id:\(accountID)"
+    }
+    guard let email = profile.email?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !email.isEmpty
+    else { return nil }
+    return "email:\(email.lowercased())"
   }
 
   private nonisolated static func automaticClaudeSourceRank(

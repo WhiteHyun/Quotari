@@ -199,6 +199,98 @@ extension UsageStoreNotificationTests {
     #expect(center.attemptedRequests.isEmpty)
   }
 
+  @Test func automaticCodexResultMatchesItsCredentialAmongMultipleSlots() async throws {
+    let fetched = ProviderAccount(
+      provider: .codex,
+      displayName: "Default login",
+      detail: nil,
+      credentialSource: .codexAuthFile(path: "/tmp/default-auth.json"),
+      credentialIdentity: "acct-default"
+    )
+    let other = ProviderAccount(
+      provider: .codex,
+      displayName: "CODEX_HOME login",
+      detail: nil,
+      credentialSource: .codexAuthFile(path: "/tmp/codex-home-auth.json"),
+      credentialIdentity: "acct-codex-home"
+    )
+    let harness = try await makeStore(
+      "multiple-codex-slots",
+      providers: [emptyDescriptor(for: .codex)],
+      discovery: StaticAccountDiscovery(accounts: [.codex: [fetched, other]])
+    )
+    let store = harness.store
+    let center = harness.center
+
+    store.applySuccessfulFetch(
+      ProviderFetchResult(
+        usage: usage(accountName: nil),
+        sourceLabel: "Live",
+        sourceKind: .oauth,
+        credentialScopeID: fetched.credentialScopeID
+      ),
+      provider: .codex,
+      account: nil
+    )
+    await store.waitForPendingQuotaNotifications()
+
+    #expect(center.attemptedRequests.count == 1)
+    #expect(center.attemptedRequests.first?.key.logicalAccountID == fetched.credentialScopeID)
+  }
+
+  @Test func replacedClaudeLoginStartsIndependentNotificationHistory() async throws {
+    let source = ProviderCredentialSource.claudeKeychain(
+      service: ClaudeCredentialsStore.keychainService
+    )
+    let first = ProviderAccount(
+      provider: .claude,
+      displayName: "First Claude login",
+      detail: nil,
+      credentialSource: source,
+      credentialIdentity: "claude-access-first"
+    )
+    let second = ProviderAccount(
+      provider: .claude,
+      displayName: "Second Claude login",
+      detail: nil,
+      credentialSource: source,
+      credentialIdentity: "claude-access-second"
+    )
+    let token = NotificationTokenBox("claude-access-first")
+    let harness = try await makeStore(
+      "replaced-claude-login",
+      claudeCredentialLoader: { _ in ClaudeCredentials(accessToken: token.value) }
+    )
+    let store = harness.store
+    let center = harness.center
+    store.claudeProfiles[first.id] = ClaudeProfile(
+      accountID: "claude-account-first",
+      fingerprint: ProviderCredentialIdentity.fingerprint(of: "claude-access-first")
+    )
+
+    store.applySuccessfulFetch(
+      claudeFetchResult(credentialScopeID: first.credentialScopeID),
+      provider: .claude,
+      account: first
+    )
+    await store.waitForPendingQuotaNotifications()
+
+    token.value = "claude-access-second"
+    store.claudeProfiles[second.id] = ClaudeProfile(
+      accountID: "claude-account-second",
+      fingerprint: ProviderCredentialIdentity.fingerprint(of: "claude-access-second")
+    )
+    store.applySuccessfulFetch(
+      claudeFetchResult(credentialScopeID: second.credentialScopeID),
+      provider: .claude,
+      account: second
+    )
+    await store.waitForPendingQuotaNotifications()
+
+    #expect(center.attemptedRequests.map(\.kind) == [.warning, .weeklyReset, .warning, .weeklyReset])
+    #expect(Set(center.attemptedRequests.map(\.key.logicalAccountID)).count == 2)
+  }
+
   @Test func claudeAccessTokenRotationPreservesNotificationHistory() async throws {
     let source = ProviderCredentialSource.claudeKeychain(
       service: ClaudeCredentialsStore.keychainService
@@ -217,9 +309,18 @@ extension UsageStoreNotificationTests {
       credentialSource: source,
       credentialIdentity: "access-token-after"
     )
-    let harness = try await makeStore("claude-token-rotation")
+    let token = NotificationTokenBox("access-token-before")
+    let harness = try await makeStore(
+      "claude-token-rotation",
+      claudeCredentialLoader: { _ in ClaudeCredentials(accessToken: token.value) }
+    )
     let store = harness.store
     let center = harness.center
+    let accountID = "stable-claude-account"
+    store.claudeProfiles[beforeRotation.id] = ClaudeProfile(
+      accountID: accountID,
+      fingerprint: ProviderCredentialIdentity.fingerprint(of: "access-token-before")
+    )
 
     store.applySuccessfulFetch(
       claudeFetchResult(),
@@ -227,6 +328,11 @@ extension UsageStoreNotificationTests {
       account: beforeRotation
     )
     await store.waitForPendingQuotaNotifications()
+    token.value = "access-token-after"
+    store.claudeProfiles[afterRotation.id] = ClaudeProfile(
+      accountID: accountID,
+      fingerprint: ProviderCredentialIdentity.fingerprint(of: "access-token-after")
+    )
     store.applySuccessfulFetch(
       claudeFetchResult(),
       provider: .claude,
@@ -235,7 +341,8 @@ extension UsageStoreNotificationTests {
     await store.waitForPendingQuotaNotifications()
 
     #expect(center.attemptedRequests.map(\.kind) == [.warning, .weeklyReset])
-    #expect(Set(center.attemptedRequests.map(\.key.logicalAccountID)) == [beforeRotation.id])
+    let logicalAccountID = "claude:account:\(ProviderCredentialIdentity.fingerprint(of: "id:\(accountID)"))"
+    #expect(Set(center.attemptedRequests.map(\.key.logicalAccountID)) == [logicalAccountID])
   }
 
   @Test func selectionChangeRejectsDelayedAutomaticAttribution() async throws {
@@ -343,6 +450,20 @@ extension UsageStoreNotificationTests {
       ),
       pipeline: ProviderFetchPipeline { _ in [] }
     )
+  }
+}
+
+private final class NotificationTokenBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage: String
+
+  init(_ value: String) {
+    storage = value
+  }
+
+  var value: String {
+    get { lock.withLock { storage } }
+    set { lock.withLock { storage = newValue } }
   }
 }
 

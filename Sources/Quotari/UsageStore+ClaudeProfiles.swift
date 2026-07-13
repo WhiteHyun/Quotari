@@ -146,6 +146,7 @@ extension UsageStore {
         fingerprint: attempt.credential.fingerprint
       )
       try? profileStore.save(claudeProfiles)
+      enqueueQuotaNotificationScopeRestore(for: .claude)
     }
     return false
   }
