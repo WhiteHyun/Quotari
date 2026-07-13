@@ -87,7 +87,7 @@ struct ProviderAccountPopover: View {
         Task { await store.captureAccount(account) }
       }
     }
-    if store.capturedEquivalentIDs.contains(account.id) {
+    if store.capturedEquivalents.keys.contains(account.id) {
       // The saved copy's own row is hidden while this login is live, so the
       // live row is the only place its removal can be offered.
       Button("Remove Saved Copy", role: .destructive) {

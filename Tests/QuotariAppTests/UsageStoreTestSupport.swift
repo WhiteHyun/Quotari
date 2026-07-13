@@ -9,8 +9,8 @@ struct StaticAccountDiscovery: ProviderAccountDiscovering {
   /// Saved-account id → the live account hiding it, mirroring the production
   /// discovery's identity-equivalence lookup.
   var liveEquivalents: [String: ProviderAccount] = [:]
-  /// Ids of live accounts whose identity already has a saved registry copy.
-  var capturedCopyIDs: Set<String> = []
+  /// The hidden saved copy behind each live account id.
+  var capturedCopies: [String: ProviderAccount] = [:]
 
   func accounts(for provider: UsageProvider) async -> [ProviderAccount] {
     accounts[provider] ?? []
@@ -23,8 +23,8 @@ struct StaticAccountDiscovery: ProviderAccountDiscovering {
     liveEquivalents[account.id]
   }
 
-  func accountsWithCapturedCopies(among accounts: [ProviderAccount]) async -> Set<String> {
-    capturedCopyIDs.intersection(accounts.map(\.id))
+  func capturedCopies(among accounts: [ProviderAccount]) async -> [String: ProviderAccount] {
+    capturedCopies.filter { id, _ in accounts.contains { $0.id == id } }
   }
 }
 
@@ -57,8 +57,8 @@ final class MutableAccountDiscovery: ProviderAccountDiscovering, @unchecked Send
     await snapshot.liveAccount(equivalentTo: account, among: accounts)
   }
 
-  func accountsWithCapturedCopies(among accounts: [ProviderAccount]) async -> Set<String> {
-    await snapshot.accountsWithCapturedCopies(among: accounts)
+  func capturedCopies(among accounts: [ProviderAccount]) async -> [String: ProviderAccount] {
+    await snapshot.capturedCopies(among: accounts)
   }
 }
 

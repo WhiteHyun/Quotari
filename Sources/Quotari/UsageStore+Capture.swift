@@ -70,7 +70,7 @@ extension UsageStore {
 
   /// The live accounts currently flagged as having a hidden saved copy.
   var capturedCopyCandidates: [ProviderAccount] {
-    accounts.values.flatMap(\.self).filter { capturedEquivalentIDs.contains($0.id) }
+    accounts.values.flatMap(\.self).filter { capturedEquivalents.keys.contains($0.id) }
   }
 
   /// Hidden saved copies track the live credential's own token rotations —

@@ -11,8 +11,9 @@ final class UsageStore {
   var sourceLabels: [UsageProvider: String] = [:]
   private(set) var accounts: [UsageProvider: [ProviderAccount]] = [:]
   private(set) var selectedAccounts: [UsageProvider: ProviderAccount] = [:]
-  /// Live accounts whose identity already has a (hidden) saved registry copy.
-  private(set) var capturedEquivalentIDs: Set<String> = []
+  /// The hidden saved registry copy behind each live account, keyed by the
+  /// live account's id — identities that are saved while also being live.
+  private(set) var capturedEquivalents: [String: ProviderAccount] = [:]
   /// The saved account a reconciled live selection stands in for; kept so the
   /// persisted selection stays on the saved account and a later slot reuse
   /// falls back to it instead of silently following the slot.
@@ -91,6 +92,12 @@ final class UsageStore {
     isRefreshing = true
     defer { isRefreshing = false }
 
+    // A live stand-in can silently start pointing at a different login when
+    // its CLI slot is reused; rediscover first so the timer path reconciles
+    // the selection just like a manual reload.
+    if !reconciledSelectionOrigins.isEmpty {
+      await reloadAccounts()
+    }
     repeat {
       refreshRequested = false
       await performRefresh()
@@ -134,7 +141,7 @@ final class UsageStore {
   func reloadAccounts() async {
     var next: [UsageProvider: [ProviderAccount]] = [:]
     var refreshedSelections: [(UsageProvider, SelectionUpdate)] = []
-    var alreadyCaptured: Set<String> = []
+    var alreadyCaptured: [String: ProviderAccount] = [:]
     var syncCandidates: [ProviderAccount] = []
     for descriptor in providers {
       let previousAccounts = accounts[descriptor.id] ?? []
@@ -152,26 +159,17 @@ final class UsageStore {
         previousAccounts: previousAccounts,
         currentAccounts: providerAccounts
       )
-      let flagged = await accountDiscovery.accountsWithCapturedCopies(among: providerAccounts)
-      alreadyCaptured.formUnion(flagged)
-      syncCandidates += providerAccounts.filter { flagged.contains($0.id) }
+      let flagged = await accountDiscovery.capturedCopies(among: providerAccounts)
+      alreadyCaptured.merge(flagged) { current, _ in current }
+      syncCandidates += providerAccounts.filter { flagged.keys.contains($0.id) }
       next[descriptor.id] = providerAccounts
     }
     accounts = next
-    capturedEquivalentIDs = alreadyCaptured
+    capturedEquivalents = alreadyCaptured
     for (provider, update) in refreshedSelections {
       selectAccount(update.account, for: provider, standingInFor: update.origin)
     }
     await syncCapturedCopies(of: syncCandidates)
-  }
-
-  func selectAccount(id: String?, for provider: UsageProvider) {
-    let account = id.flatMap { id in accounts[provider]?.first { $0.id == id } }
-    selectAccount(account, for: provider)
-  }
-
-  func selectAccount(_ account: ProviderAccount?, for provider: UsageProvider) {
-    selectAccount(account, for: provider, standingInFor: nil)
   }
 
   /// `origin` is the saved account a reconciled live selection stands in for

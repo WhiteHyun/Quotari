@@ -11,9 +11,10 @@ public protocol ProviderAccountDiscovering: Sendable {
     among accounts: [ProviderAccount]
   ) async -> ProviderAccount?
 
-  /// The ids of the given live accounts whose identity already has a captured
-  /// (registry) copy — i.e. logins that are saved, with the saved row hidden.
-  func accountsWithCapturedCopies(among accounts: [ProviderAccount]) async -> Set<String>
+  /// The saved (registry) accounts standing behind the given live logins,
+  /// keyed by live-account id — i.e. identities that are saved, with the
+  /// saved row hidden while it is the live credential.
+  func capturedCopies(among accounts: [ProviderAccount]) async -> [String: ProviderAccount]
 }
 
 public extension ProviderAccountDiscovering {
@@ -24,8 +25,8 @@ public extension ProviderAccountDiscovering {
     nil
   }
 
-  func accountsWithCapturedCopies(among accounts: [ProviderAccount]) async -> Set<String> {
-    []
+  func capturedCopies(among accounts: [ProviderAccount]) async -> [String: ProviderAccount] {
+    [:]
   }
 }
 
@@ -88,22 +89,27 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
     }
   }
 
-  public func accountsWithCapturedCopies(among accounts: [ProviderAccount]) async -> Set<String> {
+  public func capturedCopies(among accounts: [ProviderAccount]) async -> [String: ProviderAccount] {
     let captured = capturedAccounts.load()
-    guard !captured.isEmpty else { return [] }
-    let capturedKeys: [UsageProvider: Set<String>] = captured.reduce(into: [:]) { keys, item in
-      if let key = ProviderCredentialIdentity.key(provider: item.provider, payload: item.payload) {
-        keys[item.provider, default: []].insert(key)
+    guard !captured.isEmpty else { return [:] }
+    let byIdentity: [UsageProvider: [String: CapturedAccount]] = captured
+      .reduce(into: [:]) { keys, item in
+        if let key = ProviderCredentialIdentity.key(provider: item.provider, payload: item.payload) {
+          keys[item.provider, default: [:]][key] = item
+        }
       }
-    }
-    var ids: Set<String> = []
+    var copies: [String: ProviderAccount] = [:]
     for account in accounts where !account.credentialSource.isCaptured {
-      if let key = identity(of: account.credentialSource, provider: account.provider),
-         capturedKeys[account.provider]?.contains(key) == true {
-        ids.insert(account.id)
-      }
+      guard let key = identity(of: account.credentialSource, provider: account.provider),
+            let item = byIdentity[account.provider]?[key] else { continue }
+      copies[account.id] = ProviderAccount(
+        provider: item.provider,
+        displayName: item.displayName,
+        detail: item.detail ?? "Saved in Quotari",
+        credentialSource: .quotariRegistry(id: item.id)
+      )
     }
-    return ids
+    return copies
   }
 
   private func identity(of source: ProviderCredentialSource, provider: UsageProvider) -> String? {

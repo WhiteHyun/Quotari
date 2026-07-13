@@ -2,20 +2,20 @@ import Foundation
 @testable import QuotariCore
 import Testing
 
+private let codexPayload = #"{"tokens":{"access_token":"tok","account_id":"acct-1","refresh_token":"ref"}}"#
+private let captureNow = Date(timeIntervalSince1970: 1000)
+
+private func codexAuthFile(_ contents: String) throws -> URL {
+  let url = FileManager.default.temporaryDirectory
+    .appendingPathComponent("codex-auth-\(UUID().uuidString).json")
+  try Data(contents.utf8).write(to: url)
+  try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+  return url
+}
+
 struct AccountCaptureServiceTests {
-  private static let codexPayload = #"{"tokens":{"access_token":"tok","account_id":"acct-1","refresh_token":"ref"}}"#
-  private static let now = Date(timeIntervalSince1970: 1000)
-
-  private func codexAuthFile(_ contents: String) throws -> URL {
-    let url = FileManager.default.temporaryDirectory
-      .appendingPathComponent("codex-auth-\(UUID().uuidString).json")
-    try Data(contents.utf8).write(to: url)
-    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-    return url
-  }
-
   @Test func capturesCodexFilePayloadIntoTheRegistry() throws {
-    let url = try codexAuthFile(Self.codexPayload)
+    let url = try codexAuthFile(codexPayload)
     defer { try? FileManager.default.removeItem(at: url) }
     let store = makeStore(InMemoryKeychain())
     let service = AccountCaptureService(capturedAccounts: store)
@@ -24,7 +24,7 @@ struct AccountCaptureServiceTests {
       credentialSource: .codexAuthFile(path: url.path)
     )
 
-    let captured = try service.capture(account, now: Self.now)
+    let captured = try service.capture(account, now: captureNow)
 
     #expect(captured.provider == .codex)
     #expect(captured.id == "codex:acct-1") // keyed by account_id, so recapture updates
@@ -39,13 +39,13 @@ struct AccountCaptureServiceTests {
     let store = makeStore(InMemoryKeychain())
     let service = AccountCaptureService(capturedAccounts: store)
 
-    let firstURL = try codexAuthFile(Self.codexPayload)
+    let firstURL = try codexAuthFile(codexPayload)
     defer { try? FileManager.default.removeItem(at: firstURL) }
     let account = ProviderAccount(
       provider: .codex, displayName: "Codex", detail: "Default",
       credentialSource: .codexAuthFile(path: firstURL.path)
     )
-    _ = try service.capture(account, now: Self.now)
+    _ = try service.capture(account, now: captureNow)
 
     // Same account_id, rotated access token (a re-login).
     let secondURL =
@@ -55,7 +55,7 @@ struct AccountCaptureServiceTests {
       provider: .codex, displayName: "Codex", detail: "Default",
       credentialSource: .codexAuthFile(path: secondURL.path)
     )
-    let updated = try service.capture(reloggedAccount, now: Self.now.addingTimeInterval(60))
+    let updated = try service.capture(reloggedAccount, now: captureNow.addingTimeInterval(60))
 
     #expect(store.load().count == 1)
     #expect(try CodexCredentialsStore.load(
@@ -64,7 +64,7 @@ struct AccountCaptureServiceTests {
   }
 
   @Test func capturingAWorldReadableCodexFileIsRejected() throws {
-    let url = try codexAuthFile(Self.codexPayload)
+    let url = try codexAuthFile(codexPayload)
     defer { try? FileManager.default.removeItem(at: url) }
     // Loosen permissions so the Codex loader's insecure-permissions guard trips.
     try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
@@ -75,7 +75,7 @@ struct AccountCaptureServiceTests {
     )
 
     #expect(throws: AccountCaptureError.self) {
-      _ = try service.capture(account, now: Self.now)
+      _ = try service.capture(account, now: captureNow)
     }
   }
 
@@ -87,7 +87,7 @@ struct AccountCaptureServiceTests {
     )
 
     #expect(throws: AccountCaptureError.self) {
-      _ = try service.capture(account, now: Self.now)
+      _ = try service.capture(account, now: captureNow)
     }
   }
 
@@ -104,7 +104,7 @@ struct AccountCaptureServiceTests {
       credentialSource: .claudeKeychain(service: "Claude Code-credentials")
     )
 
-    let captured = try service.capture(account, now: Self.now)
+    let captured = try service.capture(account, now: captureNow)
 
     #expect(captured.id.hasPrefix("claude:fp:"))
     let credentials = try ClaudeCredentialsStore.load(
@@ -126,8 +126,8 @@ struct AccountCaptureServiceTests {
       credentialSource: .claudeKeychain(service: "Claude Code-credentials")
     )
 
-    _ = try service.capture(account, now: Self.now)
-    _ = try service.capture(account, now: Self.now.addingTimeInterval(60))
+    _ = try service.capture(account, now: captureNow)
+    _ = try service.capture(account, now: captureNow.addingTimeInterval(60))
 
     // Same refresh token ⇒ same identity ⇒ one entry, not two.
     #expect(store.load().count == 1)
@@ -151,7 +151,7 @@ struct AccountCaptureServiceTests {
       credentialSource: .claudeKeychain(service: "Claude Code-credentials")
     )
 
-    let captured = try service.capture(account, now: Self.now)
+    let captured = try service.capture(account, now: captureNow)
     let storedText = String(data: captured.payload, encoding: .utf8) ?? ""
 
     #expect(!storedText.contains("mcpOAuth"))
@@ -219,11 +219,11 @@ struct AccountCaptureServiceTests {
     let capturedA = try service.capture(ProviderAccount(
       provider: .codex, displayName: "Codex", detail: "A",
       credentialSource: .codexAuthFile(path: urlA.path)
-    ), now: Self.now)
+    ), now: captureNow)
     let capturedB = try service.capture(ProviderAccount(
       provider: .codex, displayName: "Codex", detail: "B",
       credentialSource: .codexAuthFile(path: urlB.path)
-    ), now: Self.now.addingTimeInterval(1))
+    ), now: captureNow.addingTimeInterval(1))
 
     // Empty/whitespace account_id must NOT collapse two different logins onto
     // one "codex:" id — each gets a distinct UUID-based entry.
@@ -231,16 +231,50 @@ struct AccountCaptureServiceTests {
     #expect(store.load().count == 2)
   }
 
+  @Test func capturingAPayloadWithoutARefreshTokenIsRejected() throws {
+    // A snapshot that can't renew itself would die at its first expiry —
+    // the same reason env tokens aren't capturable.
+    let url = try codexAuthFile(#"{"tokens":{"access_token":"tok","account_id":"acct-1"}}"#)
+    defer { try? FileManager.default.removeItem(at: url) }
+    let service = AccountCaptureService(capturedAccounts: makeStore(InMemoryKeychain()))
+    let account = ProviderAccount(
+      provider: .codex, displayName: "Codex", detail: "Default",
+      credentialSource: .codexAuthFile(path: url.path)
+    )
+
+    #expect(throws: AccountCaptureError.noRefreshToken) {
+      try service.capture(account, now: captureNow)
+    }
+  }
+
+  @Test func minimizerRequiresARefreshToken() {
+    #expect(ProviderCredentialMinimizer.minimize(
+      provider: .claude,
+      payload: Data(#"{"claudeAiOauth":{"accessToken":"a"}}"#.utf8)
+    ) == nil)
+    #expect(ProviderCredentialMinimizer.minimize(
+      provider: .codex,
+      payload: Data(#"{"tokens":{"access_token":"a","refresh_token":""}}"#.utf8)
+    ) == nil)
+  }
+}
+
+private func makeStore(_ keychain: InMemoryKeychain) -> CapturedAccountStore {
+  CapturedAccountStore(keychain: keychain.store, service: "Test-Capture-\(UUID().uuidString)")
+}
+
+/// Upkeep of saved copies while their identity is the live CLI login.
+struct AccountCaptureCopyMaintenanceTests {
   @Test func syncKeepsAHiddenSavedCopyTrackingTheLiveRotation() throws {
     let store = makeStore(InMemoryKeychain())
     let service = AccountCaptureService(capturedAccounts: store)
-    let firstURL = try codexAuthFile(Self.codexPayload)
+    let firstURL = try codexAuthFile(codexPayload)
     defer { try? FileManager.default.removeItem(at: firstURL) }
     let account = ProviderAccount(
       provider: .codex, displayName: "Codex", detail: "Default",
       credentialSource: .codexAuthFile(path: firstURL.path)
     )
-    _ = try service.capture(account, now: Self.now)
+    _ = try service.capture(account, now: captureNow)
 
     // The CLI rotates its tokens while the identity stays the same; the
     // hidden saved copy must follow, or it dies when the slot moves on.
@@ -262,16 +296,40 @@ struct AccountCaptureServiceTests {
     #expect(credentials.refreshToken == "ref-9")
   }
 
+  @Test func removeCapturedCopyWorksWithoutARefreshToken() throws {
+    let store = makeStore(InMemoryKeychain())
+    let service = AccountCaptureService(capturedAccounts: store)
+    let savedURL = try codexAuthFile(codexPayload)
+    defer { try? FileManager.default.removeItem(at: savedURL) }
+    _ = try service.capture(ProviderAccount(
+      provider: .codex, displayName: "Codex", detail: "Default",
+      credentialSource: .codexAuthFile(path: savedURL.path)
+    ), now: captureNow)
+
+    // The CLI slot's current payload lost its refresh token; identity alone
+    // must still be enough to delete the saved copy it hides.
+    let bareURL = try codexAuthFile(#"{"tokens":{"access_token":"tok-2","account_id":"acct-1"}}"#)
+    defer { try? FileManager.default.removeItem(at: bareURL) }
+
+    let removed = try service.removeCapturedCopy(of: ProviderAccount(
+      provider: .codex, displayName: "Codex", detail: "Default",
+      credentialSource: .codexAuthFile(path: bareURL.path)
+    ))
+
+    #expect(removed == "codex:acct-1")
+    #expect(store.load().isEmpty)
+  }
+
   @Test func removeCapturedCopyDeletesTheSavedCopyOfALiveIdentity() throws {
     let store = makeStore(InMemoryKeychain())
     let service = AccountCaptureService(capturedAccounts: store)
-    let url = try codexAuthFile(Self.codexPayload)
+    let url = try codexAuthFile(codexPayload)
     defer { try? FileManager.default.removeItem(at: url) }
     let account = ProviderAccount(
       provider: .codex, displayName: "Codex", detail: "Default",
       credentialSource: .codexAuthFile(path: url.path)
     )
-    _ = try service.capture(account, now: Self.now)
+    _ = try service.capture(account, now: captureNow)
     #expect(store.load().count == 1)
 
     let removed = try service.removeCapturedCopy(of: account)
@@ -279,35 +337,4 @@ struct AccountCaptureServiceTests {
     #expect(removed == "codex:acct-1")
     #expect(store.load().isEmpty)
   }
-
-  @Test func capturingAPayloadWithoutARefreshTokenIsRejected() throws {
-    // A snapshot that can't renew itself would die at its first expiry —
-    // the same reason env tokens aren't capturable.
-    let url = try codexAuthFile(#"{"tokens":{"access_token":"tok","account_id":"acct-1"}}"#)
-    defer { try? FileManager.default.removeItem(at: url) }
-    let service = AccountCaptureService(capturedAccounts: makeStore(InMemoryKeychain()))
-    let account = ProviderAccount(
-      provider: .codex, displayName: "Codex", detail: "Default",
-      credentialSource: .codexAuthFile(path: url.path)
-    )
-
-    #expect(throws: AccountCaptureError.noRefreshToken) {
-      try service.capture(account, now: Self.now)
-    }
-  }
-
-  @Test func minimizerRequiresARefreshToken() {
-    #expect(ProviderCredentialMinimizer.minimize(
-      provider: .claude,
-      payload: Data(#"{"claudeAiOauth":{"accessToken":"a"}}"#.utf8)
-    ) == nil)
-    #expect(ProviderCredentialMinimizer.minimize(
-      provider: .codex,
-      payload: Data(#"{"tokens":{"access_token":"a","refresh_token":""}}"#.utf8)
-    ) == nil)
-  }
-}
-
-private func makeStore(_ keychain: InMemoryKeychain) -> CapturedAccountStore {
-  CapturedAccountStore(keychain: keychain.store, service: "Test-Capture-\(UUID().uuidString)")
 }

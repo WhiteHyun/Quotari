@@ -79,6 +79,19 @@ extension UsageStore {
     return logical == selected ? nil : SelectionUpdate(account: logical, origin: nil)
   }
 
+  func selectAccount(id: String?, for provider: UsageProvider) {
+    let account = id.flatMap { id in accounts[provider]?.first { $0.id == id } }
+    selectAccount(account, for: provider)
+  }
+
+  func selectAccount(_ account: ProviderAccount?, for provider: UsageProvider) {
+    // Picking a live row that stands in for a hidden saved copy means picking
+    // that saved account: anchor to it so a later slot reuse falls back to it
+    // instead of following the slot.
+    let origin = account.flatMap { capturedEquivalents[$0.id] }
+    selectAccount(account, for: provider, standingInFor: origin)
+  }
+
   /// The selections as they should survive a relaunch: a live stand-in is
   /// stored as the saved account it stands in for.
   func persistableSelections() -> [UsageProvider: ProviderAccount] {
@@ -93,7 +106,7 @@ extension UsageStore {
   /// whose identity is already saved (their registry row is just hidden), and
   /// static env tokens (no refresh token to keep them alive) are excluded.
   func isCapturable(_ account: ProviderAccount) -> Bool {
-    guard !capturedEquivalentIDs.contains(account.id) else { return false }
+    guard capturedEquivalents[account.id] == nil else { return false }
     switch account.credentialSource {
     case .quotariRegistry, .claudeEnvironment: return false
     case .codexAuthFile, .claudeKeychain, .claudeCredentialsFile: return true

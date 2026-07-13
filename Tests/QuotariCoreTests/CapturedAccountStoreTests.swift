@@ -203,6 +203,20 @@ struct CapturedAccountStoreTests {
     #expect(store.pendingGrantData(id: "a") == nil)
   }
 
+  @Test func pendingGrantSurvivesATransientAccountReadFailure() throws {
+    let keychain = InMemoryKeychain()
+    let store = CapturedAccountStore(keychain: keychain.store, service: "PendTest")
+    try store.save(Self.account(id: "a", capturedAt: Date(timeIntervalSince1970: 100)))
+
+    // Only a confirmed absence may skip the write — a read hiccup must not
+    // drop the only fresh grant.
+    keychain.failReads(of: "PendTest.a")
+    try store.savePendingGrant(Data("pending".utf8), id: "a")
+    keychain.stopFailing("PendTest.a")
+
+    #expect(store.pendingGrantData(id: "a") == Data("pending".utf8))
+  }
+
   @Test func saveFaultAfterIndexLeavesNoOrphanedSecret() throws {
     let keychain = InMemoryKeychain()
     let store = CapturedAccountStore(keychain: keychain.store, service: "OrderTest")

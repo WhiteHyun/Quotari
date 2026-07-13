@@ -5,6 +5,33 @@ import Testing
 
 /// Logical selection across saved copies and live logins: reconciliation,
 /// slot-reuse fallback, capture anchoring, and hidden-copy upkeep.
+private func codexDescriptor() -> ProviderDescriptor {
+  ProviderDescriptor(
+    id: .codex,
+    metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
+    pipeline: ProviderFetchPipeline { _ in [RecordingAccountStrategy(recorder: AccountRecorder())] }
+  )
+}
+
+private func savedCodexAccount(displayName: String = "Saved") -> ProviderAccount {
+  ProviderAccount(
+    provider: .codex,
+    displayName: displayName,
+    detail: "Saved in Quotari",
+    credentialSource: .quotariRegistry(id: "codex:acct-1")
+  )
+}
+
+private func liveCodexAccount(identity: String, displayName: String = "Live") -> ProviderAccount {
+  ProviderAccount(
+    provider: .codex,
+    displayName: displayName,
+    detail: "Default",
+    credentialSource: .codexAuthFile(path: "/tmp/auth.json"),
+    credentialIdentity: identity
+  )
+}
+
 @MainActor
 struct UsageStoreSelectionReconcileTests {
   @Test func reloadAccountsReconcilesSelectedSavedAccountToItsLiveCopy() async throws {
@@ -15,25 +42,10 @@ struct UsageStoreSelectionReconcileTests {
     let selectionStore = ProviderAccountSelectionStore(
       url: directory.url.appendingPathComponent("ProviderAccounts.json")
     )
-    let savedAccount = ProviderAccount(
-      provider: .codex,
-      displayName: "Saved",
-      detail: "Saved in Quotari",
-      credentialSource: .quotariRegistry(id: "codex:acct-1")
-    )
-    let liveAccount = ProviderAccount(
-      provider: .codex,
-      displayName: "Live",
-      detail: "Default",
-      credentialSource: .codexAuthFile(path: "/tmp/auth.json"),
-      credentialIdentity: "acct-1"
-    )
+    let savedAccount = savedCodexAccount()
+    let liveAccount = liveCodexAccount(identity: "acct-1")
     try selectionStore.save([.codex: savedAccount])
-    let descriptor = ProviderDescriptor(
-      id: .codex,
-      metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
-      pipeline: ProviderFetchPipeline { _ in [RecordingAccountStrategy(recorder: AccountRecorder())] }
-    )
+    let descriptor = codexDescriptor()
     let store = UsageStore.isolatedForTesting(
       providers: [descriptor],
       costEstimator: EmptyCostEstimator(),
@@ -59,25 +71,10 @@ struct UsageStoreSelectionReconcileTests {
     let selectionStore = ProviderAccountSelectionStore(
       url: directory.url.appendingPathComponent("ProviderAccounts.json")
     )
-    let savedAccount = ProviderAccount(
-      provider: .codex,
-      displayName: "Saved",
-      detail: "Saved in Quotari",
-      credentialSource: .quotariRegistry(id: "codex:acct-1")
-    )
-    let liveSame = ProviderAccount(
-      provider: .codex,
-      displayName: "Live",
-      detail: "Default",
-      credentialSource: .codexAuthFile(path: "/tmp/auth.json"),
-      credentialIdentity: "acct-1"
-    )
+    let savedAccount = savedCodexAccount()
+    let liveSame = liveCodexAccount(identity: "acct-1")
     try selectionStore.save([.codex: savedAccount])
-    let descriptor = ProviderDescriptor(
-      id: .codex,
-      metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
-      pipeline: ProviderFetchPipeline { _ in [RecordingAccountStrategy(recorder: AccountRecorder())] }
-    )
+    let descriptor = codexDescriptor()
     let discovery = MutableAccountDiscovery(StaticAccountDiscovery(
       accounts: [.codex: [liveSame]],
       liveEquivalents: [savedAccount.id: liveSame]
@@ -95,13 +92,7 @@ struct UsageStoreSelectionReconcileTests {
 
     // The CLI slot is reused by a different login: the saved row is visible
     // again and the selection must return to it, not follow the slot.
-    let liveOther = ProviderAccount(
-      provider: .codex,
-      displayName: "Other",
-      detail: "Default",
-      credentialSource: .codexAuthFile(path: "/tmp/auth.json"),
-      credentialIdentity: "acct-2"
-    )
+    let liveOther = liveCodexAccount(identity: "acct-2", displayName: "Other")
     discovery.update(StaticAccountDiscovery(accounts: [.codex: [liveOther, savedAccount]]))
     await store.reloadAccounts()
 
@@ -112,24 +103,19 @@ struct UsageStoreSelectionReconcileTests {
   @Test func liveAccountWithASavedCopyIsNotCapturable() async {
     // Once the current login is saved, its registry row is hidden — the live
     // row must stop offering Save instead of re-capturing forever.
-    let liveAccount = ProviderAccount(
-      provider: .codex,
-      displayName: "Live",
-      detail: "Default",
-      credentialSource: .codexAuthFile(path: "/tmp/auth.json"),
-      credentialIdentity: "acct-1"
-    )
-    let descriptor = ProviderDescriptor(
-      id: .codex,
-      metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
-      pipeline: ProviderFetchPipeline { _ in [RecordingAccountStrategy(recorder: AccountRecorder())] }
-    )
+    let liveAccount = liveCodexAccount(identity: "acct-1")
+    let descriptor = codexDescriptor()
     let store = UsageStore.isolatedForTesting(
       providers: [descriptor],
       costEstimator: EmptyCostEstimator(),
       accountDiscovery: StaticAccountDiscovery(
         accounts: [.codex: [liveAccount]],
-        capturedCopyIDs: [liveAccount.id]
+        capturedCopies: [liveAccount.id: ProviderAccount(
+          provider: .codex,
+          displayName: "Codex",
+          detail: "Saved in Quotari",
+          credentialSource: .quotariRegistry(id: "codex:acct-1")
+        )]
       ),
       startsAutomatically: false
     )
@@ -157,11 +143,7 @@ struct UsageStoreSelectionReconcileTests {
     let selectionStore = ProviderAccountSelectionStore(
       url: directory.url.appendingPathComponent("ProviderAccounts.json")
     )
-    let descriptor = ProviderDescriptor(
-      id: .codex,
-      metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
-      pipeline: ProviderFetchPipeline { _ in [RecordingAccountStrategy(recorder: AccountRecorder())] }
-    )
+    let descriptor = codexDescriptor()
     let store = UsageStore.isolatedForTesting(
       providers: [descriptor],
       costEstimator: EmptyCostEstimator(),
@@ -205,17 +187,18 @@ struct UsageStoreSelectionReconcileTests {
       origin: .codexAuthFile(path: authURL.path),
       payload: Data(#"{"tokens":{"access_token":"tok-1","account_id":"acct-1","refresh_token":"ref-1"}}"#.utf8)
     ))
-    let descriptor = ProviderDescriptor(
-      id: .codex,
-      metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
-      pipeline: ProviderFetchPipeline { _ in [RecordingAccountStrategy(recorder: AccountRecorder())] }
-    )
+    let descriptor = codexDescriptor()
     let store = UsageStore.isolatedForTesting(
       providers: [descriptor],
       costEstimator: EmptyCostEstimator(),
       accountDiscovery: StaticAccountDiscovery(
         accounts: [.codex: [live]],
-        capturedCopyIDs: [live.id]
+        capturedCopies: [live.id: ProviderAccount(
+          provider: .codex,
+          displayName: "Codex",
+          detail: "Saved in Quotari",
+          credentialSource: .quotariRegistry(id: "codex:acct-1")
+        )]
       ),
       accountCapture: .inMemoryForTesting(capturedAccounts: registry),
       startsAutomatically: false
@@ -234,5 +217,70 @@ struct UsageStoreSelectionReconcileTests {
     )
     #expect(credentials.accessToken == "tok-2")
     #expect(credentials.refreshToken == "ref-2")
+  }
+
+  @Test func selectingTheLiveStandInAnchorsToTheSavedCopy() async throws {
+    // The saved row is hidden while its identity is live, so picking the
+    // visible live row means picking the saved account.
+    let directory = try TemporaryDirectory()
+    let selectionStore = ProviderAccountSelectionStore(
+      url: directory.url.appendingPathComponent("ProviderAccounts.json")
+    )
+    let live = liveCodexAccount(identity: "acct-1")
+    let savedCopy = ProviderAccount(
+      provider: .codex,
+      displayName: "Codex",
+      detail: "Saved in Quotari",
+      credentialSource: .quotariRegistry(id: "codex:acct-1")
+    )
+    let descriptor = codexDescriptor()
+    let store = UsageStore.isolatedForTesting(
+      providers: [descriptor],
+      costEstimator: EmptyCostEstimator(),
+      accountDiscovery: StaticAccountDiscovery(
+        accounts: [.codex: [live]],
+        capturedCopies: [live.id: savedCopy]
+      ),
+      accountSelectionStore: selectionStore,
+      startsAutomatically: false
+    )
+    await store.reloadAccounts()
+
+    store.selectAccount(live, for: .codex)
+
+    #expect(store.selectedAccounts[.codex] == live)
+    #expect(selectionStore.load()[.codex] == savedCopy)
+  }
+
+  @Test func periodicRefreshReconcilesAStandInSelection() async throws {
+    // A slot reused between account reloads must not keep feeding the timer
+    // path: refresh() rediscovers first whenever a stand-in is selected.
+    let directory = try TemporaryDirectory()
+    let selectionStore = ProviderAccountSelectionStore(
+      url: directory.url.appendingPathComponent("ProviderAccounts.json")
+    )
+    let savedAccount = savedCodexAccount()
+    let liveSame = liveCodexAccount(identity: "acct-1")
+    try selectionStore.save([.codex: savedAccount])
+    let descriptor = codexDescriptor()
+    let discovery = MutableAccountDiscovery(StaticAccountDiscovery(
+      accounts: [.codex: [liveSame]],
+      liveEquivalents: [savedAccount.id: liveSame]
+    ))
+    let store = UsageStore.isolatedForTesting(
+      providers: [descriptor],
+      costEstimator: EmptyCostEstimator(),
+      accountDiscovery: discovery,
+      accountSelectionStore: selectionStore,
+      startsAutomatically: false
+    )
+    await store.reloadAccounts()
+    #expect(store.selectedAccounts[.codex] == liveSame)
+
+    let liveOther = liveCodexAccount(identity: "acct-2", displayName: "Other")
+    discovery.update(StaticAccountDiscovery(accounts: [.codex: [liveOther, savedAccount]]))
+    await store.refresh()
+
+    #expect(store.selectedAccounts[.codex] == savedAccount)
   }
 }

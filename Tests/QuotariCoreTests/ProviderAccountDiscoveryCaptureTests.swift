@@ -156,9 +156,10 @@ struct ProviderAccountDiscoveryCaptureTests {
     )
     let accounts = await discovery.accounts(for: .codex)
 
-    let saved = await discovery.accountsWithCapturedCopies(among: accounts)
+    let saved = await discovery.capturedCopies(among: accounts)
 
-    #expect(saved == Set(accounts.map(\.id)))
+    #expect(Set(saved.keys) == Set(accounts.map(\.id)))
+    #expect(saved.values.first?.credentialSource == .quotariRegistry(id: "codex:acct-1"))
 
     // A different captured identity flags nothing.
     let otherStore = CapturedAccountStore(keychain: InMemoryKeychain().store, service: "Test-Disc-\(UUID().uuidString)")
@@ -177,6 +178,6 @@ struct ProviderAccountDiscoveryCaptureTests {
       keychainData: { nil },
       capturedAccounts: otherStore
     )
-    #expect(await otherDiscovery.accountsWithCapturedCopies(among: accounts) == [])
+    #expect(await otherDiscovery.capturedCopies(among: accounts) == [:])
   }
 }

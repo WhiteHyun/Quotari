@@ -129,7 +129,11 @@ public struct CapturedAccountStore: Sendable {
   /// a pending blob for an account the user just removed.
   public func savePendingGrant(_ data: Data, id: String) throws {
     try Self.mutationLock.withLock {
-      guard account(id: id) != nil else { return }
+      do {
+        // Only a confirmed absence (a removed account) skips the write; a
+        // transient read failure must not drop the only fresh grant.
+        guard try keychain.read(service: itemService(id)) != nil else { return }
+      } catch {}
       try keychain.write(data, service: pendingService(id))
     }
   }
