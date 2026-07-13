@@ -46,6 +46,24 @@ extension UsageStore {
     }
   }
 
+  func enqueueClaudeQuotaNotificationScopeRestore() {
+    let provider = UsageProvider.claude
+    let revision = accountRevisions[provider] ?? 0
+    let previous = quotaNotificationTask
+    quotaNotificationTask = Task { [weak self] in
+      await previous?.value
+      guard let self,
+            isProviderEnabled(provider),
+            (accountRevisions[provider] ?? 0) == revision
+      else { return }
+      synchronizeQuotaNotificationScope(
+        account: selectedAccounts[provider],
+        origin: reconciledSelectionOrigins[provider],
+        provider: provider
+      )
+    }
+  }
+
   func waitForPendingQuotaNotifications() async {
     await quotaNotificationTask?.value
   }
