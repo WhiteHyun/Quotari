@@ -262,6 +262,24 @@ struct AccountCaptureServiceTests {
     #expect(credentials.refreshToken == "ref-9")
   }
 
+  @Test func removeCapturedCopyDeletesTheSavedCopyOfALiveIdentity() throws {
+    let store = makeStore(InMemoryKeychain())
+    let service = AccountCaptureService(capturedAccounts: store)
+    let url = try codexAuthFile(Self.codexPayload)
+    defer { try? FileManager.default.removeItem(at: url) }
+    let account = ProviderAccount(
+      provider: .codex, displayName: "Codex", detail: "Default",
+      credentialSource: .codexAuthFile(path: url.path)
+    )
+    _ = try service.capture(account, now: Self.now)
+    #expect(store.load().count == 1)
+
+    let removed = try service.removeCapturedCopy(of: account)
+
+    #expect(removed == "codex:acct-1")
+    #expect(store.load().isEmpty)
+  }
+
   @Test func capturingAPayloadWithoutARefreshTokenIsRejected() throws {
     // A snapshot that can't renew itself would die at its first expiry —
     // the same reason env tokens aren't capturable.

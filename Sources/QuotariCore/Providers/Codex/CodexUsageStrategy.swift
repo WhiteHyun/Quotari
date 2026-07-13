@@ -294,6 +294,9 @@ private extension CodexUsageStrategy {
     } catch {
       Self.logger.error("Persisting refreshed Codex tokens failed: \(error.localizedDescription, privacy: .public)")
       await rememberPending(pending, registryID: registryID)
+      // The write failed, so the registry still holds the old (possibly
+      // denied) pair — the in-memory grant is the only fresh one.
+      return inMemory(credentials, pending.grant)
     }
     // Re-read for the fully derived fields (JWT expiry, id_token email); fall
     // back to patching in memory when the registry read fails.

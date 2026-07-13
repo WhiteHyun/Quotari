@@ -78,6 +78,20 @@ public struct AccountCaptureService: Sendable {
     try capturedAccounts.remove(id: id)
   }
 
+  /// Removes the saved copy of a live login's identity and returns its
+  /// registry id — the deletion path for a saved account whose registry row
+  /// is hidden while the same identity is the live CLI login.
+  @discardableResult
+  public func removeCapturedCopy(of account: ProviderAccount) throws -> String {
+    guard let raw = rawPayload(for: account.credentialSource),
+          let payload = ProviderCredentialMinimizer.minimize(provider: account.provider, payload: raw),
+          let identity = ProviderCredentialIdentity.key(provider: account.provider, payload: payload)
+    else { throw AccountCaptureError.payloadUnavailable }
+    let id = registryID(provider: account.provider, identity: identity)
+    try capturedAccounts.remove(id: id)
+    return id
+  }
+
   /// While a saved identity is also the live CLI login, its registry row is
   /// hidden and Save is suppressed — so the saved copy tracks the live
   /// credential's own token rotations by re-snapshotting the payload whenever

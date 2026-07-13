@@ -115,6 +115,10 @@ final class UsageStore {
       }
     }
     lastRefresh = Date()
+    // Hidden saved copies must track live-token rotations between account
+    // reloads too — a slot swapped right after a rotation would otherwise
+    // strand the copy on a consumed refresh token.
+    await syncCapturedCopies(of: capturedCopyCandidates)
   }
 
   private func refresh(provider: UsageProvider) async {

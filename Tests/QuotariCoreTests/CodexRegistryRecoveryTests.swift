@@ -91,4 +91,38 @@ struct CodexRegistryRecoveryTests {
     #expect(saved.accessToken == fresh)
     #expect(saved.refreshToken == "ref-2")
   }
+
+  @Test func aFailedWriteBackStillServesTheFreshGrantAfterA401() async throws {
+    // Opaque token (no exp), denied by the endpoint, exchange succeeds but
+    // the write-back fails: the retry must go out with the fresh grant, not
+    // re-read the registry's old denied token and give up.
+    let fresh = codexJWT(claims: ["exp": 100_000])
+    let store = try makeCodexRegistryStore(
+      payload: codexAuthPayload(accessToken: "denied-opaque", refreshToken: "ref-1")
+    )
+    let refresher = StubCodexRefresher(
+      result: .success(CodexTokenGrant(accessToken: fresh, refreshToken: "ref-2"))
+    )
+    let persister = FlakyPersister(inner: CodexCredentialsWriter(capturedAccounts: store), failures: 1)
+    let recorder = RefreshStubTransport.Recorder()
+    let strategy = CodexUsageStrategy(
+      transport: TokenRoutedTransport(deniedToken: "denied-opaque", json: codexUsageStubJSON, recorder: recorder),
+      refresher: refresher,
+      persister: persister,
+      capturedAccounts: store,
+      refreshCoordinator: CodexTokenRefreshCoordinator()
+    )
+
+    let result = try await strategy.fetch(ProviderFetchContext(
+      provider: .codex,
+      now: Date(timeIntervalSince1970: 2000),
+      account: codexRegistryAccount()
+    ))
+
+    #expect(result.usage.primary?.usedPercent == 73)
+    #expect(refresher.calls == ["ref-1"])
+    #expect(recorder.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer \(fresh)")
+    // The grant stays queued for the next fetch to heal the registry.
+    #expect(store.pendingGrantData(id: "codex:acct-1") != nil)
+  }
 }

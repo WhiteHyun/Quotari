@@ -12,8 +12,20 @@ extension UsageStore {
     let capture = accountCapture
     let now = Date()
     do {
-      try await Task.detached { try capture.capture(account, now: now) }.value
+      let captured = try await Task.detached { try capture.capture(account, now: now) }.value
       captureErrors[account.provider] = nil
+      // Saving the selected live login makes the selection logically the
+      // saved account, with the live login as its stand-in — so a later slot
+      // reuse falls back to the saved copy instead of following the slot.
+      if selectedAccounts[account.provider]?.id == account.id {
+        let origin = ProviderAccount(
+          provider: captured.provider,
+          displayName: captured.displayName,
+          detail: captured.detail ?? "Saved in Quotari",
+          credentialSource: .quotariRegistry(id: captured.id)
+        )
+        selectAccount(account, for: account.provider, standingInFor: origin)
+      }
       await reloadAccounts()
     } catch {
       captureErrors[account.provider] = error.localizedDescription
@@ -28,11 +40,37 @@ extension UsageStore {
       captureErrors[account.provider] = nil
       if selectedAccounts[account.provider]?.id == account.id {
         selectAccount(nil, for: account.provider)
+      } else if reconciledSelectionOrigins[account.provider]?.id == account.id {
+        // The removed copy was the selection's logical origin: the selection
+        // stays on the live login, now in its own right.
+        selectAccount(selectedAccounts[account.provider], for: account.provider, standingInFor: nil)
       }
       await reloadAccounts()
     } catch {
       captureErrors[account.provider] = error.localizedDescription
     }
+  }
+
+  /// Removes the hidden saved copy of a live login — its registry row is
+  /// suppressed while the identity is live, so the live row hosts the action.
+  func removeCapturedCopy(of account: ProviderAccount) async {
+    let capture = accountCapture
+    do {
+      let removedID = try await Task.detached { try capture.removeCapturedCopy(of: account) }.value
+      captureErrors[account.provider] = nil
+      if let origin = reconciledSelectionOrigins[account.provider],
+         case let .quotariRegistry(originID) = origin.credentialSource, originID == removedID {
+        selectAccount(selectedAccounts[account.provider], for: account.provider, standingInFor: nil)
+      }
+      await reloadAccounts()
+    } catch {
+      captureErrors[account.provider] = error.localizedDescription
+    }
+  }
+
+  /// The live accounts currently flagged as having a hidden saved copy.
+  var capturedCopyCandidates: [ProviderAccount] {
+    accounts.values.flatMap(\.self).filter { capturedEquivalentIDs.contains($0.id) }
   }
 
   /// Hidden saved copies track the live credential's own token rotations —
