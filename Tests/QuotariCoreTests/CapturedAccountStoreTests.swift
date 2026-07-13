@@ -179,6 +179,18 @@ struct CapturedAccountStoreTests {
     #expect(!store.load().contains { $0.id == "a" })
   }
 
+  @Test func removeClearsAnyPendingGrant() throws {
+    let store = makeStore(InMemoryKeychain())
+    try store.save(Self.account(id: "a", capturedAt: Date(timeIntervalSince1970: 100)))
+    try store.savePendingGrant(Data("pending".utf8), id: "a")
+    #expect(store.pendingGrantData(id: "a") == Data("pending".utf8))
+
+    try store.remove(id: "a")
+
+    // The pending item holds tokens; removing the account must not leave it.
+    #expect(store.pendingGrantData(id: "a") == nil)
+  }
+
   @Test func saveFaultAfterIndexLeavesNoOrphanedSecret() throws {
     let keychain = InMemoryKeychain()
     let store = CapturedAccountStore(keychain: keychain.store, service: "OrderTest")

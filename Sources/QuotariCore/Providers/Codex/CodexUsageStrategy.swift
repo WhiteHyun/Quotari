@@ -50,9 +50,33 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
 
   public func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
     var credentials = try credentials(for: context)
-    if case let .quotariRegistry(id) = context.account?.credentialSource {
-      credentials = await refreshIfExpired(credentials, registryID: id, now: context.now)
+    guard case let .quotariRegistry(id) = context.account?.credentialSource else {
+      return try await usageResult(with: credentials, context: context)
     }
+    credentials = await refreshIfExpired(credentials, registryID: id, now: context.now)
+    do {
+      return try await usageResult(with: credentials, context: context)
+    } catch ProviderHTTPError.unauthorized {
+      // A saved account can be denied before its local expiry says so (token
+      // revoked early, or an `exp` claim we can't read). The registry still
+      // holds a refresh token, so force one refresh and retry once.
+      let retried = await refreshIfExpired(
+        credentials,
+        registryID: id,
+        now: context.now,
+        deniedAccessToken: credentials.accessToken
+      )
+      guard retried.accessToken != credentials.accessToken else {
+        throw ProviderHTTPError.unauthorized
+      }
+      return try await usageResult(with: retried, context: context)
+    }
+  }
+
+  private func usageResult(
+    with credentials: CodexCredentials,
+    context: ProviderFetchContext
+  ) async throws -> ProviderFetchResult {
     var headers: [String: String] = [:]
     if let account = credentials.accountID {
       headers["chatgpt-account-id"] = account
@@ -87,7 +111,11 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
     }
     return try loadCredentials()
   }
+}
 
+// MARK: - Saved-account token refresh
+
+private extension CodexUsageStrategy {
   /// Refreshing only once the token is actually (about to be) expired keeps
   /// refresh traffic to the minimum that keeps a saved account usable. The
   /// whole refresh-persist-fallback transaction runs under the coordinator,
@@ -96,23 +124,26 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
   private func refreshIfExpired(
     _ credentials: CodexCredentials,
     registryID: String,
-    now: Date
+    now: Date,
+    deniedAccessToken: String? = nil
   ) async -> CodexCredentials {
-    guard credentials.isExpired(now: now),
+    guard deniedAccessToken != nil || credentials.isExpired(now: now),
           let refreshToken = credentials.refreshToken,
           let refresher
     else { return credentials }
     return await refreshCoordinator.resolve(key: "\(registryID)#\(refreshToken)") {
       // Double-check inside the transaction: a previous transaction may have
-      // persisted a fresh pair while we waited.
-      if let reloaded = reloadedFromRegistry(id: registryID, now: now) {
+      // persisted a fresh pair while we waited. A pair the endpoint just
+      // denied doesn't count, whatever its local expiry claims.
+      if let reloaded = reloadedFromRegistry(id: registryID, now: now),
+         reloaded.accessToken != deniedAccessToken {
         return reloaded
       }
       var base = credentials
       // A pair from an earlier exchange whose write-back failed: that exchange
       // already consumed the stored refresh token server-side, so retry the
       // write before submitting the burned token again.
-      if let pending = await refreshCoordinator.takeUnpersisted(registryID: registryID) {
+      if let pending = await takePending(registryID: registryID) {
         if let retried = await persisted(pending, credentials: base, registryID: registryID, now: now) {
           return retried
         }
@@ -202,7 +233,7 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
       // The reread failed outright (not just moved on): the grant may hold
       // the only refresh token that still works, so keep it queued for the
       // next transaction and fetch with it in the meantime.
-      await refreshCoordinator.rememberUnpersisted(pending, registryID: registryID)
+      await rememberPending(pending, registryID: registryID)
       return .resolved(inMemory(fallback, pending.grant))
     }
     if current.refreshToken == pending.consumedRefreshToken, pending.rotatedRefreshToken {
@@ -253,15 +284,38 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
         replacing: pending.previousAccessToken,
         toRegistryAccount: registryID
       )
+      // The registry holds the grant now; any durable copy is obsolete.
+      try? capturedAccounts.removePendingGrant(id: registryID)
     } catch CodexCredentialPersistError.staleSource {
       return nil
     } catch {
       Self.logger.error("Persisting refreshed Codex tokens failed: \(error.localizedDescription, privacy: .public)")
-      await refreshCoordinator.rememberUnpersisted(pending, registryID: registryID)
+      await rememberPending(pending, registryID: registryID)
     }
     // Re-read for the fully derived fields (JWT expiry, id_token email); fall
     // back to patching in memory when the registry read fails.
     return reloadedFromRegistry(id: registryID, now: now) ?? inMemory(credentials, pending.grant)
+  }
+
+  /// Memory first (cheap), then the durable copy a previous launch left.
+  private func takePending(registryID: String) async -> CodexPendingGrant? {
+    if let pending = await refreshCoordinator.takeUnpersisted(registryID: registryID) {
+      return pending
+    }
+    guard let data = capturedAccounts.pendingGrantData(id: registryID),
+          let pending = try? JSONDecoder().decode(CodexPendingGrant.self, from: data)
+    else { return nil }
+    try? capturedAccounts.removePendingGrant(id: registryID)
+    return pending
+  }
+
+  /// Queues in memory and, best-effort, durably — so quitting before the
+  /// next fetch doesn't lose the only rotated pair.
+  private func rememberPending(_ pending: CodexPendingGrant, registryID: String) async {
+    await refreshCoordinator.rememberUnpersisted(pending, registryID: registryID)
+    if let data = try? JSONEncoder().encode(pending) {
+      try? capturedAccounts.savePendingGrant(data, id: registryID)
+    }
   }
 
   /// The credentials patched with a grant that isn't (or isn't yet) stored —

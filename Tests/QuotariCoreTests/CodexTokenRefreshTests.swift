@@ -229,7 +229,9 @@ struct CodexRegistryRefreshStrategyTests {
       ))
     }
 
-    #expect(refresher.calls == ["ref-1"])
+    // Once before the request (expired) and once forced by the 401 — both
+    // fail, the stored pair survives untouched for the next attempt.
+    #expect(refresher.calls == ["ref-1", "ref-1"])
     let saved = try CodexCredentialsStore.load(
       source: .quotariRegistry(id: "codex:acct-1"),
       capturedAccounts: store

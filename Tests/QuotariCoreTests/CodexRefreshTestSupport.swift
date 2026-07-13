@@ -186,3 +186,29 @@ final class BlindingPersister: CodexCredentialPersisting, @unchecked Sendable {
     try inner.persist(grant, replacing: previousAccessToken, toRegistryAccount: id)
   }
 }
+
+/// Returns 401 for one specific bearer token and 200 (with `json`) for any
+/// other — the shape of a server that has revoked a token early.
+struct TokenRoutedTransport: ProviderHTTPTransport {
+  let deniedToken: String
+  let json: String
+  let recorder: RefreshStubTransport.Recorder?
+
+  init(deniedToken: String, json: String, recorder: RefreshStubTransport.Recorder? = nil) {
+    self.deniedToken = deniedToken
+    self.json = json
+    self.recorder = recorder
+  }
+
+  func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    recorder?.record(request)
+    let denied = request.value(forHTTPHeaderField: "Authorization") == "Bearer \(deniedToken)"
+    let response = HTTPURLResponse(
+      url: request.url!,
+      statusCode: denied ? 401 : 200,
+      httpVersion: nil,
+      headerFields: nil
+    )!
+    return (Data(json.utf8), response)
+  }
+}

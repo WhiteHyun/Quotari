@@ -121,11 +121,28 @@ public struct CapturedAccountStore: Sendable {
     }
   }
 
+  /// Durable copy of a grant whose account-item write failed, so quitting
+  /// before the retry doesn't lose the only rotated pair. Its own keychain
+  /// item (never a file — secrets stay in the keychain), best-effort and
+  /// outside the index; the account's removal cleans it up.
+  public func savePendingGrant(_ data: Data, id: String) throws {
+    try keychain.write(data, service: pendingService(id))
+  }
+
+  public func pendingGrantData(id: String) -> Data? {
+    keychain.readOptional(service: pendingService(id))
+  }
+
+  public func removePendingGrant(id: String) throws {
+    try keychain.delete(service: pendingService(id))
+  }
+
   /// Deletes the account item first, then drops its id from the index; a fault
   /// between the two leaves a dangling id, never an orphaned secret.
   public func remove(id: String) throws {
     try Self.mutationLock.withLock {
       try keychain.delete(service: itemService(id))
+      try? keychain.delete(service: pendingService(id))
       var ids = try indexIDs() ?? []
       ids.removeAll { $0 == id }
       if ids.isEmpty {
@@ -155,6 +172,10 @@ public struct CapturedAccountStore: Sendable {
 
   private func itemService(_ id: String) -> String {
     "\(itemPrefix).\(id)"
+  }
+
+  private func pendingService(_ id: String) -> String {
+    "\(itemPrefix).pending.\(id)"
   }
 
   private struct Index: Codable {

@@ -266,4 +266,83 @@ struct ClaudeRegistryRefreshTests {
     #expect(saved.accessToken == "new-tok")
     #expect(saved.refreshToken == "ref-2")
   }
+
+  @Test func aDeniedTokenIsRefreshedAndRetriedOnce() async throws {
+    // The stored expiry still looks valid but the endpoint denies the token
+    // (revoked early): the 401 must trigger one forced refresh and a retry.
+    let store = try makeClaudeRegistryStore(
+      payload: claudePayload(accessToken: "revoked-tok", refreshToken: "ref-1", expiresAt: 100_000)
+    )
+    let refresher = StubRefresher(result: .success(ClaudeTokenGrant(
+      accessToken: "new-tok",
+      refreshToken: "ref-2",
+      expiresAt: Date(timeIntervalSince1970: 100_000)
+    )))
+    let recorder = RefreshStubTransport.Recorder()
+    let strategy = ClaudeUsageStrategy(
+      transport: TokenRoutedTransport(deniedToken: "revoked-tok", json: usageJSON, recorder: recorder),
+      refresher: refresher,
+      capturedAccounts: store,
+      refreshCoordinator: ClaudeTokenRefreshCoordinator()
+    )
+
+    _ = try await strategy.fetch(ProviderFetchContext(
+      provider: .claude,
+      now: Date(timeIntervalSince1970: 2000),
+      account: claudeRegistryAccount()
+    ))
+
+    #expect(refresher.calls == ["ref-1"])
+    #expect(recorder.requests.count == 2)
+    let saved = try ClaudeCredentialsStore.load(
+      source: .quotariRegistry(id: "claude:fp-1"),
+      capturedAccounts: store
+    )
+    #expect(saved.accessToken == "new-tok")
+    #expect(saved.refreshToken == "ref-2")
+  }
+
+  @Test func aPendingGrantSurvivesARelaunch() async throws {
+    let store = try makeClaudeRegistryStore(
+      payload: claudePayload(accessToken: "old-tok", refreshToken: "ref-1", expiresAt: 1000)
+    )
+    let firstRefresher = StubRefresher(result: .success(ClaudeTokenGrant(
+      accessToken: "new-tok",
+      refreshToken: "ref-2",
+      expiresAt: Date(timeIntervalSince1970: 100_000)
+    )))
+    let firstLaunch = ClaudeUsageStrategy(
+      transport: RefreshStubTransport(json: usageJSON),
+      refresher: firstRefresher,
+      persister: FlakyClaudePersister(inner: ClaudeCredentialsWriter(capturedAccounts: store), failures: 1),
+      capturedAccounts: store,
+      refreshCoordinator: ClaudeTokenRefreshCoordinator()
+    )
+    let context = ProviderFetchContext(
+      provider: .claude,
+      now: Date(timeIntervalSince1970: 2000),
+      account: claudeRegistryAccount()
+    )
+    _ = try await firstLaunch.fetch(context)
+    #expect(store.pendingGrantData(id: "claude:fp-1") != nil)
+
+    // "Relaunch": fresh coordinator, a refresher that must never be called.
+    let secondRefresher = StubRefresher(result: .failure(ClaudeTokenRefreshError.malformedResponse))
+    let secondLaunch = ClaudeUsageStrategy(
+      transport: RefreshStubTransport(json: usageJSON),
+      refresher: secondRefresher,
+      capturedAccounts: store,
+      refreshCoordinator: ClaudeTokenRefreshCoordinator()
+    )
+    _ = try await secondLaunch.fetch(context)
+
+    #expect(secondRefresher.calls.isEmpty)
+    #expect(store.pendingGrantData(id: "claude:fp-1") == nil)
+    let saved = try ClaudeCredentialsStore.load(
+      source: .quotariRegistry(id: "claude:fp-1"),
+      capturedAccounts: store
+    )
+    #expect(saved.accessToken == "new-tok")
+    #expect(saved.refreshToken == "ref-2")
+  }
 }

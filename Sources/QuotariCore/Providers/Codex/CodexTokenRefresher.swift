@@ -1,7 +1,7 @@
 import Foundation
 
 /// A refreshed Codex token set as returned by the OAuth token endpoint.
-public struct CodexTokenGrant: Equatable, Sendable {
+public struct CodexTokenGrant: Codable, Equatable, Sendable {
   public var accessToken: String
   public var refreshToken: String?
   public var idToken: String?
@@ -77,7 +77,7 @@ public struct CodexTokenRefresher: CodexTokenRefreshing {
 /// registry that has moved on) and the refresh token the exchange consumed
 /// (so a stored pair still riding that token is recognized as superseded by
 /// this grant rather than exchanged again).
-public struct CodexPendingGrant: Equatable, Sendable {
+public struct CodexPendingGrant: Codable, Equatable, Sendable {
   public var grant: CodexTokenGrant
   public var previousAccessToken: String
   public var consumedRefreshToken: String

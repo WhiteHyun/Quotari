@@ -52,7 +52,31 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
   public func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
     var resolved = try credentials(for: context)
     resolved = await refreshIfExpired(resolved, now: context.now)
-    let credentials = resolved.credentials
+    guard case .quotariRegistry = resolved.source else {
+      return try await usageResult(with: resolved.credentials, context: context)
+    }
+    do {
+      return try await usageResult(with: resolved.credentials, context: context)
+    } catch ProviderHTTPError.unauthorized {
+      // A saved account can be denied before its stored expiry says so (token
+      // revoked early). The registry still holds a refresh token, so force
+      // one refresh and retry once.
+      let retried = await refreshIfExpired(
+        resolved,
+        now: context.now,
+        deniedAccessToken: resolved.credentials.accessToken
+      )
+      guard retried.credentials.accessToken != resolved.credentials.accessToken else {
+        throw ProviderHTTPError.unauthorized
+      }
+      return try await usageResult(with: retried.credentials, context: context)
+    }
+  }
+
+  private func usageResult(
+    with credentials: ClaudeCredentials,
+    context: ProviderFetchContext
+  ) async throws -> ProviderFetchResult {
     let data = try await transport.getJSON(
       url: usageURL,
       bearer: credentials.accessToken,
@@ -92,7 +116,11 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
     }
     return try resolveCredentials()
   }
+}
 
+// MARK: - Saved-account token refresh
+
+private extension ClaudeUsageStrategy {
   /// Refreshing only once the token is actually (about to be) expired keeps
   /// the window for racing Claude Code's own refresh as small as possible.
   /// The whole refresh-persist-fallback transaction runs under the
@@ -101,10 +129,11 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
   /// caller holding a newer pair never joins an older generation's run.
   private func refreshIfExpired(
     _ resolved: ResolvedClaudeCredentials,
-    now: Date
+    now: Date,
+    deniedAccessToken: String? = nil
   ) async -> ResolvedClaudeCredentials {
     let credentials = resolved.credentials
-    guard credentials.isExpired(now: now),
+    guard deniedAccessToken != nil || credentials.isExpired(now: now),
           let refreshToken = credentials.refreshToken,
           let refresher
     else { return resolved }
@@ -112,13 +141,16 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
     return await refreshCoordinator.resolve(key: key) {
       // Double-check inside the transaction: a previous transaction (or
       // Claude Code itself) may have persisted a fresh pair while we waited.
-      if let reloaded = reloadedFromSource(resolved, now: now) {
+      // A pair the endpoint just denied doesn't count, whatever its stored
+      // expiry claims.
+      if let reloaded = reloadedFromSource(resolved, now: now),
+         reloaded.credentials.accessToken != deniedAccessToken {
         return reloaded
       }
       var base = resolved
       // A rotated pair whose registry write-back failed: retry the write
       // before submitting the burned refresh token again.
-      if let pending = await refreshCoordinator.takeUnpersisted(sourceID: resolved.source.stableID) {
+      if let pending = await takePending(source: resolved.source) {
         if let retried = await persisted(pending, resolved: base, now: now) {
           return retried
         }
@@ -206,7 +238,7 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
       // The reread failed outright (not just moved on): the grant may hold
       // the only refresh token that still works, so keep it queued for the
       // next transaction and fetch with it in the meantime.
-      await refreshCoordinator.rememberUnpersisted(pending, sourceID: fallback.source.stableID)
+      await rememberPending(pending, source: fallback.source)
       return .resolved(inMemory(fallback, pending.grant))
     }
     let stored = ResolvedClaudeCredentials(credentials: current, source: fallback.source)
@@ -255,6 +287,10 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
         replacing: pending.previousAccessToken,
         to: resolved.source
       )
+      // The source holds the grant now; any durable copy is obsolete.
+      if case let .quotariRegistry(id) = resolved.source {
+        try? capturedAccounts.removePendingGrant(id: id)
+      }
     } catch ClaudeCredentialPersistError.staleSource {
       return nil
     } catch {
@@ -263,10 +299,32 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
       // for a registry source (no co-owner to heal it) queue the write.
       Self.logger.error("Persisting refreshed tokens failed: \(error.localizedDescription, privacy: .public)")
       if case .quotariRegistry = resolved.source {
-        await refreshCoordinator.rememberUnpersisted(pending, sourceID: resolved.source.stableID)
+        await rememberPending(pending, source: resolved.source)
       }
     }
     return inMemory(resolved, pending.grant)
+  }
+
+  /// Memory first (cheap), then the durable copy a previous launch left.
+  private func takePending(source: ProviderCredentialSource) async -> ClaudePendingGrant? {
+    if let pending = await refreshCoordinator.takeUnpersisted(sourceID: source.stableID) {
+      return pending
+    }
+    guard case let .quotariRegistry(id) = source,
+          let data = capturedAccounts.pendingGrantData(id: id),
+          let pending = try? JSONDecoder().decode(ClaudePendingGrant.self, from: data)
+    else { return nil }
+    try? capturedAccounts.removePendingGrant(id: id)
+    return pending
+  }
+
+  /// Queues in memory and, best-effort, durably — so quitting before the
+  /// next fetch doesn't lose the only rotated pair.
+  private func rememberPending(_ pending: ClaudePendingGrant, source: ProviderCredentialSource) async {
+    await refreshCoordinator.rememberUnpersisted(pending, sourceID: source.stableID)
+    if case let .quotariRegistry(id) = source, let data = try? JSONEncoder().encode(pending) {
+      try? capturedAccounts.savePendingGrant(data, id: id)
+    }
   }
 
   /// The credentials patched with a grant that isn't (or isn't yet) stored —

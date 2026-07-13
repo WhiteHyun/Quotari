@@ -1,7 +1,7 @@
 import Foundation
 
 /// A refreshed token pair as returned by the OAuth token endpoint.
-public struct ClaudeTokenGrant: Equatable, Sendable {
+public struct ClaudeTokenGrant: Codable, Equatable, Sendable {
   public var accessToken: String
   public var refreshToken: String?
   public var expiresAt: Date?
@@ -94,7 +94,7 @@ public struct ClaudeTokenRefresher: ClaudeTokenRefreshing {
 /// source that has moved on) and the refresh token the exchange consumed (so
 /// a stored pair still riding that token is recognized as superseded by this
 /// grant rather than exchanged again).
-public struct ClaudePendingGrant: Equatable, Sendable {
+public struct ClaudePendingGrant: Codable, Equatable, Sendable {
   public var grant: ClaudeTokenGrant
   public var previousAccessToken: String
   public var consumedRefreshToken: String
