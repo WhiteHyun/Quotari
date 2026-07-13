@@ -66,6 +66,10 @@ final class UsageStore {
   /// changes the fingerprint and triggers exactly one fresh attempt, while a
   /// persistent failure for one credential isn't retried on every reload.
   var profileFetchAttempts: [String: String] = [:]
+  /// Successful empty profile responses keyed by account id and credential
+  /// fingerprint. They distinguish a completed identity lookup from one that
+  /// is still in flight, so deferred alerts can be drained as unattributed.
+  var emptyClaudeProfileFingerprints: [String: String] = [:]
 
   private(set) var timerTask: Task<Void, Never>?
   private var refreshRequested = false
