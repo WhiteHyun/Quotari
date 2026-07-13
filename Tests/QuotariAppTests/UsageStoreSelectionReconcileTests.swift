@@ -3,9 +3,7 @@ import Foundation
 @testable import QuotariCore
 import Testing
 
-/// Logical selection across saved copies and live logins: reconciliation,
-/// slot-reuse fallback, capture anchoring, and hidden-copy upkeep.
-private func codexDescriptor() -> ProviderDescriptor {
+func codexDescriptor() -> ProviderDescriptor {
   ProviderDescriptor(
     id: .codex,
     metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
@@ -13,7 +11,7 @@ private func codexDescriptor() -> ProviderDescriptor {
   )
 }
 
-private func savedCodexAccount(displayName: String = "Saved") -> ProviderAccount {
+func savedCodexAccount(displayName: String = "Saved") -> ProviderAccount {
   ProviderAccount(
     provider: .codex,
     displayName: displayName,
@@ -22,12 +20,45 @@ private func savedCodexAccount(displayName: String = "Saved") -> ProviderAccount
   )
 }
 
-private func liveCodexAccount(identity: String, displayName: String = "Live") -> ProviderAccount {
+func liveCodexAccount(identity: String, displayName: String = "Live") -> ProviderAccount {
   ProviderAccount(
     provider: .codex,
     displayName: displayName,
     detail: "Default",
     credentialSource: .codexAuthFile(path: "/tmp/auth.json"),
+    credentialIdentity: identity
+  )
+}
+
+/// Saves a Codex snapshot into `registry` and returns the registry account
+/// row it would appear as in discovery.
+@discardableResult
+func saveCodexSnapshot(
+  _ registry: CapturedAccountStore,
+  id: String,
+  accountID: String? = "acct-saved"
+) throws -> ProviderAccount {
+  let payload = if let accountID {
+    #"{"tokens":{"access_token":"saved-tok","account_id":"\#(accountID)","refresh_token":"saved-ref"}}"#
+  } else {
+    #"{"tokens":{"access_token":"saved-tok","refresh_token":"saved-ref"}}"#
+  }
+  try registry.save(CapturedAccount(
+    id: id, provider: .codex, displayName: "Saved", detail: "Personal",
+    capturedAt: Date(timeIntervalSince1970: 0),
+    origin: .codexAuthFile(path: "/tmp/old.json"),
+    payload: Data(payload.utf8)
+  ))
+  return ProviderAccount(
+    provider: .codex, displayName: "Saved", detail: "Saved in Quotari",
+    credentialSource: .quotariRegistry(id: id)
+  )
+}
+
+func liveCodexAccount(atWrittenSlot home: URL, identity: String? = nil) -> ProviderAccount {
+  ProviderAccount(
+    provider: .codex, displayName: "Live", detail: "Default",
+    credentialSource: .codexAuthFile(path: home.appendingPathComponent(".codex/auth.json").standardizedFileURL.path),
     credentialIdentity: identity
   )
 }

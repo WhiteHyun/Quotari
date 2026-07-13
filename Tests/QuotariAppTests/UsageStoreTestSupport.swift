@@ -114,6 +114,29 @@ extension CapturedAccountStore {
   }
 }
 
+extension AccountSwitchService {
+  /// A switch service that can never reach the real machine: in-memory
+  /// registry, empty environment, throwaway home, and a keychain that reads
+  /// nothing and refuses writes.
+  static func isolatedForTesting(
+    capturedAccounts: CapturedAccountStore = .inMemoryForTesting(),
+    environment: [String: String] = [:],
+    home: URL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("quotari-switch-\(UUID().uuidString)"),
+    keychainRead: (@Sendable (String) -> Data?)? = nil,
+    keychainWrite: (@Sendable (Data, String) throws -> Void)? = nil
+  ) -> AccountSwitchService {
+    AccountSwitchService(
+      capturedAccounts: capturedAccounts,
+      capture: .inMemoryForTesting(capturedAccounts: capturedAccounts),
+      environment: environment,
+      home: home,
+      keychainRead: keychainRead ?? { _ in nil },
+      keychainWrite: keychainWrite ?? { _, _ in throw KeychainItemStore.KeychainError.commandFailed(status: 1) }
+    )
+  }
+}
+
 private final class InMemoryKeychainBox: @unchecked Sendable {
   private let lock = NSLock()
   private var items: [String: Data] = [:]
@@ -155,6 +178,7 @@ extension UsageStore {
     accountDiscovery: any ProviderAccountDiscovering = StaticAccountDiscovery(),
     accountSelectionStore: ProviderAccountSelectionStore = .temporaryForTesting(),
     accountCapture: AccountCaptureService = .inMemoryForTesting(),
+    accountSwitch: AccountSwitchService? = nil,
     profileFetcher: any ClaudeProfileFetching = NullProfileFetcher(),
     profileStore: ClaudeProfileStore = .temporaryForTesting(),
     claudeCredentialLoader: @escaping @Sendable (ProviderCredentialSource) -> ClaudeCredentials? = { _ in nil },
@@ -167,6 +191,7 @@ extension UsageStore {
       accountDiscovery: accountDiscovery,
       accountSelectionStore: accountSelectionStore,
       accountCapture: accountCapture,
+      accountSwitch: accountSwitch ?? .isolatedForTesting(),
       profileFetcher: profileFetcher,
       profileStore: profileStore,
       claudeCredentialLoader: claudeCredentialLoader,

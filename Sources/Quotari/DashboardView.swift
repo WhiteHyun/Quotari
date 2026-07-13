@@ -62,7 +62,7 @@ struct DashboardContent: View {
         shortcut: "⌘R",
         busy: store.isRefreshing
       ) {
-        Task { await store.refresh() }
+        store.beginRefresh()
       }
       .keyboardShortcut("r")
 

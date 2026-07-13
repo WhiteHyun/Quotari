@@ -22,6 +22,16 @@ final class UsageStore {
   var refreshingAccountUsageProviders = Set<UsageProvider>()
   private(set) var isRefreshing = false
   private(set) var lastRefresh: Date?
+  /// The most recent spawned dashboard refresh, so a credential-slot mutation
+  /// (an account switch) can await any in-flight refresh — which can rotate
+  /// and persist a live token — before reading and overwriting the slot.
+  private(set) var inFlightRefresh: Task<Void, Never>?
+  /// True while an account switch is writing a credential slot. Refreshes are
+  /// suppressed for the window so none rotates/persists a slot the switch is
+  /// mid-way through reading and overwriting. This coordinates Quotari's own
+  /// work only; a separately-running CLI must be stopped by the user.
+  /// Set by the switch flow (in a sibling extension), so not `private(set)`.
+  var isSwitching = false
 
   var refreshInterval: TimeInterval {
     didSet {
@@ -39,6 +49,7 @@ final class UsageStore {
   let accountDiscovery: any ProviderAccountDiscovering
   private let accountSelectionStore: ProviderAccountSelectionStore
   let accountCapture: AccountCaptureService
+  let accountSwitch: AccountSwitchService
   let profileFetcher: any ClaudeProfileFetching
   let profileStore: ClaudeProfileStore
   let claudeCredentialLoader: @Sendable (ProviderCredentialSource) -> ClaudeCredentials?
@@ -62,6 +73,10 @@ final class UsageStore {
   var lastEmptyCostScans: [UsageProvider: Date] = [:]
   var latestReportedCostFallbacks: [UsageProvider: ReportedCostFallback] = [:]
   var accountUsageRefreshTasks: [UsageProvider: AccountUsageRefreshTask] = [:]
+  var providerFetchTasks: [UsageProvider: ProviderFetchTask] = [:]
+  /// The fetch `selectAccount` starts, tracked so an account switch can await
+  /// it (it may rotate/persist the live token the switch is about to back up).
+  var selectionRefreshTasks: [UsageProvider: Task<Void, Never>] = [:]
 
   /// Tests inject mock descriptors so results don't depend on credentials
   /// present on the machine running them.
@@ -71,6 +86,7 @@ final class UsageStore {
     accountDiscovery: any ProviderAccountDiscovering = ProviderAccountDiscovery(),
     accountSelectionStore: ProviderAccountSelectionStore = ProviderAccountSelectionStore(),
     accountCapture: AccountCaptureService = AccountCaptureService(),
+    accountSwitch: AccountSwitchService = AccountSwitchService(),
     profileFetcher: any ClaudeProfileFetching = ClaudeProfileFetcher(),
     profileStore: ClaudeProfileStore = ClaudeProfileStore(),
     claudeCredentialLoader: @escaping @Sendable (ProviderCredentialSource) -> ClaudeCredentials? = {
@@ -85,6 +101,7 @@ final class UsageStore {
     self.accountDiscovery = accountDiscovery
     self.accountSelectionStore = accountSelectionStore
     self.accountCapture = accountCapture
+    self.accountSwitch = accountSwitch
     self.profileFetcher = profileFetcher
     self.profileStore = profileStore
     self.claudeCredentialLoader = claudeCredentialLoader
@@ -108,29 +125,6 @@ final class UsageStore {
     }
   }
 
-  func refresh() async {
-    guard !isRefreshing else {
-      refreshRequested = true
-      return
-    }
-    isRefreshing = true
-    defer { isRefreshing = false }
-
-    // A live stand-in can silently start pointing at a different login when
-    // its CLI slot is reused; rediscover first so the timer path reconciles
-    // the selection just like a manual reload.
-    if !reconciledSelectionOrigins.isEmpty {
-      await reloadAccounts()
-    }
-    repeat {
-      refreshRequested = false
-      await performRefresh()
-    } while refreshRequested
-    // Self-heal email labels after a usage refresh may have rotated a token:
-    // the access-token fingerprint changes, so this re-fetches exactly once.
-    refreshClaudeProfiles()
-  }
-
   private func performRefresh() async {
     let now = Date()
     await withTaskGroup(
@@ -138,9 +132,24 @@ final class UsageStore {
     ) { group in
       for descriptor in providers {
         let account = selectedAccounts[descriptor.id]
+        let capturedRegistryID = capturedRegistryIDForFetch(
+          provider: descriptor.id,
+          selectedAccount: account
+        )
         let revision = accountRevisions[descriptor.id] ?? 0
         group.addTask {
-          await (descriptor.id, account, revision, descriptor.fetch(now: now, account: account))
+          await (
+            descriptor.id,
+            account,
+            revision,
+            self.serializedProviderFetch(
+              descriptor: descriptor,
+              now: now,
+              account: account,
+              capturedRegistryID: capturedRegistryID,
+              expectedRevision: revision
+            )
+          )
         }
       }
       for await (provider, account, revision, result) in group {
@@ -156,11 +165,38 @@ final class UsageStore {
   }
 
   private func refresh(provider: UsageProvider) async {
-    guard let descriptor = providers.first(where: { $0.id == provider }) else { return }
+    // A superseded selection fetch (cancelled when the selection changed) or a
+    // fetch that a switch has since started must not hit the network and
+    // rotate a credential slot out from under the switch.
+    guard !Task.isCancelled, !isSwitching, isProviderEnabled(provider),
+          let descriptor = providers.first(where: { $0.id == provider })
+    else { return }
     let account = selectedAccounts[provider]
+    let capturedRegistryID = capturedRegistryIDForFetch(
+      provider: provider,
+      selectedAccount: account
+    )
     let revision = accountRevisions[provider] ?? 0
-    let result = await descriptor.fetch(now: Date(), account: account)
-    guard (accountRevisions[provider] ?? 0) == revision else { return }
+    let now = Date()
+    let result: Result<ProviderFetchResult, Error> = if serializesProviderFetch {
+      await serializedProviderFetch(
+        descriptor: descriptor,
+        now: now,
+        account: account,
+        capturedRegistryID: capturedRegistryID,
+        expectedRevision: revision
+      )
+    } else {
+      await descriptor.fetch(
+        now: now,
+        account: account,
+        capturedRegistryID: capturedRegistryID
+      )
+    }
+    guard !Task.isCancelled,
+          isProviderEnabled(provider),
+          (accountRevisions[provider] ?? 0) == revision
+    else { return }
     apply(provider: provider, account: account, result: result)
     lastRefresh = Date()
     await syncCapturedCopies(of: capturedCopyCandidates.filter { $0.provider == provider })
@@ -237,7 +273,63 @@ final class UsageStore {
     lastCostScans[provider] = nil
     lastEmptyCostScans[provider] = nil
     latestReportedCostFallbacks[provider] = nil
-    Task { await refresh(provider: provider) }
+    enqueueSelectionRefresh(for: provider)
+  }
+}
+
+extension UsageStore {
+  /// Spawns a tracked dashboard refresh. UI and the timer go through this so
+  /// `inFlightRefresh` always reflects the actually-running refresh an account
+  /// switch may need to await. A second call while one is in flight coalesces
+  /// through `refreshRequested` instead of replacing the handle with a task
+  /// that would return immediately via the `isRefreshing` guard — otherwise a
+  /// switch could await a no-op and race the real refresh's slot write.
+  func beginRefresh() {
+    // Don't start a fetch while a switch is rewriting a credential slot.
+    guard !isSwitching else { return }
+    guard inFlightRefresh == nil else {
+      refreshRequested = true
+      return
+    }
+    inFlightRefresh = Task { [weak self] in
+      await self?.refresh(clearsInFlightRefresh: true)
+    }
+  }
+
+  func refresh() async {
+    await refresh(clearsInFlightRefresh: false)
+  }
+
+  private func refresh(clearsInFlightRefresh: Bool) async {
+    // Clear the tracked handle before this actor-isolated operation returns.
+    // Doing it in the spawning task leaves an executor hop where a new request
+    // can observe the completed task, set `refreshRequested`, and be stranded
+    // when that task subsequently clears its handle and exits.
+    defer {
+      if clearsInFlightRefresh {
+        inFlightRefresh = nil
+      }
+    }
+    guard !isRefreshing else {
+      refreshRequested = true
+      return
+    }
+    isRefreshing = true
+    defer { isRefreshing = false }
+
+    // A live stand-in can silently start pointing at a different login when
+    // its CLI slot is reused; rediscover first so the timer path reconciles
+    // the selection just like a manual reload.
+    if !reconciledSelectionOrigins.isEmpty {
+      await reloadAccounts()
+    }
+    repeat {
+      refreshRequested = false
+      await performRefresh()
+    } while refreshRequested
+    // Self-heal email labels after a usage refresh may have rotated a token:
+    // the access-token fingerprint changes, so this re-fetches exactly once.
+    refreshClaudeProfiles()
   }
 }
 
@@ -261,7 +353,8 @@ private extension UsageStore {
     timerTask = Task { [weak self] in
       while !Task.isCancelled {
         guard let self else { break }
-        await refresh()
+        beginRefresh()
+        await inFlightRefresh?.value
         let interval = refreshInterval
         try? await Task.sleep(for: .seconds(interval))
       }

@@ -67,25 +67,17 @@ extension UsageStore {
       let cachedIsForOldToken = claudeProfiles[id].map { $0.fingerprint != credential.fingerprint } ?? false
       profileFetchAttempts[id] = credential.fingerprint
       do {
-        let profile = try await fetcher.fetchProfile(accessToken: credential.token)
-        // The slot may have rotated to a different login while this fetch was
-        // in flight; caching a replaced token's result would label the new
-        // login with the old account's email (and a transient failure on the
-        // follow-up fetch would leave it stuck). Skip the write — the next
-        // pass fetches the live token.
-        let liveFingerprint = await Task.detached(operation: { () -> String? in
-          loader(source).map { ProviderCredentialIdentity.fingerprint(of: $0.accessToken) }
-        }).value
-        guard liveFingerprint == credential.fingerprint else { continue }
-        if profile.isEmpty {
-          dropStaleProfile(id: id, cachedIsForOldToken: cachedIsForOldToken)
-        } else {
-          claudeProfiles[id] = ClaudeProfile(
-            email: profile.email,
-            organizationName: profile.organizationName,
-            fingerprint: credential.fingerprint
-          )
-          try? profileStore.save(claudeProfiles)
+        let profile = try await fetcher.fetchProfile(accessToken: attempt.credential.token)
+        guard canFinishClaudeProfileAttempt(id: id, attempt: attempt, revision: revision) else { return }
+        let shouldRetry = await storeFetchedClaudeProfile(
+          profile,
+          id: id,
+          source: source,
+          attempt: attempt,
+          revision: revision
+        )
+        if !shouldRetry {
+          return
         }
       } catch ProviderHTTPError.unauthorized {
         // The token is denied. If it's a token we hadn't fetched with before,
@@ -111,13 +103,15 @@ extension UsageStore {
     try? profileStore.save(claudeProfiles)
   }
 
-  /// Copies a fetched profile to another account id — used when capturing a
-  /// live login, so the saved row is labeled by email immediately (and stays
-  /// labeled offline) instead of waiting for its own fetch.
-  func seedProfile(fromAccountID sourceID: String, to targetID: String) {
-    guard claudeProfiles[targetID] == nil, let profile = claudeProfiles[sourceID] else { return }
-    claudeProfiles[targetID] = profile
-    try? profileStore.save(claudeProfiles)
+  private func isCurrentClaudeProfileGeneration(_ revision: UInt) -> Bool {
+    !Task.isCancelled
+      && isProviderEnabled(.claude)
+      && (accountRevisions[.claude] ?? 0) == revision
+  }
+
+  private func clearProfileFetchAttempt(id: String, fingerprint: String) {
+    guard profileFetchAttempts[id] == fingerprint else { return }
+    profileFetchAttempts[id] = nil
   }
 
   private struct Credential: Sendable {
