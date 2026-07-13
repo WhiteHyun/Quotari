@@ -178,7 +178,8 @@ extension UsageStore {
     origin: ProviderAccount?,
     provider: UsageProvider
   ) {
-    let scopeID = (origin ?? account).flatMap { notificationScopeID(for: $0) }
+    let logicalAccount = provider == .claude ? account : (origin ?? account)
+    let scopeID = logicalAccount.flatMap { notificationScopeID(for: $0) }
     quotaNotifications.setActiveLogicalAccountID(
       isProviderEnabled(provider) ? scopeID : nil,
       for: provider
@@ -193,13 +194,31 @@ extension UsageStore {
     credentialScopeID: String?
   ) async -> QuotaNotificationAccountResolution {
     guard sourceKind != .mock else { return .unattributed }
+    if let account {
+      guard notificationFetchCredentialIsCurrent(
+        account: account,
+        sourceKind: sourceKind,
+        credentialScopeID: credentialScopeID
+      ) else { return .unattributed }
+      let logicalAccount = provider == .claude
+        ? account
+        : reconciledSelectionOrigins[provider] ?? account
+      return notificationScopeResolution(for: logicalAccount)
+    }
     if let origin = reconciledSelectionOrigins[provider] {
+      guard notificationFetchCredentialIsCurrent(
+        account: origin,
+        sourceKind: sourceKind,
+        credentialScopeID: credentialScopeID
+      ) else { return .unattributed }
       return notificationScopeResolution(for: origin)
     }
-    if let account {
-      return notificationScopeResolution(for: account)
-    }
     if let matchedAccount = matchedAccount(for: snapshot, provider: provider) {
+      guard notificationFetchCredentialIsCurrent(
+        account: matchedAccount,
+        sourceKind: sourceKind,
+        credentialScopeID: credentialScopeID
+      ) else { return .unattributed }
       return notificationScopeResolution(for: matchedAccount)
     }
     guard snapshot.account == nil else { return .unattributed }
@@ -208,6 +227,25 @@ extension UsageStore {
       sourceKind: sourceKind,
       credentialScopeID: credentialScopeID
     )
+  }
+
+  private func notificationFetchCredentialIsCurrent(
+    account: ProviderAccount,
+    sourceKind: ProviderFetchKind?,
+    credentialScopeID: String?
+  ) -> Bool {
+    guard sourceKind == .oauth, let credentialScopeID else { return true }
+    guard account.credentialScopeID == credentialScopeID else { return false }
+    guard account.provider == .claude else { return true }
+    guard let credentials = claudeCredentialLoader(account.credentialSource) else { return false }
+    let currentAccount = ProviderAccount(
+      provider: account.provider,
+      displayName: account.displayName,
+      detail: account.detail,
+      credentialSource: account.credentialSource,
+      credentialIdentity: credentials.accessToken
+    )
+    return currentAccount.credentialScopeID == credentialScopeID
   }
 
   private func automaticNotificationAccountResolution(
