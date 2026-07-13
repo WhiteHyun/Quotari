@@ -39,8 +39,20 @@ final class UsageStore {
   let accountDiscovery: any ProviderAccountDiscovering
   private let accountSelectionStore: ProviderAccountSelectionStore
   let accountCapture: AccountCaptureService
+  let profileFetcher: any ClaudeProfileFetching
+  let profileStore: ClaudeProfileStore
+  let claudeCredentialLoader: @Sendable (ProviderCredentialSource) -> ClaudeCredentials?
   private let defaults: UserDefaults
   var captureErrors: [UsageProvider: String] = [:]
+  /// Fetched Claude account profiles keyed by `ProviderAccount.id`, used to
+  /// label accounts by email. Loaded from disk at launch, refreshed lazily.
+  var claudeProfiles: [String: ClaudeProfile] = [:]
+  var profileFetchTasks: Set<String> = []
+  /// The credential fingerprint most recently *attempted* for each account id
+  /// (whether it succeeded or not). Keyed so a re-login or token rotation
+  /// changes the fingerprint and triggers exactly one fresh attempt, while a
+  /// persistent failure for one credential isn't retried on every reload.
+  var profileFetchAttempts: [String: String] = [:]
 
   private(set) var timerTask: Task<Void, Never>?
   private var refreshRequested = false
@@ -59,6 +71,11 @@ final class UsageStore {
     accountDiscovery: any ProviderAccountDiscovering = ProviderAccountDiscovery(),
     accountSelectionStore: ProviderAccountSelectionStore = ProviderAccountSelectionStore(),
     accountCapture: AccountCaptureService = AccountCaptureService(),
+    profileFetcher: any ClaudeProfileFetching = ClaudeProfileFetcher(),
+    profileStore: ClaudeProfileStore = ClaudeProfileStore(),
+    claudeCredentialLoader: @escaping @Sendable (ProviderCredentialSource) -> ClaudeCredentials? = {
+      try? ClaudeCredentialsStore.load(source: $0)
+    },
     defaults: UserDefaults = .standard,
     startsAutomatically: Bool = true
   ) {
@@ -68,8 +85,12 @@ final class UsageStore {
     self.accountDiscovery = accountDiscovery
     self.accountSelectionStore = accountSelectionStore
     self.accountCapture = accountCapture
+    self.profileFetcher = profileFetcher
+    self.profileStore = profileStore
+    self.claudeCredentialLoader = claudeCredentialLoader
     self.defaults = defaults
     selectedAccounts = accountSelectionStore.load()
+    claudeProfiles = profileStore.load()
     // refreshInterval has no inline default: its first assignment runs the
     // @Observable-generated init accessor instead of the setter, so restoring
     // here neither rewrites defaults nor starts the timer via didSet.
@@ -78,6 +99,9 @@ final class UsageStore {
     refreshInterval = savedInterval > 0
       ? min(max(savedInterval, range.lowerBound), range.upperBound)
       : 60
+    // Seed attempts from the cache so a stable account isn't re-fetched on
+    // every launch — only when its credential fingerprint changes.
+    profileFetchAttempts = claudeProfiles.compactMapValues(\.fingerprint)
     if startsAutomatically {
       startTimer()
       Task { await reloadAccounts() }
@@ -102,6 +126,9 @@ final class UsageStore {
       refreshRequested = false
       await performRefresh()
     } while refreshRequested
+    // Self-heal email labels after a usage refresh may have rotated a token:
+    // the access-token fingerprint changes, so this re-fetches exactly once.
+    refreshClaudeProfiles()
   }
 
   private func performRefresh() async {
@@ -137,6 +164,11 @@ final class UsageStore {
     apply(provider: provider, account: account, result: result)
     lastRefresh = Date()
     await syncCapturedCopies(of: capturedCopyCandidates.filter { $0.provider == provider })
+    // The fetch may have rotated a Claude token; the email label's retry key
+    // is the access-token fingerprint, so this re-fetches exactly once.
+    if provider == .claude {
+      refreshClaudeProfiles()
+    }
   }
 
   func reloadAccounts() async {
@@ -171,6 +203,7 @@ final class UsageStore {
       selectAccount(update.account, for: provider, standingInFor: update.origin)
     }
     await syncCapturedCopies(of: syncCandidates)
+    refreshClaudeProfiles()
   }
 
   /// `origin` is the saved account a reconciled live selection stands in for

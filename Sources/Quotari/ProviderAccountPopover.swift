@@ -69,6 +69,7 @@ struct ProviderAccountPopover: View {
     } label: {
       ProviderAccountUsageRow(
         account: account,
+        label: store.accountLabel(for: account),
         usage: usage,
         isSelected: isSelected,
         isLoading: store.refreshingAccountUsageProviders.contains(descriptor.id) && usage == nil,
@@ -137,6 +138,7 @@ struct ProviderAccountPopover: View {
 
 private struct ProviderAccountUsageRow: View {
   let account: ProviderAccount
+  let label: String
   let usage: ProviderAccountUsage?
   let isSelected: Bool
   let isLoading: Bool
@@ -148,7 +150,7 @@ private struct ProviderAccountUsageRow: View {
         Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
           .foregroundStyle(isSelected ? accent : Color.secondary)
         VStack(alignment: .leading, spacing: 1) {
-          Text(account.displayName)
+          Text(label)
             .font(.subheadline.weight(.semibold))
             .lineLimit(1)
             .truncationMode(.middle)

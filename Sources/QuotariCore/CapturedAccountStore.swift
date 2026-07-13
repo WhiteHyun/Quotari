@@ -34,6 +34,12 @@ public struct CapturedAccount: Codable, Equatable, Sendable, Identifiable {
     self.origin = origin
     self.payload = payload
   }
+
+  /// The `ProviderAccount.id` this snapshot takes when it joins discovery as a
+  /// registry account — the key profile/usage state is stored under.
+  public var registryAccountID: String {
+    ProviderAccount.id(provider: provider, source: .quotariRegistry(id: id))
+  }
 }
 
 /// Persists captured account snapshots in Quotari-owned keychain items. Each
