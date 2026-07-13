@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 struct AccountCaptureServiceTests {
-  private static let codexPayload = #"{"tokens":{"access_token":"tok","account_id":"acct-1"}}"#
+  private static let codexPayload = #"{"tokens":{"access_token":"tok","account_id":"acct-1","refresh_token":"ref"}}"#
   private static let now = Date(timeIntervalSince1970: 1000)
 
   private func codexAuthFile(_ contents: String) throws -> URL {
@@ -48,7 +48,8 @@ struct AccountCaptureServiceTests {
     _ = try service.capture(account, now: Self.now)
 
     // Same account_id, rotated access token (a re-login).
-    let secondURL = try codexAuthFile(#"{"tokens":{"access_token":"tok-2","account_id":"acct-1"}}"#)
+    let secondURL =
+      try codexAuthFile(#"{"tokens":{"access_token":"tok-2","account_id":"acct-1","refresh_token":"ref-2"}}"#)
     defer { try? FileManager.default.removeItem(at: secondURL) }
     let reloggedAccount = ProviderAccount(
       provider: .codex, displayName: "Codex", detail: "Default",
@@ -208,8 +209,9 @@ struct AccountCaptureServiceTests {
     let store = makeStore(InMemoryKeychain())
     let service = AccountCaptureService(capturedAccounts: store)
 
-    let urlA = try codexAuthFile(#"{"tokens":{"access_token":"t-a","account_id":"  ","id_token":""}}"#)
-    let urlB = try codexAuthFile(#"{"tokens":{"access_token":"t-b","account_id":""}}"#)
+    let urlA =
+      try codexAuthFile(#"{"tokens":{"access_token":"t-a","account_id":"  ","id_token":"","refresh_token":"ref-a"}}"#)
+    let urlB = try codexAuthFile(#"{"tokens":{"access_token":"t-b","account_id":"","refresh_token":"ref-b"}}"#)
     defer {
       try? FileManager.default.removeItem(at: urlA)
       try? FileManager.default.removeItem(at: urlB)
@@ -227,6 +229,33 @@ struct AccountCaptureServiceTests {
     // one "codex:" id — each gets a distinct UUID-based entry.
     #expect(capturedA.id != capturedB.id)
     #expect(store.load().count == 2)
+  }
+
+  @Test func capturingAPayloadWithoutARefreshTokenIsRejected() throws {
+    // A snapshot that can't renew itself would die at its first expiry —
+    // the same reason env tokens aren't capturable.
+    let url = try codexAuthFile(#"{"tokens":{"access_token":"tok","account_id":"acct-1"}}"#)
+    defer { try? FileManager.default.removeItem(at: url) }
+    let service = AccountCaptureService(capturedAccounts: makeStore(InMemoryKeychain()))
+    let account = ProviderAccount(
+      provider: .codex, displayName: "Codex", detail: "Default",
+      credentialSource: .codexAuthFile(path: url.path)
+    )
+
+    #expect(throws: AccountCaptureError.noRefreshToken) {
+      try service.capture(account, now: Self.now)
+    }
+  }
+
+  @Test func minimizerRequiresARefreshToken() {
+    #expect(ProviderCredentialMinimizer.minimize(
+      provider: .claude,
+      payload: Data(#"{"claudeAiOauth":{"accessToken":"a"}}"#.utf8)
+    ) == nil)
+    #expect(ProviderCredentialMinimizer.minimize(
+      provider: .codex,
+      payload: Data(#"{"tokens":{"access_token":"a","refresh_token":""}}"#.utf8)
+    ) == nil)
   }
 }
 

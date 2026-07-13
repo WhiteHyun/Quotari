@@ -198,7 +198,13 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
     guard let current = try? CodexCredentialsStore.load(
       source: .quotariRegistry(id: registryID),
       capturedAccounts: capturedAccounts
-    ) else { return .resolved(inMemory(fallback, pending.grant)) }
+    ) else {
+      // The reread failed outright (not just moved on): the grant may hold
+      // the only refresh token that still works, so keep it queued for the
+      // next transaction and fetch with it in the meantime.
+      await refreshCoordinator.rememberUnpersisted(pending, registryID: registryID)
+      return .resolved(inMemory(fallback, pending.grant))
+    }
     if current.refreshToken == pending.consumedRefreshToken, pending.rotatedRefreshToken {
       return await .resolved(supersede(pending, stored: current, registryID: registryID, now: now))
     }

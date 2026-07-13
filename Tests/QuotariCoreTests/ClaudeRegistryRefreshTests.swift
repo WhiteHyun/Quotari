@@ -69,6 +69,40 @@ private final class FlakyClaudePersister: ClaudeCredentialPersisting, @unchecked
   }
 }
 
+/// Simulates a stale write whose follow-up reread also fails: the first
+/// persist call blinds the registry item's reads and reports staleSource;
+/// later calls delegate to the real writer.
+private final class BlindingClaudePersister: ClaudeCredentialPersisting, @unchecked Sendable {
+  private let keychain: InMemoryKeychain
+  private let blindService: String
+  private let inner: ClaudeCredentialsWriter
+  private let lock = NSLock()
+  private var blinded = false
+
+  init(store: CapturedAccountStore, keychain: InMemoryKeychain, blindService: String) {
+    self.keychain = keychain
+    self.blindService = blindService
+    inner = ClaudeCredentialsWriter(capturedAccounts: store)
+  }
+
+  func persist(
+    _ grant: ClaudeTokenGrant,
+    replacing previousAccessToken: String,
+    to source: ProviderCredentialSource
+  ) throws {
+    let shouldBlind: Bool = lock.withLock {
+      guard !blinded else { return false }
+      blinded = true
+      return true
+    }
+    if shouldBlind {
+      keychain.failReads(of: blindService)
+      throw ClaudeCredentialPersistError.staleSource
+    }
+    try inner.persist(grant, replacing: previousAccessToken, to: source)
+  }
+}
+
 /// Saved (registry) Claude accounts refresh like Codex ones: expired tokens
 /// are exchanged and rotated pairs survive write-back failures — the registry
 /// has no co-owner (unlike the CLI keychain/file) to heal a lost rotation.
@@ -181,5 +215,55 @@ struct ClaudeRegistryRefreshTests {
     ))
 
     #expect(await coordinator.takeUnpersisted(sourceID: source.stableID) == nil)
+  }
+
+  @Test func aRereadFailureAfterAStaleWriteKeepsTheGrantQueued() async throws {
+    let keychain = InMemoryKeychain()
+    let service = "Test-ClaudeBlind-\(UUID().uuidString)"
+    let store = CapturedAccountStore(keychain: keychain.store, service: service)
+    try store.save(CapturedAccount(
+      id: "claude:fp-1",
+      provider: .claude,
+      displayName: "Saved Claude",
+      detail: nil,
+      capturedAt: Date(timeIntervalSince1970: 0),
+      origin: .claudeKeychain(service: "Claude Code-credentials"),
+      payload: claudePayload(accessToken: "old-tok", refreshToken: "ref-1", expiresAt: 1000)
+    ))
+    let refresher = StubRefresher(result: .success(ClaudeTokenGrant(
+      accessToken: "new-tok",
+      refreshToken: "ref-2",
+      expiresAt: Date(timeIntervalSince1970: 100_000)
+    )))
+    let blindService = "\(service).claude:fp-1"
+    let persister = BlindingClaudePersister(store: store, keychain: keychain, blindService: blindService)
+    let recorder = RefreshStubTransport.Recorder()
+    let strategy = ClaudeUsageStrategy(
+      transport: RefreshStubTransport(json: usageJSON, recorder: recorder),
+      refresher: refresher,
+      persister: persister,
+      capturedAccounts: store,
+      refreshCoordinator: ClaudeTokenRefreshCoordinator()
+    )
+    let context = ProviderFetchContext(
+      provider: .claude,
+      now: Date(timeIntervalSince1970: 2000),
+      account: claudeRegistryAccount()
+    )
+
+    _ = try await strategy.fetch(context)
+    let firstRequest = try #require(recorder.requests.first)
+    #expect(firstRequest.value(forHTTPHeaderField: "Authorization") == "Bearer new-tok")
+
+    keychain.stopFailing(blindService)
+    _ = try await strategy.fetch(context)
+
+    #expect(refresher.calls == ["ref-1"])
+    let saved = try ClaudeCredentialsStore.load(
+      source: .quotariRegistry(id: "claude:fp-1"),
+      capturedAccounts: store
+    )
+    #expect(saved.accessToken == "new-tok")
+    #expect(saved.refreshToken == "ref-2")
   }
 }

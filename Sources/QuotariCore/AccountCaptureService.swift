@@ -4,6 +4,7 @@ import Foundation
 public enum AccountCaptureError: LocalizedError, Sendable {
   case sourceNotCapturable
   case payloadUnavailable
+  case noRefreshToken
 
   public var errorDescription: String? {
     switch self {
@@ -11,6 +12,8 @@ public enum AccountCaptureError: LocalizedError, Sendable {
       "This account's credentials can't be saved (only file- or keychain-backed logins)."
     case .payloadUnavailable:
       "Couldn't read the account's credentials to save them."
+    case .noRefreshToken:
+      "This login has no refresh token, so a saved copy couldn't renew itself once it expires."
     }
   }
 }
@@ -45,6 +48,11 @@ public struct AccountCaptureService: Sendable {
     // Store only the provider fields Quotari reads, dropping unrelated secrets
     // the source may hold alongside them (e.g. Claude's mcpOAuth dictionary).
     guard let payload = ProviderCredentialMinimizer.minimize(provider: account.provider, payload: rawPayload) else {
+      if ProviderCredentialMinimizer.hasAccessToken(provider: account.provider, payload: rawPayload) {
+        // Readable, but not renewable: like env tokens, a snapshot without a
+        // refresh token would die at its first expiry — refuse to save it.
+        throw AccountCaptureError.noRefreshToken
+      }
       throw AccountCaptureError.payloadUnavailable
     }
     let identity = ProviderCredentialIdentity.key(provider: account.provider, payload: payload)
@@ -154,21 +162,43 @@ public enum ProviderCredentialIdentity {
 /// item, or Codex's root `OPENAI_API_KEY`). The whole provider object is kept
 /// verbatim — including the refresh token and refresh metadata a saved account
 /// needs to stay renewable — since everything inside it is that provider's own
-/// credential data. Wrong-shaped or token-less payloads are rejected.
+/// credential data. Wrong-shaped, token-less, or refresh-token-less payloads
+/// are rejected: a snapshot that can't renew itself would die at its first
+/// expiry, exactly why env tokens aren't capturable either.
 public enum ProviderCredentialMinimizer {
   public static func minimize(provider: UsageProvider, payload: Data) -> Data? {
     guard let root = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else { return nil }
     switch provider {
     case .claude:
       guard let oauth = root["claudeAiOauth"] as? [String: Any],
-            let accessToken = oauth["accessToken"] as? String, !accessToken.isEmpty
+            let accessToken = oauth["accessToken"] as? String, !accessToken.isEmpty,
+            let refreshToken = oauth["refreshToken"] as? String, !refreshToken.isEmpty
       else { return nil }
       return try? JSONSerialization.data(withJSONObject: ["claudeAiOauth": oauth], options: [.sortedKeys])
     case .codex:
       guard let tokens = root["tokens"] as? [String: Any],
-            let accessToken = tokens["access_token"] as? String, !accessToken.isEmpty
+            let accessToken = tokens["access_token"] as? String, !accessToken.isEmpty,
+            let refreshToken = tokens["refresh_token"] as? String, !refreshToken.isEmpty
       else { return nil }
       return try? JSONSerialization.data(withJSONObject: ["tokens": tokens], options: [.sortedKeys])
+    }
+  }
+
+  /// Whether the payload carries the provider's access token at all — used to
+  /// tell "unreadable payload" apart from "readable but not renewable".
+  public static func hasAccessToken(provider: UsageProvider, payload: Data) -> Bool {
+    guard let root = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else { return false }
+    switch provider {
+    case .claude:
+      guard let oauth = root["claudeAiOauth"] as? [String: Any],
+            let accessToken = oauth["accessToken"] as? String
+      else { return false }
+      return !accessToken.isEmpty
+    case .codex:
+      guard let tokens = root["tokens"] as? [String: Any],
+            let accessToken = tokens["access_token"] as? String
+      else { return false }
+      return !accessToken.isEmpty
     }
   }
 }

@@ -133,4 +133,50 @@ struct ProviderAccountDiscoveryCaptureTests {
 
     #expect(live == nil)
   }
+
+  @Test func liveAccountsWithSavedCopiesAreReported() async throws {
+    let liveHome = try codexHome(accountID: "acct-1")
+    defer { try? FileManager.default.removeItem(at: liveHome) }
+    let keychain = InMemoryKeychain()
+    let store = CapturedAccountStore(keychain: keychain.store, service: "Test-Disc-\(UUID().uuidString)")
+    try store.save(CapturedAccount(
+      id: "codex:acct-1",
+      provider: .codex,
+      displayName: "Codex",
+      detail: "Default",
+      capturedAt: Date(timeIntervalSince1970: 1000),
+      origin: .codexAuthFile(path: liveHome.appendingPathComponent("auth.json").path),
+      payload: Data(#"{"tokens":{"access_token":"tok","account_id":"acct-1"}}"#.utf8)
+    ))
+    let discovery = ProviderAccountDiscovery(
+      environment: ["CODEX_HOME": liveHome.path],
+      home: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
+      keychainData: { nil },
+      capturedAccounts: store
+    )
+    let accounts = await discovery.accounts(for: .codex)
+
+    let saved = await discovery.accountsWithCapturedCopies(among: accounts)
+
+    #expect(saved == Set(accounts.map(\.id)))
+
+    // A different captured identity flags nothing.
+    let otherStore = CapturedAccountStore(keychain: InMemoryKeychain().store, service: "Test-Disc-\(UUID().uuidString)")
+    try otherStore.save(CapturedAccount(
+      id: "codex:acct-other",
+      provider: .codex,
+      displayName: "Other",
+      detail: nil,
+      capturedAt: Date(timeIntervalSince1970: 1000),
+      origin: .codexAuthFile(path: "/tmp/old.json"),
+      payload: Data(#"{"tokens":{"access_token":"x","account_id":"acct-other"}}"#.utf8)
+    ))
+    let otherDiscovery = ProviderAccountDiscovery(
+      environment: ["CODEX_HOME": liveHome.path],
+      home: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
+      keychainData: { nil },
+      capturedAccounts: otherStore
+    )
+    #expect(await otherDiscovery.accountsWithCapturedCopies(among: accounts) == [])
+  }
 }

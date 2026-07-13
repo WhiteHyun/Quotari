@@ -60,6 +60,17 @@ extension UsageStore {
     return nil
   }
 
+  /// Whether an account can be saved: already-captured entries, live logins
+  /// whose identity is already saved (their registry row is just hidden), and
+  /// static env tokens (no refresh token to keep them alive) are excluded.
+  func isCapturable(_ account: ProviderAccount) -> Bool {
+    guard !capturedEquivalentIDs.contains(account.id) else { return false }
+    switch account.credentialSource {
+    case .quotariRegistry, .claudeEnvironment: return false
+    case .codexAuthFile, .claudeKeychain, .claudeCredentialsFile: return true
+    }
+  }
+
   func accountUsage(for account: ProviderAccount) -> ProviderAccountUsage? {
     if let usage = currentAccountUsage(for: account) {
       return usage

@@ -10,6 +10,10 @@ public protocol ProviderAccountDiscovering: Sendable {
     equivalentTo account: ProviderAccount,
     among accounts: [ProviderAccount]
   ) async -> ProviderAccount?
+
+  /// The ids of the given live accounts whose identity already has a captured
+  /// (registry) copy — i.e. logins that are saved, with the saved row hidden.
+  func accountsWithCapturedCopies(among accounts: [ProviderAccount]) async -> Set<String>
 }
 
 public extension ProviderAccountDiscovering {
@@ -18,6 +22,10 @@ public extension ProviderAccountDiscovering {
     among accounts: [ProviderAccount]
   ) async -> ProviderAccount? {
     nil
+  }
+
+  func accountsWithCapturedCopies(among accounts: [ProviderAccount]) async -> Set<String> {
+    []
   }
 }
 
@@ -78,6 +86,24 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
       !candidate.credentialSource.isCaptured
         && identity(of: candidate.credentialSource, provider: candidate.provider) == key
     }
+  }
+
+  public func accountsWithCapturedCopies(among accounts: [ProviderAccount]) async -> Set<String> {
+    let captured = capturedAccounts.load()
+    guard !captured.isEmpty else { return [] }
+    let capturedKeys: [UsageProvider: Set<String>] = captured.reduce(into: [:]) { keys, item in
+      if let key = ProviderCredentialIdentity.key(provider: item.provider, payload: item.payload) {
+        keys[item.provider, default: []].insert(key)
+      }
+    }
+    var ids: Set<String> = []
+    for account in accounts where !account.credentialSource.isCaptured {
+      if let key = identity(of: account.credentialSource, provider: account.provider),
+         capturedKeys[account.provider]?.contains(key) == true {
+        ids.insert(account.id)
+      }
+    }
+    return ids
   }
 
   private func identity(of source: ProviderCredentialSource, provider: UsageProvider) -> String? {

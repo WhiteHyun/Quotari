@@ -269,3 +269,59 @@ struct CodexRegistryStaleWriteTests {
     #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer \(freshConcurrent)")
   }
 }
+
+/// Reread failures after a stale write must not lose the only working pair.
+struct CodexRegistryRereadFailureTests {
+  @Test func aRereadFailureAfterAStaleWriteKeepsTheGrantQueued() async throws {
+    // The write is rejected as stale and the follow-up reread fails too: the
+    // grant may hold the only refresh token that still works, so it must
+    // stay queued — the next fetch retries the write, with no new exchange.
+    let expired = codexJWT(claims: ["exp": 1000])
+    let fresh = codexJWT(claims: ["exp": 100_000])
+    let keychain = InMemoryKeychain()
+    let service = "Test-Blind-\(UUID().uuidString)"
+    let store = CapturedAccountStore(keychain: keychain.store, service: service)
+    try store.save(CapturedAccount(
+      id: "codex:acct-1",
+      provider: .codex,
+      displayName: "Saved",
+      detail: nil,
+      capturedAt: Date(timeIntervalSince1970: 0),
+      origin: .codexAuthFile(path: "/tmp/old.json"),
+      payload: codexAuthPayload(accessToken: expired, refreshToken: "ref-1")
+    ))
+    let refresher = StubCodexRefresher(
+      result: .success(CodexTokenGrant(accessToken: fresh, refreshToken: "ref-2"))
+    )
+    let blindService = "\(service).codex:acct-1"
+    let persister = BlindingPersister(store: store, keychain: keychain, blindService: blindService)
+    let recorder = RefreshStubTransport.Recorder()
+    let strategy = CodexUsageStrategy(
+      transport: RefreshStubTransport(json: codexUsageStubJSON, recorder: recorder),
+      refresher: refresher,
+      persister: persister,
+      capturedAccounts: store,
+      refreshCoordinator: CodexTokenRefreshCoordinator()
+    )
+    let context = ProviderFetchContext(
+      provider: .codex,
+      now: Date(timeIntervalSince1970: 2000),
+      account: codexRegistryAccount()
+    )
+
+    _ = try await strategy.fetch(context)
+    let firstRequest = try #require(recorder.requests.first)
+    #expect(firstRequest.value(forHTTPHeaderField: "Authorization") == "Bearer \(fresh)")
+
+    keychain.stopFailing(blindService)
+    _ = try await strategy.fetch(context)
+
+    #expect(refresher.calls == ["ref-1"])
+    let saved = try CodexCredentialsStore.load(
+      source: .quotariRegistry(id: "codex:acct-1"),
+      capturedAccounts: store
+    )
+    #expect(saved.accessToken == fresh)
+    #expect(saved.refreshToken == "ref-2")
+  }
+}

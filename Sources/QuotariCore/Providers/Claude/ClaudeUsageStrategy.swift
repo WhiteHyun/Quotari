@@ -202,7 +202,13 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
     guard let current = try? ClaudeCredentialsStore.load(
       source: fallback.source,
       capturedAccounts: capturedAccounts
-    ) else { return .resolved(inMemory(fallback, pending.grant)) }
+    ) else {
+      // The reread failed outright (not just moved on): the grant may hold
+      // the only refresh token that still works, so keep it queued for the
+      // next transaction and fetch with it in the meantime.
+      await refreshCoordinator.rememberUnpersisted(pending, sourceID: fallback.source.stableID)
+      return .resolved(inMemory(fallback, pending.grant))
+    }
     let stored = ResolvedClaudeCredentials(credentials: current, source: fallback.source)
     if current.refreshToken == pending.consumedRefreshToken, pending.rotatedRefreshToken {
       return await .resolved(supersede(pending, stored: stored, now: now))

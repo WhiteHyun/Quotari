@@ -11,6 +11,8 @@ final class UsageStore {
   var sourceLabels: [UsageProvider: String] = [:]
   private(set) var accounts: [UsageProvider: [ProviderAccount]] = [:]
   private(set) var selectedAccounts: [UsageProvider: ProviderAccount] = [:]
+  /// Live accounts whose identity already has a (hidden) saved registry copy.
+  private(set) var capturedEquivalentIDs: Set<String> = []
   var accountUsage: [UsageProvider: [String: ProviderAccountUsage]] = [:]
   var refreshingAccountUsageProviders = Set<UsageProvider>()
   private(set) var isRefreshing = false
@@ -124,6 +126,7 @@ final class UsageStore {
   func reloadAccounts() async {
     var next: [UsageProvider: [ProviderAccount]] = [:]
     var refreshedSelections: [(UsageProvider, ProviderAccount)] = []
+    var alreadyCaptured: Set<String> = []
     for descriptor in providers {
       let previousAccounts = accounts[descriptor.id] ?? []
       var providerAccounts = await accountDiscovery.accounts(for: descriptor.id)
@@ -136,9 +139,13 @@ final class UsageStore {
         previousAccounts: previousAccounts,
         currentAccounts: providerAccounts
       )
+      await alreadyCaptured.formUnion(
+        accountDiscovery.accountsWithCapturedCopies(among: providerAccounts)
+      )
       next[descriptor.id] = providerAccounts
     }
     accounts = next
+    capturedEquivalentIDs = alreadyCaptured
     for (provider, account) in refreshedSelections {
       selectAccount(account, for: provider)
     }
@@ -162,15 +169,6 @@ final class UsageStore {
       await reloadAccounts()
     } catch {
       captureErrors[account.provider] = error.localizedDescription
-    }
-  }
-
-  /// Whether an account can be saved: already-captured entries and static env
-  /// tokens (no refresh token to keep them alive) are excluded.
-  func isCapturable(_ account: ProviderAccount) -> Bool {
-    switch account.credentialSource {
-    case .quotariRegistry, .claudeEnvironment: false
-    case .codexAuthFile, .claudeKeychain, .claudeCredentialsFile: true
     }
   }
 

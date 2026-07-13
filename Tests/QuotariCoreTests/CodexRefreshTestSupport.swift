@@ -152,3 +152,37 @@ func codexRegistryAccount() -> ProviderAccount {
     credentialSource: .quotariRegistry(id: "codex:acct-1")
   )
 }
+
+/// Simulates a stale write whose follow-up reread also fails: the first
+/// persist call blinds the registry item's reads and reports staleSource;
+/// later calls delegate to the real writer.
+final class BlindingPersister: CodexCredentialPersisting, @unchecked Sendable {
+  private let keychain: InMemoryKeychain
+  private let blindService: String
+  private let inner: CodexCredentialsWriter
+  private let lock = NSLock()
+  private var blinded = false
+
+  init(store: CapturedAccountStore, keychain: InMemoryKeychain, blindService: String) {
+    self.keychain = keychain
+    self.blindService = blindService
+    inner = CodexCredentialsWriter(capturedAccounts: store)
+  }
+
+  func persist(
+    _ grant: CodexTokenGrant,
+    replacing previousAccessToken: String,
+    toRegistryAccount id: String
+  ) throws {
+    let shouldBlind: Bool = lock.withLock {
+      guard !blinded else { return false }
+      blinded = true
+      return true
+    }
+    if shouldBlind {
+      keychain.failReads(of: blindService)
+      throw CodexCredentialPersistError.staleSource
+    }
+    try inner.persist(grant, replacing: previousAccessToken, toRegistryAccount: id)
+  }
+}

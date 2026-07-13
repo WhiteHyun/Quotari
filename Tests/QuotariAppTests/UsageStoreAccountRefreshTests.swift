@@ -168,6 +168,37 @@ struct UsageStoreAccountRefreshTests {
     #expect(selectionStore.load()[.codex] == liveAccount)
   }
 
+  @Test func liveAccountWithASavedCopyIsNotCapturable() async {
+    // Once the current login is saved, its registry row is hidden — the live
+    // row must stop offering Save instead of re-capturing forever.
+    let liveAccount = ProviderAccount(
+      provider: .codex,
+      displayName: "Live",
+      detail: "Default",
+      credentialSource: .codexAuthFile(path: "/tmp/auth.json"),
+      credentialIdentity: "acct-1"
+    )
+    let descriptor = ProviderDescriptor(
+      id: .codex,
+      metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
+      pipeline: ProviderFetchPipeline { _ in [RecordingAccountStrategy(recorder: AccountRecorder())] }
+    )
+    let store = UsageStore.isolatedForTesting(
+      providers: [descriptor],
+      costEstimator: EmptyCostEstimator(),
+      accountDiscovery: StaticAccountDiscovery(
+        accounts: [.codex: [liveAccount]],
+        capturedCopyIDs: [liveAccount.id]
+      ),
+      startsAutomatically: false
+    )
+    #expect(store.isCapturable(liveAccount))
+
+    await store.reloadAccounts()
+
+    #expect(!store.isCapturable(liveAccount))
+  }
+
   private static func waitForSnapshot(
     in store: UsageStore,
     account: String,
