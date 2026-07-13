@@ -35,7 +35,7 @@ extension UsageStore {
     // keeps a reactivation's nil-scope drain ahead of the fresh identity and
     // prevents a pre-disable snapshot from being revived. A transient mock
     // fallback preserves the last real scope and cannot notify.
-    let updatesAutomaticScope = account == nil && sourceKind != .mock
+    let updatesNotificationScope = account == nil && sourceKind != .mock
     let revision = accountRevisions[provider] ?? 0
     let previous = quotaNotificationTask
     quotaNotificationTask = Task { [weak self] in
@@ -48,7 +48,7 @@ extension UsageStore {
         sourceKind: sourceKind,
         credentialScopeID: credentialScopeID,
         revision: revision,
-        updatesAutomaticScope: updatesAutomaticScope
+        updatesNotificationScope: updatesNotificationScope
       )
     }
   }
@@ -60,7 +60,7 @@ extension UsageStore {
     sourceKind: ProviderFetchKind?,
     credentialScopeID: String?,
     revision: UInt,
-    updatesAutomaticScope: Bool
+    updatesNotificationScope: Bool
   ) async {
     guard isProviderEnabled(provider),
           (accountRevisions[provider] ?? 0) == revision
@@ -104,7 +104,7 @@ extension UsageStore {
 
     let logicalAccountID = resolution.logicalAccountID
     let controller = quotaNotifications
-    if updatesAutomaticScope {
+    if updatesNotificationScope {
       controller.setActiveLogicalAccountID(logicalAccountID, for: provider)
     }
     _ = await controller.process(
@@ -147,7 +147,7 @@ extension UsageStore {
           sourceKind: deferred.sourceKind,
           credentialScopeID: deferred.credentialScopeID,
           revision: deferred.revision,
-          updatesAutomaticScope: deferred.account == nil && deferred.sourceKind != .mock
+          updatesNotificationScope: deferred.sourceKind != .mock
         )
         return
       }
@@ -260,6 +260,10 @@ extension UsageStore {
     }
     switch account.provider {
     case .codex:
+      if !account.credentialSource.isCaptured,
+         account.credentialScopeID != credentialScopeID {
+        return .stale
+      }
       guard let credentials = codexCredentialLoader(account.credentialSource) else { return .stale }
       let identity = credentials.accountID
         ?? credentials.email
