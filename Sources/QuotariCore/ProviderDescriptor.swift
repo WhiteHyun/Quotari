@@ -33,9 +33,16 @@ public struct ProviderDescriptor: Sendable {
   public func fetch(
     now: Date,
     credential: String? = nil,
-    account: ProviderAccount? = nil
+    account: ProviderAccount? = nil,
+    capturedRegistryID: String? = nil
   ) async -> Result<ProviderFetchResult, Error> {
-    await pipeline.fetch(ProviderFetchContext(provider: id, now: now, credential: credential, account: account))
+    await pipeline.fetch(ProviderFetchContext(
+      provider: id,
+      now: now,
+      credential: credential,
+      account: account,
+      capturedRegistryID: capturedRegistryID
+    ))
   }
 }
 

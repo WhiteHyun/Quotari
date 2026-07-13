@@ -69,6 +69,9 @@ public struct CodexCredentialsWriter: CodexCredentialPersisting {
       tokens["id_token"] = idToken
     }
     root["tokens"] = tokens
+    if let refreshedAt = grant.refreshedAt {
+      root["last_refresh"] = ISO8601DateFormatter().string(from: refreshedAt)
+    }
     return try JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])
   }
 }

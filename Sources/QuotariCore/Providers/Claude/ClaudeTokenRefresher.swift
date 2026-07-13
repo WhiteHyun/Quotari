@@ -98,11 +98,31 @@ public struct ClaudePendingGrant: Codable, Equatable, Sendable {
   public var grant: ClaudeTokenGrant
   public var previousAccessToken: String
   public var consumedRefreshToken: String
+  /// Older source generations that can be repaired directly to `grant`.
+  /// These are populated when a file mirror misses more than one canonical
+  /// keychain rotation (A -> B -> C). Optional fields keep payloads written by
+  /// older Quotari versions source-compatible with synthesized Codable.
+  public var priorAccessTokens: [String]?
+  public var priorConsumedRefreshTokens: [String]?
+  /// Set only after an account switch durably captures the resolved live
+  /// generation. If cleanup later fails, an unmatched record is then harmless
+  /// cleanup debt rather than the only remaining copy of a valid grant.
+  public var liveSourceBackupRecorded: Bool?
 
-  public init(grant: ClaudeTokenGrant, previousAccessToken: String, consumedRefreshToken: String) {
+  public init(
+    grant: ClaudeTokenGrant,
+    previousAccessToken: String,
+    consumedRefreshToken: String,
+    priorAccessTokens: [String]? = nil,
+    priorConsumedRefreshTokens: [String]? = nil,
+    liveSourceBackupRecorded: Bool? = nil
+  ) {
     self.grant = grant
     self.previousAccessToken = previousAccessToken
     self.consumedRefreshToken = consumedRefreshToken
+    self.priorAccessTokens = priorAccessTokens
+    self.priorConsumedRefreshTokens = priorConsumedRefreshTokens
+    self.liveSourceBackupRecorded = liveSourceBackupRecorded
   }
 
   /// Whether the exchange demonstrably rotated the refresh token. Only then
@@ -126,25 +146,68 @@ public struct ClaudePendingGrant: Codable, Equatable, Sendable {
 /// instead of submitting the burned token again. Only registry sources are
 /// queued; the CLI-owned keychain/file have Claude Code as a co-owner that
 /// recovers them with its own refresh.
+/// The shared transaction's credential result plus proof that this process
+/// successfully installed a specific grant into the live CLI source. Every
+/// caller receives the proof, including callers that joined an in-flight
+/// refresh, so each can mirror it to its own verified saved-account link.
+public struct ClaudeRefreshResolution: Sendable {
+  public var resolved: ResolvedClaudeCredentials
+  public var acceptedGrant: ClaudePendingGrant?
+
+  public init(
+    resolved: ResolvedClaudeCredentials,
+    acceptedGrant: ClaudePendingGrant? = nil
+  ) {
+    self.resolved = resolved
+    self.acceptedGrant = acceptedGrant
+  }
+}
+
 public actor ClaudeTokenRefreshCoordinator {
   public static let shared = ClaudeTokenRefreshCoordinator()
 
-  private var inFlight: [String: Task<ResolvedClaudeCredentials, Never>] = [:]
+  private struct AcceptedLiveGeneration: Sendable {
+    var accessToken: String
+    var pending: ClaudePendingGrant
+  }
+
+  private var inFlight: [String: Task<ClaudeRefreshResolution, Never>] = [:]
   private var unpersisted: [String: ClaudePendingGrant] = [:]
+  private var acceptedBySource: [String: [AcceptedLiveGeneration]] = [:]
 
   public init() {}
 
   public func resolve(
     key: String,
-    operation: @escaping @Sendable () async -> ResolvedClaudeCredentials
-  ) async -> ResolvedClaudeCredentials {
+    operation: @escaping @Sendable () async -> ClaudeRefreshResolution
+  ) async -> ClaudeRefreshResolution {
     if let task = inFlight[key] {
       return await task.value
     }
     let task = Task { await operation() }
     inFlight[key] = task
     defer { inFlight[key] = nil }
-    return await task.value
+    let resolution = await task.value
+    if let accepted = resolution.acceptedGrant {
+      let sourceID = resolution.resolved.source.stableID
+      let generation = AcceptedLiveGeneration(
+        accessToken: accepted.grant.accessToken,
+        pending: accepted
+      )
+      var recent = acceptedBySource[sourceID, default: []]
+      recent.removeAll { $0.accessToken == generation.accessToken }
+      recent.append(generation)
+      acceptedBySource[sourceID] = Array(recent.suffix(4))
+    }
+    return resolution
+  }
+
+  /// Returns proof retained from a completed transaction. This covers a
+  /// linked account fetch that starts just after an unlinked caller completed
+  /// the shared refresh: its token is already fresh, so it would otherwise
+  /// skip the coordinator and never mirror the accepted grant.
+  public func acceptedGrant(sourceID: String, accessToken: String) -> ClaudePendingGrant? {
+    acceptedBySource[sourceID]?.last { $0.accessToken == accessToken }?.pending
   }
 
   public func rememberUnpersisted(_ pending: ClaudePendingGrant, sourceID: String) {

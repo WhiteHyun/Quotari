@@ -5,6 +5,47 @@ import Testing
 /// Saved-account recovery beyond the happy path: tokens denied before their
 /// local expiry says so, and rotated pairs surviving an app relaunch.
 struct CodexRegistryRecoveryTests {
+  @Test func pendingReadFailureDoesNotExchangeThePossiblyConsumedToken() async throws {
+    let keychain = InMemoryKeychain()
+    let prefix = "Test-CodexPendingRead-\(UUID().uuidString)"
+    let store = CapturedAccountStore(keychain: keychain.store, service: prefix)
+    let expired = codexJWT(claims: ["exp": 1000])
+    try store.save(CapturedAccount(
+      id: "codex:acct-1",
+      provider: .codex,
+      displayName: "Saved Codex",
+      detail: nil,
+      capturedAt: Date(timeIntervalSince1970: 0),
+      origin: .codexAuthFile(path: "/tmp/auth.json"),
+      payload: codexAuthPayload(accessToken: expired, refreshToken: "ref-1")
+    ))
+    let pending = CodexPendingGrant(
+      grant: CodexTokenGrant(accessToken: codexJWT(claims: ["exp": 100_000]), refreshToken: "ref-2"),
+      previousAccessToken: expired,
+      consumedRefreshToken: "ref-1"
+    )
+    try store.savePendingGrant(JSONEncoder().encode(pending), id: "codex:acct-1")
+    keychain.failReads(of: "\(prefix).pending.codex:acct-1")
+    let refresher = StubCodexRefresher(result: .success(CodexTokenGrant(
+      accessToken: codexJWT(claims: ["exp": 200_000]),
+      refreshToken: "ref-3"
+    )))
+    let strategy = CodexUsageStrategy(
+      transport: RefreshStubTransport(json: codexUsageStubJSON),
+      refresher: refresher,
+      capturedAccounts: store,
+      refreshCoordinator: CodexTokenRefreshCoordinator()
+    )
+
+    _ = try await strategy.fetch(ProviderFetchContext(
+      provider: .codex,
+      now: Date(timeIntervalSince1970: 2000),
+      account: codexRegistryAccount()
+    ))
+
+    #expect(refresher.calls.isEmpty)
+  }
+
   @Test func aDeniedTokenIsRefreshedAndRetriedOnce() async throws {
     // No parseable `exp` (an opaque token) and the endpoint denies it: the
     // proactive expiry check can't help, so the 401 must trigger one forced

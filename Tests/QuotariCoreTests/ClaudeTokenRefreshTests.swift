@@ -123,27 +123,27 @@ struct ClaudeTokenRefreshCoordinatorTests {
   @Test func concurrentCallersShareOneTransaction() async {
     let coordinator = ClaudeTokenRefreshCoordinator()
     let counter = CallCounter()
-    let operation: @Sendable () async -> ResolvedClaudeCredentials = {
+    let operation: @Sendable () async -> ClaudeRefreshResolution = {
       await counter.increment()
       try? await Task.sleep(for: .milliseconds(100))
-      return Self.resolved(token: "fresh")
+      return ClaudeRefreshResolution(resolved: Self.resolved(token: "fresh"))
     }
 
     async let first = coordinator.resolve(key: "claude-keychain:test#ref-1", operation: operation)
     async let second = coordinator.resolve(key: "claude-keychain:test#ref-1", operation: operation)
     let outcomes = await [first, second]
 
-    #expect(outcomes.map(\.credentials.accessToken) == ["fresh", "fresh"])
+    #expect(outcomes.map(\.resolved.credentials.accessToken) == ["fresh", "fresh"])
     #expect(await counter.count == 1)
   }
 
   @Test func distinctTokenGenerationsResolveIndependently() async {
     let coordinator = ClaudeTokenRefreshCoordinator()
     let counter = CallCounter()
-    let operation: @Sendable () async -> ResolvedClaudeCredentials = {
+    let operation: @Sendable () async -> ClaudeRefreshResolution = {
       await counter.increment()
       try? await Task.sleep(for: .milliseconds(50))
-      return Self.resolved(token: "fresh")
+      return ClaudeRefreshResolution(resolved: Self.resolved(token: "fresh"))
     }
 
     // Same source, different refresh-token generation: never share a run.
@@ -152,6 +152,47 @@ struct ClaudeTokenRefreshCoordinatorTests {
     _ = await [first, second]
 
     #expect(await counter.count == 2)
+  }
+
+  @Test func anOlderTransactionFinishingLastDoesNotHideNewerAcceptedProof() async {
+    let coordinator = ClaudeTokenRefreshCoordinator()
+    let source = ProviderCredentialSource.claudeKeychain(service: "test")
+    let olderPending = ClaudePendingGrant(
+      grant: ClaudeTokenGrant(accessToken: "token-b", refreshToken: "ref-b"),
+      previousAccessToken: "token-a",
+      consumedRefreshToken: "ref-a"
+    )
+    let newerPending = ClaudePendingGrant(
+      grant: ClaudeTokenGrant(accessToken: "token-c", refreshToken: "ref-c"),
+      previousAccessToken: "token-b",
+      consumedRefreshToken: "ref-b"
+    )
+
+    async let older = coordinator.resolve(key: "\(source.stableID)#ref-a") {
+      try? await Task.sleep(for: .milliseconds(100))
+      return ClaudeRefreshResolution(
+        resolved: ResolvedClaudeCredentials(
+          credentials: ClaudeCredentials(accessToken: "token-b"),
+          source: source
+        ),
+        acceptedGrant: olderPending
+      )
+    }
+    async let newer = coordinator.resolve(key: "\(source.stableID)#ref-b") {
+      try? await Task.sleep(for: .milliseconds(10))
+      return ClaudeRefreshResolution(
+        resolved: ResolvedClaudeCredentials(
+          credentials: ClaudeCredentials(accessToken: "token-c"),
+          source: source
+        ),
+        acceptedGrant: newerPending
+      )
+    }
+    _ = await [older, newer]
+
+    #expect(
+      await coordinator.acceptedGrant(sourceID: source.stableID, accessToken: "token-c") == newerPending
+    )
   }
 
   private actor CallCounter {

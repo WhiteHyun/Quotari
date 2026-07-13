@@ -8,7 +8,12 @@ struct CodexCredentialsWriterTests {
     {"tokens": {"access_token": "old-tok", "refresh_token": "old-ref",
                 "id_token": "old-id", "account_id": "acct-1"}}
     """#.utf8)
-    let grant = CodexTokenGrant(accessToken: "new-tok", refreshToken: "new-ref", idToken: "new-id")
+    let grant = CodexTokenGrant(
+      accessToken: "new-tok",
+      refreshToken: "new-ref",
+      idToken: "new-id",
+      refreshedAt: Date(timeIntervalSince1970: 2000)
+    )
 
     let merged = try CodexCredentialsWriter().merge(grant, replacing: "old-tok", into: payload)
 
@@ -18,6 +23,7 @@ struct CodexCredentialsWriterTests {
     #expect(tokens?["refresh_token"] as? String == "new-ref")
     #expect(tokens?["id_token"] as? String == "new-id")
     #expect(tokens?["account_id"] as? String == "acct-1")
+    #expect(root?["last_refresh"] as? String == "1970-01-01T00:33:20Z")
   }
 
   @Test func mergeWithoutRotatedFieldsKeepsTheStoredOnes() throws {
