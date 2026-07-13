@@ -2,29 +2,139 @@ import Foundation
 
 public protocol ProviderAccountDiscovering: Sendable {
   func accounts(for provider: UsageProvider) async -> [ProviderAccount]
+
+  /// The live account among `accounts` holding the same underlying credential
+  /// identity as the given saved (registry) account, if any. Lets a selection
+  /// pointing at a saved copy be reconciled to the live login that hides it.
+  func liveAccount(
+    equivalentTo account: ProviderAccount,
+    among accounts: [ProviderAccount]
+  ) async -> ProviderAccount?
+
+  /// The saved (registry) accounts standing behind the given live logins,
+  /// keyed by live-account id — i.e. identities that are saved, with the
+  /// saved row hidden while it is the live credential.
+  func capturedCopies(among accounts: [ProviderAccount]) async -> [String: ProviderAccount]
+}
+
+public extension ProviderAccountDiscovering {
+  func liveAccount(
+    equivalentTo account: ProviderAccount,
+    among accounts: [ProviderAccount]
+  ) async -> ProviderAccount? {
+    nil
+  }
+
+  func capturedCopies(among accounts: [ProviderAccount]) async -> [String: ProviderAccount] {
+    [:]
+  }
 }
 
 public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
   private let environment: [String: String]
   private let home: URL
   private let keychainData: @Sendable () -> Data?
+  private let capturedAccounts: CapturedAccountStore
 
   public init(
     environment: [String: String] = ProcessInfo.processInfo.environment,
     home: URL = FileManager.default.homeDirectoryForCurrentUser,
-    keychainData: (@Sendable () -> Data?)? = nil
+    keychainData: (@Sendable () -> Data?)? = nil,
+    capturedAccounts: CapturedAccountStore = CapturedAccountStore()
   ) {
     self.environment = environment
     self.home = home
     self.keychainData = keychainData ?? { ClaudeCredentialsStore.keychainItem() }
+    self.capturedAccounts = capturedAccounts
   }
 
   public func accounts(for provider: UsageProvider) async -> [ProviderAccount] {
-    switch provider {
-    case .codex:
-      codexAccounts()
-    case .claude:
-      claudeAccounts()
+    let live = switch provider {
+    case .codex: codexAccounts()
+    case .claude: claudeAccounts()
+    }
+    // Captured snapshots join discovery so selection and usage reuse the same
+    // path. A captured entry is hidden when its identity matches a RENEWABLE
+    // live login — an unrenewable live payload (no refresh token) must not
+    // hide the saved copy that can still refresh itself.
+    let liveIdentities = Set(live.compactMap { renewableIdentity(of: $0.credentialSource, provider: provider) })
+    let saved = capturedAccounts.load()
+      .filter { $0.provider == provider }
+      .filter { captured in
+        guard let key = ProviderCredentialIdentity.key(provider: provider, payload: captured.payload)
+        else { return true }
+        return !liveIdentities.contains(key)
+      }
+      .map { captured in
+        ProviderAccount(
+          provider: provider,
+          displayName: captured.displayName,
+          detail: captured.detail ?? "Saved in Quotari",
+          credentialSource: .quotariRegistry(id: captured.id)
+        )
+      }
+    return live + saved
+  }
+
+  public func liveAccount(
+    equivalentTo account: ProviderAccount,
+    among accounts: [ProviderAccount]
+  ) async -> ProviderAccount? {
+    guard case let .quotariRegistry(id) = account.credentialSource,
+          let captured = capturedAccounts.account(id: id),
+          let key = ProviderCredentialIdentity.key(provider: captured.provider, payload: captured.payload)
+    else { return nil }
+    return accounts.first { candidate in
+      !candidate.credentialSource.isCaptured
+        && identity(of: candidate.credentialSource, provider: candidate.provider) == key
+    }
+  }
+
+  public func capturedCopies(among accounts: [ProviderAccount]) async -> [String: ProviderAccount] {
+    let captured = capturedAccounts.load()
+    guard !captured.isEmpty else { return [:] }
+    let byIdentity: [UsageProvider: [String: CapturedAccount]] = captured
+      .reduce(into: [:]) { keys, item in
+        if let key = ProviderCredentialIdentity.key(provider: item.provider, payload: item.payload) {
+          keys[item.provider, default: [:]][key] = item
+        }
+      }
+    var copies: [String: ProviderAccount] = [:]
+    for account in accounts where !account.credentialSource.isCaptured {
+      guard let key = renewableIdentity(of: account.credentialSource, provider: account.provider),
+            let item = byIdentity[account.provider]?[key] else { continue }
+      copies[account.id] = ProviderAccount(
+        provider: item.provider,
+        displayName: item.displayName,
+        detail: item.detail ?? "Saved in Quotari",
+        credentialSource: .quotariRegistry(id: item.id)
+      )
+    }
+    return copies
+  }
+
+  private func identity(of source: ProviderCredentialSource, provider: UsageProvider) -> String? {
+    rawPayload(of: source).flatMap { ProviderCredentialIdentity.key(provider: provider, payload: $0) }
+  }
+
+  /// The identity of a live login, but only when its payload can renew
+  /// itself (carries a refresh token) — the bar for standing in for a saved
+  /// copy, hiding it, or feeding a sync.
+  private func renewableIdentity(of source: ProviderCredentialSource, provider: UsageProvider) -> String? {
+    guard let payload = rawPayload(of: source),
+          ProviderCredentialMinimizer.minimize(provider: provider, payload: payload) != nil
+    else { return nil }
+    return ProviderCredentialIdentity.key(provider: provider, payload: payload)
+  }
+
+  private func rawPayload(of source: ProviderCredentialSource) -> Data? {
+    switch source {
+    case let .codexAuthFile(path), let .claudeCredentialsFile(path):
+      try? Data(contentsOf: URL(fileURLWithPath: path))
+    case .claudeKeychain:
+      keychainData()
+    case .claudeEnvironment, .quotariRegistry:
+      nil
     }
   }
 

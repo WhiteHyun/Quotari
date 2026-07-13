@@ -21,6 +21,10 @@ struct ProviderAccountPopover: View {
     store.accounts[descriptor.id] ?? []
   }
 
+  private var activeAccount: ProviderAccount? {
+    store.activeAccount(for: descriptor.id)
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       header
@@ -28,6 +32,12 @@ struct ProviderAccountPopover: View {
         ForEach(accounts) { account in
           accountButton(account)
         }
+      }
+      if let error = store.captureErrors[descriptor.id] {
+        Text(error)
+          .font(.caption)
+          .foregroundStyle(.red)
+          .fixedSize(horizontal: false, vertical: true)
       }
       Divider()
       footer
@@ -67,10 +77,41 @@ struct ProviderAccountPopover: View {
     }
     .buttonStyle(.plain)
     .accessibilityHint("Selects this account and updates the dashboard")
+    .contextMenu { accountMenu(account) }
+  }
+
+  @ViewBuilder
+  private func accountMenu(_ account: ProviderAccount) -> some View {
+    if store.isCapturable(account) {
+      Button("Save to Quotari") {
+        Task { await store.captureAccount(account) }
+      }
+    }
+    if store.capturedEquivalents.keys.contains(account.id) {
+      // The saved copy's own row is hidden while this login is live, so the
+      // live row is the only place its removal can be offered.
+      Button("Remove Saved Copy", role: .destructive) {
+        Task { await store.removeCapturedCopy(of: account) }
+      }
+    }
+    if account.credentialSource.isCaptured {
+      Button("Remove Saved Account", role: .destructive) {
+        Task { await store.removeCapturedAccount(account) }
+      }
+    }
   }
 
   private var footer: some View {
     VStack(spacing: 2) {
+      if let active = activeAccount, store.isCapturable(active) {
+        PopoverActionButton(
+          title: "Save “\(active.displayName)” to Quotari",
+          systemImage: "square.and.arrow.down",
+          busy: false
+        ) {
+          Task { await store.captureAccount(active) }
+        }
+      }
       PopoverActionButton(
         title: "Reload Accounts",
         systemImage: "arrow.clockwise",
@@ -119,6 +160,14 @@ private struct ProviderAccountUsageRow: View {
           }
         }
         Spacer()
+        if account.credentialSource.isCaptured {
+          Text("Saved")
+            .font(.caption2.weight(.medium))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(accent.opacity(0.15), in: Capsule())
+            .foregroundStyle(accent)
+        }
         if let plan = usage?.snapshot?.plan {
           Text(plan)
             .font(.caption)

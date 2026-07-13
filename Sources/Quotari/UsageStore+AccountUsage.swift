@@ -25,6 +25,14 @@ struct AccountUsageRefreshTask {
   let force: Bool
 }
 
+/// A selection change decided during account rediscovery: the account to
+/// select now, and — when it is a live stand-in for a hidden saved copy —
+/// the saved account the selection logically remains on.
+struct SelectionUpdate {
+  var account: ProviderAccount
+  var origin: ProviderAccount?
+}
+
 extension UsageStore {
   /// The explicitly selected account, or the discovered account the current
   /// provider snapshot confidently names. Without either there is no active
@@ -37,6 +45,71 @@ extension UsageStore {
     guard let accountName = snapshots[provider]?.account else { return nil }
     return (accounts[provider] ?? []).first {
       $0.displayName.localizedCaseInsensitiveCompare(accountName) == .orderedSame
+    }
+  }
+
+  /// Where a previously selected account landed after rediscovery, evaluated
+  /// from the account the user *logically* selected: a live stand-in defers
+  /// to the saved account it stands in for. When the saved account is
+  /// discoverable (again), it is the selection — so a CLI slot reused by
+  /// another login falls back to the saved copy instead of being silently
+  /// followed. While the saved identity is the live login, the live account
+  /// substitutes (fetching with the freshest credential) and the origin is
+  /// remembered. A logical account discovery lost entirely is re-listed
+  /// as-is so the selection isn't silently dropped.
+  func reconciledSelection(
+    _ selected: ProviderAccount,
+    origin: ProviderAccount?,
+    in accounts: inout [ProviderAccount]
+  ) async -> SelectionUpdate? {
+    let logical = origin ?? selected
+    if let visible = accounts.first(where: { $0.id == logical.id }) {
+      if visible == selected, origin == nil {
+        return nil
+      }
+      return SelectionUpdate(account: visible, origin: nil)
+    }
+    if let live = await accountDiscovery.liveAccount(equivalentTo: logical, among: accounts) {
+      if live == selected {
+        return nil // the stand-in is already selected; the origin stays
+      }
+      return SelectionUpdate(account: live, origin: logical)
+    }
+    accounts.append(logical)
+    return logical == selected ? nil : SelectionUpdate(account: logical, origin: nil)
+  }
+
+  func selectAccount(id: String?, for provider: UsageProvider) {
+    let account = id.flatMap { id in accounts[provider]?.first { $0.id == id } }
+    selectAccount(account, for: provider)
+  }
+
+  func selectAccount(_ account: ProviderAccount?, for provider: UsageProvider) {
+    // Picking a live row that stands in for a hidden saved copy means picking
+    // that saved account: anchor to it so a later slot reuse falls back to it
+    // instead of following the slot.
+    let origin = account.flatMap { capturedEquivalents[$0.id] }
+    selectAccount(account, for: provider, standingInFor: origin)
+  }
+
+  /// The selections as they should survive a relaunch: a live stand-in is
+  /// stored as the saved account it stands in for.
+  func persistableSelections() -> [UsageProvider: ProviderAccount] {
+    var stored = selectedAccounts
+    for (provider, origin) in reconciledSelectionOrigins {
+      stored[provider] = origin
+    }
+    return stored
+  }
+
+  /// Whether an account can be saved: already-captured entries, live logins
+  /// whose identity is already saved (their registry row is just hidden), and
+  /// static env tokens (no refresh token to keep them alive) are excluded.
+  func isCapturable(_ account: ProviderAccount) -> Bool {
+    guard capturedEquivalents[account.id] == nil else { return false }
+    switch account.credentialSource {
+    case .quotariRegistry, .claudeEnvironment: return false
+    case .codexAuthFile, .claudeKeychain, .claudeCredentialsFile: return true
     }
   }
 
@@ -79,6 +152,9 @@ extension UsageStore {
       )
       refreshingAccountUsageProviders.remove(provider)
       accountUsageRefreshTasks[provider] = nil
+      // Per-account fetches can rotate a live token too; keep any hidden
+      // saved copy of that identity in step.
+      await syncCapturedCopies(of: capturedCopyCandidates.filter { $0.provider == provider })
     }
     accountUsageRefreshTasks[provider] = AccountUsageRefreshTask(task: task, force: force)
     await task.value

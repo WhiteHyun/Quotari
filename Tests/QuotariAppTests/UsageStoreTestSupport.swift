@@ -6,9 +6,59 @@ import Foundation
 /// credentials of the machine running the tests.
 struct StaticAccountDiscovery: ProviderAccountDiscovering {
   var accounts: [UsageProvider: [ProviderAccount]] = [:]
+  /// Saved-account id → the live account hiding it, mirroring the production
+  /// discovery's identity-equivalence lookup.
+  var liveEquivalents: [String: ProviderAccount] = [:]
+  /// The hidden saved copy behind each live account id.
+  var capturedCopies: [String: ProviderAccount] = [:]
 
   func accounts(for provider: UsageProvider) async -> [ProviderAccount] {
     accounts[provider] ?? []
+  }
+
+  func liveAccount(
+    equivalentTo account: ProviderAccount,
+    among accounts: [ProviderAccount]
+  ) async -> ProviderAccount? {
+    liveEquivalents[account.id]
+  }
+
+  func capturedCopies(among accounts: [ProviderAccount]) async -> [String: ProviderAccount] {
+    capturedCopies.filter { id, _ in accounts.contains { $0.id == id } }
+  }
+}
+
+/// Discovery stub whose results a test can swap between reloads (e.g. the
+/// CLI slot being reused by another login mid-session).
+final class MutableAccountDiscovery: ProviderAccountDiscovering, @unchecked Sendable {
+  private let lock = NSLock()
+  private var current: StaticAccountDiscovery
+
+  init(_ initial: StaticAccountDiscovery) {
+    current = initial
+  }
+
+  func update(_ discovery: StaticAccountDiscovery) {
+    lock.withLock { current = discovery }
+  }
+
+  private var snapshot: StaticAccountDiscovery {
+    lock.withLock { current }
+  }
+
+  func accounts(for provider: UsageProvider) async -> [ProviderAccount] {
+    await snapshot.accounts(for: provider)
+  }
+
+  func liveAccount(
+    equivalentTo account: ProviderAccount,
+    among accounts: [ProviderAccount]
+  ) async -> ProviderAccount? {
+    await snapshot.liveAccount(equivalentTo: account, among: accounts)
+  }
+
+  func capturedCopies(among accounts: [ProviderAccount]) async -> [String: ProviderAccount] {
+    await snapshot.capturedCopies(among: accounts)
   }
 }
 
@@ -17,6 +67,47 @@ struct StaticAccountDiscovery: ProviderAccountDiscovering {
 struct NullCostEstimator: UsageCostEstimating {
   func costSummary(provider: UsageProvider, now: Date, historyDays: Int) async -> CostSummary? {
     nil
+  }
+}
+
+extension AccountCaptureService {
+  /// A capture service backed by an in-memory keychain, so tests never touch
+  /// the real keychain when a store constructs its default.
+  static func inMemoryForTesting(capturedAccounts: CapturedAccountStore? = nil) -> AccountCaptureService {
+    AccountCaptureService(
+      capturedAccounts: capturedAccounts ?? .inMemoryForTesting(),
+      claudeKeychainRead: { _ in nil }
+    )
+  }
+}
+
+extension CapturedAccountStore {
+  /// A registry backed by an in-memory keychain, so tests can inspect what
+  /// a capture service persisted without touching the real keychain.
+  static func inMemoryForTesting() -> CapturedAccountStore {
+    let box = InMemoryKeychainBox()
+    let keychain = KeychainItemStore(
+      read: { box.read($0) },
+      write: { box.write($0, $1) },
+      delete: { box.delete($0) }
+    )
+    return CapturedAccountStore(keychain: keychain, service: "Test-\(UUID().uuidString)")
+  }
+}
+
+private final class InMemoryKeychainBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var items: [String: Data] = [:]
+  func read(_ s: String) -> Data? {
+    lock.withLock { items[s] }
+  }
+
+  func write(_ d: Data, _ s: String) {
+    lock.withLock { items[s] = d }
+  }
+
+  func delete(_ s: String) {
+    lock.withLock { items[s] = nil }
   }
 }
 
@@ -44,6 +135,7 @@ extension UsageStore {
     costEstimator: any UsageCostEstimating = NullCostEstimator(),
     accountDiscovery: any ProviderAccountDiscovering = StaticAccountDiscovery(),
     accountSelectionStore: ProviderAccountSelectionStore = .temporaryForTesting(),
+    accountCapture: AccountCaptureService = .inMemoryForTesting(),
     defaults: UserDefaults? = nil,
     startsAutomatically: Bool = true
   ) -> UsageStore {
@@ -52,6 +144,7 @@ extension UsageStore {
       costEstimator: costEstimator,
       accountDiscovery: accountDiscovery,
       accountSelectionStore: accountSelectionStore,
+      accountCapture: accountCapture,
       defaults: defaults ?? ephemeralDefaults(),
       startsAutomatically: startsAutomatically
     )
@@ -65,5 +158,97 @@ extension UsageStore {
       fatalError("Could not create isolated UserDefaults suite \(suiteName)")
     }
     return defaults
+  }
+}
+
+struct EmptyCostEstimator: UsageCostEstimating {
+  func costSummary(provider: UsageProvider, now: Date, historyDays: Int) async -> CostSummary? {
+    nil
+  }
+}
+
+actor AccountRecorder {
+  private(set) var accounts: [ProviderAccount?] = []
+
+  func record(_ account: ProviderAccount?) {
+    accounts.append(account)
+  }
+}
+
+struct RecordingAccountStrategy: ProviderFetchStrategy {
+  let recorder: AccountRecorder
+  let id = "recording"
+  let kind = ProviderFetchKind.mock
+
+  func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
+    await recorder.record(context.account)
+    return ProviderFetchResult(
+      usage: UsageSnapshot(
+        provider: context.provider,
+        plan: "Test",
+        primary: RateWindow(kind: .session, usedPercent: 10),
+        updatedAt: context.now
+      ),
+      sourceLabel: "Stub"
+    )
+  }
+}
+
+actor AccountSwitchRaceStrategy: ProviderFetchStrategy {
+  let id = "account-switch-race"
+  let kind = ProviderFetchKind.api
+
+  private(set) var requestCount = 0
+  private var firstRequestContinuation: CheckedContinuation<Void, Never>?
+  private var firstRequestStartedContinuation: CheckedContinuation<Void, Never>?
+
+  func waitUntilFirstRequestStarts() async {
+    guard requestCount == 0 else { return }
+    await withCheckedContinuation { continuation in
+      firstRequestStartedContinuation = continuation
+    }
+  }
+
+  func resumeFirstRequest() {
+    firstRequestContinuation?.resume()
+    firstRequestContinuation = nil
+  }
+
+  func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
+    let isFirstRequest = requestCount == 0
+    requestCount += 1
+    if isFirstRequest {
+      firstRequestStartedContinuation?.resume()
+      firstRequestStartedContinuation = nil
+      await withCheckedContinuation { continuation in
+        firstRequestContinuation = continuation
+      }
+    }
+
+    let isSelected = context.account?.displayName == "Selected"
+    return ProviderFetchResult(
+      usage: UsageSnapshot(
+        provider: context.provider,
+        plan: "Test",
+        account: context.account?.displayName,
+        primary: RateWindow(kind: .session, usedPercent: isSelected ? 20 : 10),
+        updatedAt: context.now
+      ),
+      sourceLabel: "Stub"
+    )
+  }
+}
+
+final class TemporaryDirectory {
+  let url: URL
+
+  init() throws {
+    url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("quotari-usage-store-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+  }
+
+  deinit {
+    try? FileManager.default.removeItem(at: url)
   }
 }

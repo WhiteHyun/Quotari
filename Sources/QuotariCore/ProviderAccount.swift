@@ -46,6 +46,8 @@ public enum ProviderCredentialSource: Codable, Equatable, Sendable {
   case claudeEnvironment(name: String)
   case claudeKeychain(service: String)
   case claudeCredentialsFile(path: String)
+  /// A snapshot Quotari captured and owns, identified by its registry id.
+  case quotariRegistry(id: String)
 
   public var stableID: String {
     switch self {
@@ -57,6 +59,8 @@ public enum ProviderCredentialSource: Codable, Equatable, Sendable {
       "claude-keychain:\(service)"
     case let .claudeCredentialsFile(path):
       "claude-file:\(path)"
+    case let .quotariRegistry(id):
+      "quotari-registry:\(id)"
     }
   }
 
@@ -70,6 +74,16 @@ public enum ProviderCredentialSource: Codable, Equatable, Sendable {
       "Keychain"
     case .claudeCredentialsFile:
       ".credentials.json"
+    case .quotariRegistry:
+      "Saved in Quotari"
     }
+  }
+
+  /// True for sources whose bytes Quotari itself owns and can rewrite.
+  public var isCaptured: Bool {
+    if case .quotariRegistry = self {
+      return true
+    }
+    return false
   }
 }

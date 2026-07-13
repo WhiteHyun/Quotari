@@ -1,7 +1,7 @@
 import Foundation
 
 /// A refreshed token pair as returned by the OAuth token endpoint.
-public struct ClaudeTokenGrant: Equatable, Sendable {
+public struct ClaudeTokenGrant: Codable, Equatable, Sendable {
   public var accessToken: String
   public var refreshToken: String?
   public var expiresAt: Date?
@@ -89,16 +89,48 @@ public struct ClaudeTokenRefresher: ClaudeTokenRefreshing {
   }
 }
 
+/// A grant the OAuth endpoint already issued whose write-back failed. Kept
+/// with the access token the merge expected (so a retry still detects a
+/// source that has moved on) and the refresh token the exchange consumed (so
+/// a stored pair still riding that token is recognized as superseded by this
+/// grant rather than exchanged again).
+public struct ClaudePendingGrant: Codable, Equatable, Sendable {
+  public var grant: ClaudeTokenGrant
+  public var previousAccessToken: String
+  public var consumedRefreshToken: String
+
+  public init(grant: ClaudeTokenGrant, previousAccessToken: String, consumedRefreshToken: String) {
+    self.grant = grant
+    self.previousAccessToken = previousAccessToken
+    self.consumedRefreshToken = consumedRefreshToken
+  }
+
+  /// Whether the exchange demonstrably rotated the refresh token. Only then
+  /// is the consumed token known dead — a grant that returned no token (or
+  /// the same one) proves the endpoint keeps it alive across exchanges.
+  public var rotatedRefreshToken: Bool {
+    grant.refreshToken.map { $0 != consumedRefreshToken } ?? false
+  }
+}
+
 /// Runs the whole refresh-and-persist transaction once per key: Quotari can
 /// fetch the same provider from more than one place at once (dashboard
 /// refresh + account popover), and burning the rotating refresh token twice
 /// would invalidate the pair the first caller just obtained. The key includes
 /// the refresh-token generation, so a caller that already holds a newer pair
 /// never joins (or clobbers) an older generation's transaction.
+///
+/// Also holds grants whose registry write-back failed: the exchange already
+/// consumed the stored refresh token server-side, so losing the new pair
+/// could strand a saved account — the next transaction retries the write
+/// instead of submitting the burned token again. Only registry sources are
+/// queued; the CLI-owned keychain/file have Claude Code as a co-owner that
+/// recovers them with its own refresh.
 public actor ClaudeTokenRefreshCoordinator {
   public static let shared = ClaudeTokenRefreshCoordinator()
 
   private var inFlight: [String: Task<ResolvedClaudeCredentials, Never>] = [:]
+  private var unpersisted: [String: ClaudePendingGrant] = [:]
 
   public init() {}
 
@@ -113,5 +145,13 @@ public actor ClaudeTokenRefreshCoordinator {
     inFlight[key] = task
     defer { inFlight[key] = nil }
     return await task.value
+  }
+
+  public func rememberUnpersisted(_ pending: ClaudePendingGrant, sourceID: String) {
+    unpersisted[sourceID] = pending
+  }
+
+  public func takeUnpersisted(sourceID: String) -> ClaudePendingGrant? {
+    unpersisted.removeValue(forKey: sourceID)
   }
 }
