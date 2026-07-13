@@ -78,6 +78,84 @@ public struct AccountCaptureService: Sendable {
     try capturedAccounts.remove(id: id)
   }
 
+  /// Saves an already-read raw payload into the registry (minimizing it
+  /// first), for callers that must back up the exact bytes they are about to
+  /// overwrite — the switch reads the slot once, throwing, then hands those
+  /// bytes here. Returns nil (nothing durable to preserve) for an
+  /// unrenewable or wrong-shaped payload; throws only on a keychain fault.
+  @discardableResult
+  public func captureRawPayload(
+    provider: UsageProvider,
+    origin: ProviderCredentialSource,
+    payload: Data,
+    now: Date
+  ) throws -> CapturedAccount? {
+    // Renewability is the bar; an identity-less (but renewable) login is
+    // still saved, under a UUID, exactly as normal Save would.
+    guard let minimized = ProviderCredentialMinimizer.minimize(provider: provider, payload: payload) else {
+      return nil
+    }
+    let identity = ProviderCredentialIdentity.key(provider: provider, payload: minimized)
+    let id = registryID(provider: provider, identity: identity)
+    // Refreshing an existing copy must never downgrade a fresher stored pair
+    // (a duplicate stale slot, or a rotation another path already synced).
+    // The freshness check runs inside the mutation lock so it's atomic.
+    if capturedAccounts.account(id: id) != nil {
+      let provider = provider
+      try capturedAccounts.updatePayload(id: id) { current in
+        if let stored = Self.expiry(provider: provider, payload: current),
+           let candidate = Self.expiry(provider: provider, payload: minimized),
+           candidate < stored {
+          return current
+        }
+        return minimized
+      }
+      return capturedAccounts.account(id: id)
+    }
+    let captured = CapturedAccount(
+      id: id,
+      provider: provider,
+      displayName: ProviderCredentialIdentity.displayName(provider: provider, payload: minimized)
+        ?? Self.defaultDisplayName(for: provider),
+      detail: origin.detail,
+      capturedAt: now,
+      origin: origin,
+      payload: minimized
+    )
+    try capturedAccounts.save(captured)
+    return captured
+  }
+
+  /// Refreshes a known saved account from the exact live source that still
+  /// represents it. This explicit id is required for Claude: rotating the
+  /// refresh token changes its fingerprint, so ordinary capture would create
+  /// a second row and leave the original id holding a consumed pair.
+  @discardableResult
+  public func refreshCapturedAccount(
+    id: String,
+    provider: UsageProvider,
+    payload: Data
+  ) throws -> CapturedAccount {
+    guard let existing = capturedAccounts.account(id: id), existing.provider == provider,
+          let minimized = ProviderCredentialMinimizer.minimize(provider: provider, payload: payload)
+    else { throw AccountCaptureError.payloadUnavailable }
+    // The caller must supply independent identity/generation proof before
+    // choosing this explicit id. Once proven, the current rotated pair wins
+    // even if the provider shortened or omitted its expiry.
+    try capturedAccounts.updatePayload(id: id) { _ in minimized }
+    guard let refreshed = capturedAccounts.account(id: id) else {
+      throw AccountCaptureError.payloadUnavailable
+    }
+    return refreshed
+  }
+
+  private static func defaultDisplayName(for provider: UsageProvider) -> String {
+    switch provider {
+    case .claude: "Claude Code"
+    case .codex: "Codex account"
+    }
+  }
+
   /// Removes the saved copy of a live login's identity and returns its
   /// registry id — the deletion path for a saved account whose registry row
   /// is hidden while the same identity is the live CLI login. Only the
@@ -106,14 +184,19 @@ public struct AccountCaptureService: Sendable {
       else { continue }
       let id = registryID(provider: account.provider, identity: identity)
       guard let existing = capturedAccounts.account(id: id), existing.payload != payload else { continue }
-      // Same identity, but slots can be duplicated (default + CODEX_HOME):
-      // never let a stale slot clobber a fresher saved pair.
-      if let stored = Self.expiry(provider: account.provider, payload: existing.payload),
-         let candidate = Self.expiry(provider: account.provider, payload: payload),
-         candidate < stored {
-        continue
+      let provider = account.provider
+      // Same identity, but slots can be duplicated (default + CODEX_HOME) and
+      // a concurrent refresh can land between this read and the write — so the
+      // freshness decision runs INSIDE the mutation lock (on the payload
+      // stored right now), never letting a stale slot clobber a fresher pair.
+      try? capturedAccounts.updatePayload(id: id) { current in
+        if let stored = Self.expiry(provider: provider, payload: current),
+           let candidate = Self.expiry(provider: provider, payload: payload),
+           candidate < stored {
+          return current
+        }
+        return payload
       }
-      try? capturedAccounts.updatePayload(id: id) { _ in payload }
     }
   }
 
@@ -153,25 +236,35 @@ public struct AccountCaptureService: Sendable {
 
   private func registryID(provider: UsageProvider, identity: String?) -> String {
     if let identity {
+      // Preserve legacy UUID ids created before this provider had a fallback
+      // credential identity. Re-capture and discovery must converge on the
+      // existing row rather than creating a deterministic duplicate.
+      if let existing = capturedAccounts.load().first(where: { account in
+        account.provider == provider
+          && ProviderCredentialIdentity.key(provider: provider, payload: account.payload) == identity
+      }) {
+        return existing.id
+      }
       return "\(provider.rawValue):\(identity)"
     }
     return "\(provider.rawValue):\(UUID().uuidString)"
   }
 }
 
-/// A per-account identity derived from a credential payload. Codex exposes a
-/// durable `account_id` (so a re-capture updates the same entry). Claude's
-/// payload has no durable account id, so its identity is a fingerprint of the
-/// refresh token: stable enough to dedupe the same login immediately after
-/// capture and to hide the saved copy while it's the live account, without
-/// claiming to survive a server-side refresh-token rotation. (A durable Claude
-/// identity via the profile email arrives with PS-135.)
+/// A per-account identity derived from a credential payload. Codex normally
+/// exposes a durable `account_id`; legacy id-less logins fall back to their
+/// renewable refresh-token fingerprint. Claude's payload has no durable id,
+/// so its credential identity remains a refresh-token fingerprint; profile
+/// identity is verified separately by the app when a rotation must be linked
+/// back to a saved registry row.
 public enum ProviderCredentialIdentity {
   public static func key(provider: UsageProvider, payload: Data) -> String? {
     switch provider {
     case .codex:
       guard let credentials = try? CodexCredentialsStore.parse(payload) else { return nil }
-      return normalized(credentials.accountID) ?? normalized(credentials.email)
+      return normalized(credentials.accountID)
+        ?? normalized(credentials.email)
+        ?? credentials.refreshToken.flatMap(codexRefreshIdentity)
     case .claude:
       guard let credentials = try? ClaudeCredentialsStore.parse(payload) else { return nil }
       return claudeIdentity(refreshToken: credentials.refreshToken, accessToken: credentials.accessToken)
@@ -183,6 +276,15 @@ public enum ProviderCredentialIdentity {
   /// dedupe the same login and to detect when a credential slot's underlying
   /// account has changed. Both empty ⇒ no identity.
   public static func claudeIdentity(refreshToken: String?, accessToken: String?) -> String? {
+    tokenIdentity(refreshToken: refreshToken, accessToken: accessToken)
+  }
+
+  private static func codexRefreshIdentity(_ refreshToken: String) -> String? {
+    guard let refreshToken = normalized(refreshToken) else { return nil }
+    return "fp:\(fingerprint(refreshToken))"
+  }
+
+  private static func tokenIdentity(refreshToken: String?, accessToken: String?) -> String? {
     guard let secret = normalized(refreshToken) ?? normalized(accessToken) else { return nil }
     return "fp:\(fingerprint(secret))"
   }
@@ -240,7 +342,14 @@ public enum ProviderCredentialMinimizer {
             let accessToken = tokens["access_token"] as? String, !accessToken.isEmpty,
             let refreshToken = tokens["refresh_token"] as? String, !refreshToken.isEmpty
       else { return nil }
-      return try? JSONSerialization.data(withJSONObject: ["tokens": tokens], options: [.sortedKeys])
+      // Codex requires `last_refresh` alongside `tokens` before it will expose
+      // the token data. Keep that provider-owned timestamp while still
+      // dropping unrelated root secrets such as OPENAI_API_KEY.
+      var minimized: [String: Any] = ["tokens": tokens]
+      if let lastRefresh = root["last_refresh"] as? String, !lastRefresh.isEmpty {
+        minimized["last_refresh"] = lastRefresh
+      }
+      return try? JSONSerialization.data(withJSONObject: minimized, options: [.sortedKeys])
     }
   }
 
