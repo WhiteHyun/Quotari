@@ -191,6 +191,18 @@ struct CapturedAccountStoreTests {
     #expect(store.pendingGrantData(id: "a") == nil)
   }
 
+  @Test func pendingGrantForARemovedAccountIsNotRecreated() throws {
+    let store = makeStore(InMemoryKeychain())
+    try store.save(Self.account(id: "a", capturedAt: Date(timeIntervalSince1970: 100)))
+    try store.remove(id: "a")
+
+    // An in-flight refresh finishing after removal must not leave a token
+    // blob behind for an account that no longer exists.
+    try store.savePendingGrant(Data("pending".utf8), id: "a")
+
+    #expect(store.pendingGrantData(id: "a") == nil)
+  }
+
   @Test func saveFaultAfterIndexLeavesNoOrphanedSecret() throws {
     let keychain = InMemoryKeychain()
     let store = CapturedAccountStore(keychain: keychain.store, service: "OrderTest")

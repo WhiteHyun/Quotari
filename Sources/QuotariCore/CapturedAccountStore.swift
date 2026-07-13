@@ -123,10 +123,15 @@ public struct CapturedAccountStore: Sendable {
 
   /// Durable copy of a grant whose account-item write failed, so quitting
   /// before the retry doesn't lose the only rotated pair. Its own keychain
-  /// item (never a file — secrets stay in the keychain), best-effort and
-  /// outside the index; the account's removal cleans it up.
+  /// item (never a file — secrets stay in the keychain), outside the index;
+  /// the account's removal cleans it up. Serialized with removal and gated
+  /// on the account still existing, so an in-flight refresh can't recreate
+  /// a pending blob for an account the user just removed.
   public func savePendingGrant(_ data: Data, id: String) throws {
-    try keychain.write(data, service: pendingService(id))
+    try Self.mutationLock.withLock {
+      guard account(id: id) != nil else { return }
+      try keychain.write(data, service: pendingService(id))
+    }
   }
 
   public func pendingGrantData(id: String) -> Data? {
@@ -134,15 +139,20 @@ public struct CapturedAccountStore: Sendable {
   }
 
   public func removePendingGrant(id: String) throws {
-    try keychain.delete(service: pendingService(id))
+    try Self.mutationLock.withLock {
+      try keychain.delete(service: pendingService(id))
+    }
   }
 
   /// Deletes the account item first, then drops its id from the index; a fault
   /// between the two leaves a dangling id, never an orphaned secret.
   public func remove(id: String) throws {
     try Self.mutationLock.withLock {
+      // Pending grant first, and fail closed: aborting the removal beats
+      // reporting success while a token blob is left behind with no UI
+      // path to clean it up. ("Not found" already counts as deleted.)
+      try keychain.delete(service: pendingService(id))
       try keychain.delete(service: itemService(id))
-      try? keychain.delete(service: pendingService(id))
       var ids = try indexIDs() ?? []
       ids.removeAll { $0 == id }
       if ids.isEmpty {

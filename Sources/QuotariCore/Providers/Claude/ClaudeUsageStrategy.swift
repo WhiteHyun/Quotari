@@ -245,6 +245,11 @@ private extension ClaudeUsageStrategy {
     if current.refreshToken == pending.consumedRefreshToken, pending.rotatedRefreshToken {
       return await .resolved(supersede(pending, stored: stored, now: now))
     }
+    // The grant is obsolete on the remaining paths — clear any durable copy
+    // so it isn't retried (against a pair that has moved on) every launch.
+    if case let .quotariRegistry(id) = fallback.source {
+      try? capturedAccounts.removePendingGrant(id: id)
+    }
     if current.refreshToken != refreshToken {
       return await .resolved(refreshIfExpired(stored, now: now))
     }
@@ -306,6 +311,10 @@ private extension ClaudeUsageStrategy {
   }
 
   /// Memory first (cheap), then the durable copy a previous launch left.
+  /// The durable copy is deliberately NOT consumed here: it holds the only
+  /// rotated pair, so it stays until the registry write succeeds (persisted
+  /// clears it) or the grant is proven obsolete (the stale-write resolution
+  /// clears it) — a crash mid-retry must not lose it.
   private func takePending(source: ProviderCredentialSource) async -> ClaudePendingGrant? {
     if let pending = await refreshCoordinator.takeUnpersisted(sourceID: source.stableID) {
       return pending
@@ -314,7 +323,6 @@ private extension ClaudeUsageStrategy {
           let data = capturedAccounts.pendingGrantData(id: id),
           let pending = try? JSONDecoder().decode(ClaudePendingGrant.self, from: data)
     else { return nil }
-    try? capturedAccounts.removePendingGrant(id: id)
     return pending
   }
 

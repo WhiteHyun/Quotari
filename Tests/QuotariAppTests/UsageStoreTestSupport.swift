@@ -28,6 +28,40 @@ struct StaticAccountDiscovery: ProviderAccountDiscovering {
   }
 }
 
+/// Discovery stub whose results a test can swap between reloads (e.g. the
+/// CLI slot being reused by another login mid-session).
+final class MutableAccountDiscovery: ProviderAccountDiscovering, @unchecked Sendable {
+  private let lock = NSLock()
+  private var current: StaticAccountDiscovery
+
+  init(_ initial: StaticAccountDiscovery) {
+    current = initial
+  }
+
+  func update(_ discovery: StaticAccountDiscovery) {
+    lock.withLock { current = discovery }
+  }
+
+  private var snapshot: StaticAccountDiscovery {
+    lock.withLock { current }
+  }
+
+  func accounts(for provider: UsageProvider) async -> [ProviderAccount] {
+    await snapshot.accounts(for: provider)
+  }
+
+  func liveAccount(
+    equivalentTo account: ProviderAccount,
+    among accounts: [ProviderAccount]
+  ) async -> ProviderAccount? {
+    await snapshot.liveAccount(equivalentTo: account, among: accounts)
+  }
+
+  func accountsWithCapturedCopies(among accounts: [ProviderAccount]) async -> Set<String> {
+    await snapshot.accountsWithCapturedCopies(among: accounts)
+  }
+}
+
 /// Cost estimator stub for tests that don't exercise cost scanning; the
 /// production default (`LocalUsageCostEstimator`) would scan real usage logs.
 struct NullCostEstimator: UsageCostEstimating {

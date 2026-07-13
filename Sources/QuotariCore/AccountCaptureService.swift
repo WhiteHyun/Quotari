@@ -78,6 +78,24 @@ public struct AccountCaptureService: Sendable {
     try capturedAccounts.remove(id: id)
   }
 
+  /// While a saved identity is also the live CLI login, its registry row is
+  /// hidden and Save is suppressed — so the saved copy tracks the live
+  /// credential's own token rotations by re-snapshotting the payload whenever
+  /// it changes. Complete for Codex (durable account_id identity); best
+  /// effort for Claude, whose identity fingerprint follows the refresh token.
+  public func syncCapturedCopies(of accounts: [ProviderAccount]) {
+    for account in accounts where !account.credentialSource.isCaptured {
+      guard let raw = rawPayload(for: account.credentialSource),
+            let payload = ProviderCredentialMinimizer.minimize(provider: account.provider, payload: raw),
+            let identity = ProviderCredentialIdentity.key(provider: account.provider, payload: payload)
+      else { continue }
+      let id = registryID(provider: account.provider, identity: identity)
+      guard let existing = capturedAccounts.account(id: id), existing.payload != payload else { continue }
+      // Same identity: the live credential is that account's newest truth.
+      try? capturedAccounts.updatePayload(id: id) { _ in payload }
+    }
+  }
+
   public func captured() -> [CapturedAccount] {
     capturedAccounts.load()
   }

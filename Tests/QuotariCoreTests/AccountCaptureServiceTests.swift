@@ -231,6 +231,37 @@ struct AccountCaptureServiceTests {
     #expect(store.load().count == 2)
   }
 
+  @Test func syncKeepsAHiddenSavedCopyTrackingTheLiveRotation() throws {
+    let store = makeStore(InMemoryKeychain())
+    let service = AccountCaptureService(capturedAccounts: store)
+    let firstURL = try codexAuthFile(Self.codexPayload)
+    defer { try? FileManager.default.removeItem(at: firstURL) }
+    let account = ProviderAccount(
+      provider: .codex, displayName: "Codex", detail: "Default",
+      credentialSource: .codexAuthFile(path: firstURL.path)
+    )
+    _ = try service.capture(account, now: Self.now)
+
+    // The CLI rotates its tokens while the identity stays the same; the
+    // hidden saved copy must follow, or it dies when the slot moves on.
+    let rotatedURL = try codexAuthFile(
+      #"{"tokens":{"access_token":"tok-9","account_id":"acct-1","refresh_token":"ref-9"}}"#
+    )
+    defer { try? FileManager.default.removeItem(at: rotatedURL) }
+    let rotatedAccount = ProviderAccount(
+      provider: .codex, displayName: "Codex", detail: "Default",
+      credentialSource: .codexAuthFile(path: rotatedURL.path)
+    )
+
+    service.syncCapturedCopies(of: [rotatedAccount])
+
+    let credentials = try CodexCredentialsStore.load(
+      source: .quotariRegistry(id: "codex:acct-1"), capturedAccounts: store
+    )
+    #expect(credentials.accessToken == "tok-9")
+    #expect(credentials.refreshToken == "ref-9")
+  }
+
   @Test func capturingAPayloadWithoutARefreshTokenIsRejected() throws {
     // A snapshot that can't renew itself would die at its first expiry —
     // the same reason env tokens aren't capturable.

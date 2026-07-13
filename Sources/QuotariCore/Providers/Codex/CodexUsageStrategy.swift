@@ -239,6 +239,9 @@ private extension CodexUsageStrategy {
     if current.refreshToken == pending.consumedRefreshToken, pending.rotatedRefreshToken {
       return await .resolved(supersede(pending, stored: current, registryID: registryID, now: now))
     }
+    // The grant is obsolete on the remaining paths — clear any durable copy
+    // so it isn't retried (against a pair that has moved on) every launch.
+    try? capturedAccounts.removePendingGrant(id: registryID)
     if current.refreshToken != refreshToken {
       return await .resolved(refreshIfExpired(current, registryID: registryID, now: now))
     }
@@ -298,6 +301,10 @@ private extension CodexUsageStrategy {
   }
 
   /// Memory first (cheap), then the durable copy a previous launch left.
+  /// The durable copy is deliberately NOT consumed here: it holds the only
+  /// rotated pair, so it stays until the registry write succeeds (persisted
+  /// clears it) or the grant is proven obsolete (the stale-write resolution
+  /// clears it) — a crash mid-retry must not lose it.
   private func takePending(registryID: String) async -> CodexPendingGrant? {
     if let pending = await refreshCoordinator.takeUnpersisted(registryID: registryID) {
       return pending
@@ -305,7 +312,6 @@ private extension CodexUsageStrategy {
     guard let data = capturedAccounts.pendingGrantData(id: registryID),
           let pending = try? JSONDecoder().decode(CodexPendingGrant.self, from: data)
     else { return nil }
-    try? capturedAccounts.removePendingGrant(id: registryID)
     return pending
   }
 

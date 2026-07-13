@@ -165,7 +165,64 @@ struct UsageStoreAccountRefreshTests {
 
     #expect(store.selectedAccounts[.codex] == liveAccount)
     #expect(store.accounts[.codex] == [liveAccount])
-    #expect(selectionStore.load()[.codex] == liveAccount)
+    // The persisted selection stays on the saved account, so a slot reused
+    // by another login later falls back to it instead of being followed.
+    #expect(selectionStore.load()[.codex] == savedAccount)
+  }
+
+  @Test func selectionFallsBackToTheSavedCopyWhenTheSlotIsReused() async throws {
+    let directory = try TemporaryDirectory()
+    let selectionStore = ProviderAccountSelectionStore(
+      url: directory.url.appendingPathComponent("ProviderAccounts.json")
+    )
+    let savedAccount = ProviderAccount(
+      provider: .codex,
+      displayName: "Saved",
+      detail: "Saved in Quotari",
+      credentialSource: .quotariRegistry(id: "codex:acct-1")
+    )
+    let liveSame = ProviderAccount(
+      provider: .codex,
+      displayName: "Live",
+      detail: "Default",
+      credentialSource: .codexAuthFile(path: "/tmp/auth.json"),
+      credentialIdentity: "acct-1"
+    )
+    try selectionStore.save([.codex: savedAccount])
+    let descriptor = ProviderDescriptor(
+      id: .codex,
+      metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
+      pipeline: ProviderFetchPipeline { _ in [RecordingAccountStrategy(recorder: AccountRecorder())] }
+    )
+    let discovery = MutableAccountDiscovery(StaticAccountDiscovery(
+      accounts: [.codex: [liveSame]],
+      liveEquivalents: [savedAccount.id: liveSame]
+    ))
+    let store = UsageStore.isolatedForTesting(
+      providers: [descriptor],
+      costEstimator: EmptyCostEstimator(),
+      accountDiscovery: discovery,
+      accountSelectionStore: selectionStore,
+      startsAutomatically: false
+    )
+
+    await store.reloadAccounts()
+    #expect(store.selectedAccounts[.codex] == liveSame)
+
+    // The CLI slot is reused by a different login: the saved row is visible
+    // again and the selection must return to it, not follow the slot.
+    let liveOther = ProviderAccount(
+      provider: .codex,
+      displayName: "Other",
+      detail: "Default",
+      credentialSource: .codexAuthFile(path: "/tmp/auth.json"),
+      credentialIdentity: "acct-2"
+    )
+    discovery.update(StaticAccountDiscovery(accounts: [.codex: [liveOther, savedAccount]]))
+    await store.reloadAccounts()
+
+    #expect(store.selectedAccounts[.codex] == savedAccount)
+    #expect(selectionStore.load()[.codex] == savedAccount)
   }
 
   @Test func liveAccountWithASavedCopyIsNotCapturable() async {

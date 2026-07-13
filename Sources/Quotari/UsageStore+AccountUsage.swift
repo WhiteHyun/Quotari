@@ -25,6 +25,14 @@ struct AccountUsageRefreshTask {
   let force: Bool
 }
 
+/// A selection change decided during account rediscovery: the account to
+/// select now, and — when it is a live stand-in for a hidden saved copy —
+/// the saved account the selection logically remains on.
+struct SelectionUpdate {
+  var account: ProviderAccount
+  var origin: ProviderAccount?
+}
+
 extension UsageStore {
   /// The explicitly selected account, or the discovered account the current
   /// provider snapshot confidently names. Without either there is no active
@@ -40,24 +48,45 @@ extension UsageStore {
     }
   }
 
-  /// Where a previously selected account landed after rediscovery: the same
-  /// account (with possibly refreshed metadata), the live login whose re-use
-  /// of the CLI slot now hides the selected saved copy — re-listing that copy
-  /// would keep fetching with the older, eventually expiring snapshot — or,
-  /// when neither exists, appended as-is so the selection isn't silently
-  /// dropped. Returns the account to re-select, or nil if nothing changed.
+  /// Where a previously selected account landed after rediscovery, evaluated
+  /// from the account the user *logically* selected: a live stand-in defers
+  /// to the saved account it stands in for. When the saved account is
+  /// discoverable (again), it is the selection — so a CLI slot reused by
+  /// another login falls back to the saved copy instead of being silently
+  /// followed. While the saved identity is the live login, the live account
+  /// substitutes (fetching with the freshest credential) and the origin is
+  /// remembered. A logical account discovery lost entirely is re-listed
+  /// as-is so the selection isn't silently dropped.
   func reconciledSelection(
     _ selected: ProviderAccount,
+    origin: ProviderAccount?,
     in accounts: inout [ProviderAccount]
-  ) async -> ProviderAccount? {
-    if let refreshed = accounts.first(where: { $0.id == selected.id }) {
-      return refreshed == selected ? nil : refreshed
+  ) async -> SelectionUpdate? {
+    let logical = origin ?? selected
+    if let visible = accounts.first(where: { $0.id == logical.id }) {
+      if visible == selected, origin == nil {
+        return nil
+      }
+      return SelectionUpdate(account: visible, origin: nil)
     }
-    if let live = await accountDiscovery.liveAccount(equivalentTo: selected, among: accounts) {
-      return live
+    if let live = await accountDiscovery.liveAccount(equivalentTo: logical, among: accounts) {
+      if live == selected {
+        return nil // the stand-in is already selected; the origin stays
+      }
+      return SelectionUpdate(account: live, origin: logical)
     }
-    accounts.append(selected)
-    return nil
+    accounts.append(logical)
+    return logical == selected ? nil : SelectionUpdate(account: logical, origin: nil)
+  }
+
+  /// The selections as they should survive a relaunch: a live stand-in is
+  /// stored as the saved account it stands in for.
+  func persistableSelections() -> [UsageProvider: ProviderAccount] {
+    var stored = selectedAccounts
+    for (provider, origin) in reconciledSelectionOrigins {
+      stored[provider] = origin
+    }
+    return stored
   }
 
   /// Whether an account can be saved: already-captured entries, live logins
