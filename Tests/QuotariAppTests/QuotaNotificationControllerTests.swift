@@ -242,6 +242,36 @@ extension QuotaNotificationControllerTests {
     #expect(controller.ledger.scheduledID(provider: .codex) == nil)
   }
 
+  @Test func reconciliationPreservesAResetVisibleBeforeItsLedgerCommit() async throws {
+    let defaults = try makeDefaults("in-flight-reconciliation")
+    let center = QuotaNotificationCenterStub(status: .authorized)
+    let controller = QuotaNotificationController(center: center, defaults: defaults)
+    _ = await controller.setNotificationsEnabled(true)
+    center.publishesScheduledBeforeSuspending = true
+    center.suspendAdds = true
+
+    let processing = Task {
+      await controller.process(
+        snapshot: snapshot(weeklyUsed: 10, resetAt: now.addingTimeInterval(86400)),
+        logicalAccountID: "account-a",
+        sourceKind: .api,
+        now: now
+      )
+    }
+    await center.waitForSuspendedAdd()
+    let requestID = try #require(center.attemptedRequests.first?.requestID)
+    #expect(center.pendingScheduledIDs == [requestID])
+
+    _ = await controller.refreshAuthorizationStatus()
+    #expect(center.pendingScheduledIDs == [requestID])
+
+    center.resumeAdds()
+    let result = await processing.value
+    #expect(result.acceptedRequestIDs == [requestID])
+    #expect(controller.ledger.scheduledID(provider: .codex) == requestID)
+    #expect(center.pendingScheduledIDs == [requestID])
+  }
+
   @Test func missingSystemScheduleIsReconciledAndRetriedAfterRelaunch() async throws {
     let defaults = try makeDefaults("pending-reconcile")
     let center = QuotaNotificationCenterStub(status: .authorized)
@@ -291,6 +321,7 @@ final class QuotaNotificationCenterStub: QuotaNotificationCenterTransport {
   var removedRequestIDs: [[String]] = []
   var foregroundPresentationConfigured = false
   var suspendAdds = false
+  var publishesScheduledBeforeSuspending = false
   private var suspendedAdds: [CheckedContinuation<Void, Never>] = []
 
   var suspendedAddCount: Int {
@@ -317,6 +348,9 @@ final class QuotaNotificationCenterStub: QuotaNotificationCenterTransport {
 
   func add(_ request: QuotaNotificationRequest) async throws {
     attemptedRequests.append(request)
+    if request.kind == .weeklyReset, publishesScheduledBeforeSuspending {
+      pendingScheduledIDs.insert(request.requestID)
+    }
     if suspendAdds {
       await withCheckedContinuation { continuation in
         suspendedAdds.append(continuation)

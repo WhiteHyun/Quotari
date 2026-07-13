@@ -21,6 +21,7 @@ final class QuotaNotificationController {
   @ObservationIgnored private let defaults: UserDefaults
   @ObservationIgnored private var policy: QuotaNotificationPolicy
   @ObservationIgnored private var processingTail: Task<QuotaNotificationProcessingResult, Never>?
+  @ObservationIgnored private var inFlightRequestIDs = Set<String>()
   @ObservationIgnored private var scopedProviders = Set<UsageProvider>()
   @ObservationIgnored private var activeLogicalAccountIDs: [UsageProvider: String] = [:]
 
@@ -239,7 +240,9 @@ private extension QuotaNotificationController {
     for request in evaluation.requests {
       guard isCurrent() else { break }
       guard deliveryIsEnabled(for: request) else { continue }
+      inFlightRequestIDs.insert(request.requestID)
       do {
+        defer { inFlightRequestIDs.remove(request.requestID) }
         try await center.add(request)
         let current = isCurrent()
         guard current, deliveryIsEnabled(for: request) else {
@@ -349,14 +352,15 @@ private extension QuotaNotificationController {
   }
 
   func reconcilePendingRequests() async {
-    let expected = Set(policy.ledger.windows.values.compactMap(\.scheduledReset?.requestID))
     let actual = await center.pendingScheduledRequestIdentifiers()
-    let missing = expected.subtracting(actual)
+    let journaled = Set(policy.ledger.windows.values.compactMap(\.scheduledReset?.requestID))
+    let protected = journaled.union(inFlightRequestIDs)
+    let missing = journaled.subtracting(actual)
     for identifier in missing {
       policy.recordCancellationSuccess(requestID: identifier)
     }
     let orphaned = actual.filter {
-      $0.hasPrefix("quotari.quota.") && !expected.contains($0)
+      $0.hasPrefix("quotari.quota.") && !protected.contains($0)
     }
     if !orphaned.isEmpty {
       center.removePendingRequests(withIdentifiers: orphaned.sorted())
