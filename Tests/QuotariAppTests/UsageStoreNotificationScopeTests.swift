@@ -197,6 +197,47 @@ extension UsageStoreNotificationTests {
     #expect(Set(center.attemptedRequests.map(\.key.logicalAccountID)) == [beforeRotation.id])
   }
 
+  @Test func selectionChangeRejectsDelayedAutomaticAttribution() async throws {
+    let automatic = ProviderAccount(
+      provider: .codex,
+      displayName: "Automatic",
+      detail: nil,
+      credentialSource: .codexAuthFile(path: "/tmp/delayed-automatic.json"),
+      credentialIdentity: "automatic-account"
+    )
+    let selected = ProviderAccount(
+      provider: .codex,
+      displayName: "Selected",
+      detail: nil,
+      credentialSource: .codexAuthFile(path: "/tmp/selected.json"),
+      credentialIdentity: "selected-account"
+    )
+    let discovery = GatedNotificationAccountDiscovery(account: automatic)
+    let harness = try await makeStore(
+      "delayed-automatic-attribution",
+      discovery: discovery
+    )
+    let store = harness.store
+    let center = harness.center
+
+    store.applySuccessfulFetch(
+      ProviderFetchResult(
+        usage: usage(accountName: nil),
+        sourceLabel: "Live",
+        sourceKind: .oauth
+      ),
+      provider: .codex,
+      account: nil
+    )
+    await discovery.waitUntilRequestStarts()
+
+    store.selectAccount(selected, for: .codex)
+    await discovery.resume()
+    await store.waitForPendingQuotaNotifications()
+
+    #expect(center.attemptedRequests.isEmpty)
+  }
+
   @Test func accountlessAutomaticCodexOAuthUsesItsOnlyDiscoveredLiveSlot() async throws {
     let live = ProviderAccount(
       provider: .codex,
@@ -259,5 +300,38 @@ extension UsageStoreNotificationTests {
       ),
       pipeline: ProviderFetchPipeline { _ in [] }
     )
+  }
+}
+
+private actor GatedNotificationAccountDiscovery: ProviderAccountDiscovering {
+  private let account: ProviderAccount
+  private var requestStarted = false
+  private var isReleased = false
+  private var startWaiters: [CheckedContinuation<Void, Never>] = []
+  private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+  init(account: ProviderAccount) {
+    self.account = account
+  }
+
+  func accounts(for provider: UsageProvider) async -> [ProviderAccount] {
+    requestStarted = true
+    startWaiters.forEach { $0.resume() }
+    startWaiters.removeAll()
+    if !isReleased {
+      await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+    return account.provider == provider ? [account] : []
+  }
+
+  func waitUntilRequestStarts() async {
+    guard !requestStarted else { return }
+    await withCheckedContinuation { startWaiters.append($0) }
+  }
+
+  func resume() {
+    isReleased = true
+    releaseWaiters.forEach { $0.resume() }
+    releaseWaiters.removeAll()
   }
 }

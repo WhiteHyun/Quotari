@@ -13,17 +13,21 @@ extension UsageStore {
     // uses the same freshly-discovered account. A transient mock fallback
     // preserves the last real scope and cannot notify.
     let updatesAutomaticScope = account == nil && sourceKind != .mock
+    let revision = accountRevisions[provider] ?? 0
     let previous = quotaNotificationTask
     let controller = quotaNotifications
     quotaNotificationTask = Task { [weak self] in
       await previous?.value
-      guard let self else { return }
+      guard let self,
+            (accountRevisions[provider] ?? 0) == revision
+      else { return }
       let logicalAccountID = await quotaNotificationAccountID(
         snapshot: snapshot,
         provider: provider,
         account: account,
         sourceKind: sourceKind
       )
+      guard (accountRevisions[provider] ?? 0) == revision else { return }
       if updatesAutomaticScope {
         controller.setActiveLogicalAccountID(logicalAccountID, for: provider)
       }
@@ -31,7 +35,11 @@ extension UsageStore {
         snapshot: snapshot,
         logicalAccountID: logicalAccountID,
         sourceKind: sourceKind,
-        now: snapshot.updatedAt
+        now: snapshot.updatedAt,
+        isCurrent: { [weak self] in
+          guard let self else { return false }
+          return (accountRevisions[provider] ?? 0) == revision
+        }
       )
     }
   }
