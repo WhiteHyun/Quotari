@@ -164,6 +164,11 @@ final class UsageStore {
     apply(provider: provider, account: account, result: result)
     lastRefresh = Date()
     await syncCapturedCopies(of: capturedCopyCandidates.filter { $0.provider == provider })
+    // The fetch may have rotated a Claude token; the email label's retry key
+    // is the access-token fingerprint, so this re-fetches exactly once.
+    if provider == .claude {
+      refreshClaudeProfiles()
+    }
   }
 
   func reloadAccounts() async {
