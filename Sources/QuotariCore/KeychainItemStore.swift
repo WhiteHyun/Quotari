@@ -47,6 +47,79 @@ public struct KeychainItemStore: Sendable {
     try? readItem(service)
   }
 
+  /// Reads a generic-password item by *service only* (no account filter),
+  /// matching how Claude Code's credential item is discovered — but throwing
+  /// so callers can fail closed. `nil` only for a genuine not-found (exit 44).
+  public static func readByService(_ service: String) throws -> Data? {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+    process.arguments = ["find-generic-password", "-s", service, "-w"]
+    let stdout = Pipe()
+    process.standardOutput = stdout
+    process.standardError = Pipe()
+    try process.run()
+    let output = stdout.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    if process.terminationStatus == 44 {
+      return nil
+    }
+    guard process.terminationStatus == 0 else {
+      throw KeychainError.commandFailed(status: process.terminationStatus)
+    }
+    guard let text = String(data: output, encoding: .utf8) else {
+      throw KeychainError.malformedPayload
+    }
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : Data(trimmed.utf8)
+  }
+
+  /// Writes an item identified by *service*, reusing the existing item's
+  /// account attribute so it updates the same item the service-only read
+  /// found (a generic-password item is keyed by service AND account; writing
+  /// under a different account would create a second, ambiguous item). Falls
+  /// back to the current user when no item exists yet.
+  public static func writeByService(_ data: Data, service: String) throws {
+    // Determine the existing item's account so we update it in place. A found
+    // item with an unreadable account attribute fails closed — writing under
+    // NSUserName() would create a second, ambiguous item; only a genuine
+    // absence (nil) falls back to the current user (creating the item).
+    let account = try accountForService(service) ?? NSUserName()
+    try securityWrite(data, account: account, service: service)
+  }
+
+  /// The `acct` attribute of the item for `service`, read without printing
+  /// the secret (`security find-generic-password` without `-g`/`-w`). Nil
+  /// only when no item exists (exit 44); throws on a command failure or an
+  /// item whose account can't be parsed, so callers can fail closed.
+  private static func accountForService(_ service: String) throws -> String? {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+    process.arguments = ["find-generic-password", "-s", service]
+    let stdout = Pipe()
+    process.standardOutput = stdout
+    process.standardError = Pipe()
+    try process.run()
+    let output = stdout.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    if process.terminationStatus == 44 {
+      return nil
+    }
+    guard process.terminationStatus == 0, let text = String(data: output, encoding: .utf8) else {
+      throw KeychainError.commandFailed(status: process.terminationStatus)
+    }
+    // Attribute line: `    "acct"<blob>="value"`
+    for line in text.split(separator: "\n") where line.contains("\"acct\"") {
+      guard let eq = line.range(of: "=\"") else { continue }
+      let rest = line[eq.upperBound...]
+      if let close = rest.range(of: "\""), !rest[..<close.lowerBound].isEmpty {
+        return String(rest[..<close.lowerBound])
+      }
+    }
+    // The item exists but its account attribute couldn't be parsed — fail
+    // closed rather than fall back to a different account.
+    throw KeychainError.malformedPayload
+  }
+
   public func write(_ data: Data, service: String) throws {
     try writeItem(data, service)
   }
