@@ -332,7 +332,15 @@ extension UsageStore {
         forLogicalAccount: currentCapturedCopies[account.id] ?? account
       )
     case .claude:
-      return notificationScopeResolution(forLogicalAccount: account)
+      guard case let .current(claudeCredentialFingerprint) = notificationFetchCredentialValidation(
+        account: account,
+        sourceKind: sourceKind,
+        credentialScopeID: credentialScopeID
+      ) else { return .staleCredential }
+      return notificationScopeResolution(
+        forLogicalAccount: account,
+        claudeCredentialFingerprint: claudeCredentialFingerprint
+      )
     }
   }
 
