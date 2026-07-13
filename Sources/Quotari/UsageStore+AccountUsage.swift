@@ -153,7 +153,14 @@ extension UsageStore {
     guard let descriptor = providers.first(where: { $0.id == provider }) else { return }
     let now = Date()
     let accountsToFetch = accountsNeedingRefresh(for: provider, now: now, force: force)
-    guard !accountsToFetch.isEmpty else { return }
+    guard !accountsToFetch.isEmpty else {
+      // No usage fetch needed, but the token may have rotated since the last
+      // label attempt — relabel so the picker doesn't show a stale email.
+      if provider == .claude {
+        refreshClaudeProfiles()
+      }
+      return
+    }
 
     refreshingAccountUsageProviders.insert(provider)
     let task = Task { [weak self] in
