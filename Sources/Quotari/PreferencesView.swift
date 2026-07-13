@@ -48,6 +48,37 @@ struct PreferencesView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
       }
+      Section("Notifications") {
+        Toggle("Quota alerts", isOn: notificationsEnabledBinding)
+        if let message = store.quotaNotifications.authorizationMessage {
+          Text(message)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        } else if let error = store.quotaNotifications.lastError {
+          Text(error)
+            .font(.caption)
+            .foregroundStyle(.red)
+        }
+        Stepper(
+          "Warning at \(store.quotaNotifications.preferences.warningThreshold)%",
+          value: warningThresholdBinding,
+          in: 1 ... max(1, store.quotaNotifications.preferences.criticalThreshold - 1)
+        )
+        .disabled(!notificationControlsEnabled)
+        Stepper(
+          "Critical at \(store.quotaNotifications.preferences.criticalThreshold)%",
+          value: criticalThresholdBinding,
+          in: min(100, store.quotaNotifications.preferences.warningThreshold + 1) ... 100
+        )
+        .disabled(!notificationControlsEnabled)
+        ForEach(store.providers, id: \.id) { descriptor in
+          Toggle(
+            descriptor.metadata.displayName,
+            isOn: notificationProviderBinding(descriptor.id)
+          )
+          .disabled(!notificationControlsEnabled)
+        }
+      }
       Section("Accounts") {
         ForEach(store.providers, id: \.id) { descriptor in
           accountPicker(for: descriptor)
@@ -71,19 +102,66 @@ struct PreferencesView: View {
       }
     }
     .formStyle(.grouped)
-    .frame(width: 420, height: 500)
+    .frame(width: 420, height: 620)
     .onAppear {
       intervalMinutes = store.refreshInterval / 60
       loginItems.refreshStatus()
+      Task { await store.quotaNotifications.refreshAuthorizationStatus() }
     }
     // Coming back from System Settings (e.g. after approving the login item)
     // re-activates the app; that's the moment to pick up the outside change.
     .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
       loginItems.refreshStatus()
+      Task { await store.quotaNotifications.refreshAuthorizationStatus() }
     }
     .onChange(of: intervalMinutes) { _, newValue in
       store.refreshInterval = newValue * 60
     }
+  }
+
+  private var notificationControlsEnabled: Bool {
+    store.quotaNotifications.preferences.isEnabled
+      && store.quotaNotifications.authorizationStatus.allowsDelivery
+  }
+
+  private var notificationsEnabledBinding: Binding<Bool> {
+    Binding(
+      get: { store.quotaNotifications.preferences.isEnabled },
+      set: { enabled in
+        Task { await store.quotaNotifications.setNotificationsEnabled(enabled) }
+      }
+    )
+  }
+
+  private var warningThresholdBinding: Binding<Int> {
+    Binding(
+      get: { store.quotaNotifications.preferences.warningThreshold },
+      set: { warning in
+        _ = store.quotaNotifications.updateThresholds(
+          warning: warning,
+          critical: store.quotaNotifications.preferences.criticalThreshold
+        )
+      }
+    )
+  }
+
+  private var criticalThresholdBinding: Binding<Int> {
+    Binding(
+      get: { store.quotaNotifications.preferences.criticalThreshold },
+      set: { critical in
+        _ = store.quotaNotifications.updateThresholds(
+          warning: store.quotaNotifications.preferences.warningThreshold,
+          critical: critical
+        )
+      }
+    )
+  }
+
+  private func notificationProviderBinding(_ provider: UsageProvider) -> Binding<Bool> {
+    Binding(
+      get: { store.quotaNotifications.preferences.enabledProviders.contains(provider) },
+      set: { store.quotaNotifications.setProvider(provider, enabled: $0) }
+    )
   }
 
   private func accountPicker(for descriptor: ProviderDescriptor) -> some View {
