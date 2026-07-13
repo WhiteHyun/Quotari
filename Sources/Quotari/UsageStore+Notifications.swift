@@ -6,7 +6,8 @@ extension UsageStore {
     snapshot: UsageSnapshot,
     provider: UsageProvider,
     account: ProviderAccount?,
-    sourceKind: ProviderFetchKind?
+    sourceKind: ProviderFetchKind?,
+    credentialScopeID: String?
   ) {
     // Automatic mode has no selected account to establish scope. Resolve the
     // live identity in the serial notification tail so the matching process
@@ -25,7 +26,8 @@ extension UsageStore {
         snapshot: snapshot,
         provider: provider,
         account: account,
-        sourceKind: sourceKind
+        sourceKind: sourceKind,
+        credentialScopeID: credentialScopeID
       )
       guard (accountRevisions[provider] ?? 0) == revision else { return }
       if updatesAutomaticScope {
@@ -64,7 +66,8 @@ extension UsageStore {
     snapshot: UsageSnapshot,
     provider: UsageProvider,
     account: ProviderAccount?,
-    sourceKind: ProviderFetchKind?
+    sourceKind: ProviderFetchKind?,
+    credentialScopeID: String?
   ) async -> String? {
     guard sourceKind != .mock else { return nil }
     if let origin = reconciledSelectionOrigins[provider] {
@@ -79,15 +82,17 @@ extension UsageStore {
     guard snapshot.account == nil else { return nil }
     return await automaticNotificationAccountID(
       provider: provider,
-      sourceKind: sourceKind
+      sourceKind: sourceKind,
+      credentialScopeID: credentialScopeID
     )
   }
 
   private func automaticNotificationAccountID(
     provider: UsageProvider,
-    sourceKind: ProviderFetchKind?
+    sourceKind: ProviderFetchKind?,
+    credentialScopeID: String?
   ) async -> String? {
-    guard sourceKind == .oauth else { return nil }
+    guard sourceKind == .oauth, let credentialScopeID else { return nil }
     // Automatic fetches read the live credential directly. Rediscover after
     // that fetch instead of consulting the last account scan, so an external
     // login replacement cannot inherit the previous slot occupant's ledger.
@@ -114,7 +119,7 @@ extension UsageStore {
         .min { $0.rank < $1.rank }?
         .account
     }
-    guard let account else { return nil }
+    guard let account, account.credentialScopeID == credentialScopeID else { return nil }
     return notificationScopeID(
       forLogicalAccount: currentCapturedCopies[account.id] ?? account
     )

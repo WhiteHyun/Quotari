@@ -134,7 +134,8 @@ extension UsageStoreNotificationTests {
       ProviderFetchResult(
         usage: usage(accountName: nil),
         sourceLabel: "Live",
-        sourceKind: .oauth
+        sourceKind: .oauth,
+        credentialScopeID: first.credentialScopeID
       ),
       provider: .codex,
       account: nil
@@ -147,7 +148,8 @@ extension UsageStoreNotificationTests {
       ProviderFetchResult(
         usage: usage(accountName: nil),
         sourceLabel: "Live",
-        sourceKind: .oauth
+        sourceKind: .oauth,
+        credentialScopeID: second.credentialScopeID
       ),
       provider: .codex,
       account: nil
@@ -156,6 +158,45 @@ extension UsageStoreNotificationTests {
 
     #expect(center.attemptedRequests.count == 2)
     #expect(Set(center.attemptedRequests.map(\.key.logicalAccountID)).count == 2)
+  }
+
+  @Test func automaticResultRejectsAPostFetchSlotReplacement() async throws {
+    let path = "/tmp/post-fetch-replacement.json"
+    let fetchedAccount = ProviderAccount(
+      provider: .codex,
+      displayName: "Fetched login",
+      detail: nil,
+      credentialSource: .codexAuthFile(path: path),
+      credentialIdentity: "acct-fetched"
+    )
+    let replacement = ProviderAccount(
+      provider: .codex,
+      displayName: "Replacement login",
+      detail: nil,
+      credentialSource: .codexAuthFile(path: path),
+      credentialIdentity: "acct-replacement"
+    )
+    let harness = try await makeStore(
+      "post-fetch-slot-replacement",
+      providers: [emptyDescriptor(for: .codex)],
+      discovery: StaticAccountDiscovery(accounts: [.codex: [replacement]])
+    )
+    let store = harness.store
+    let center = harness.center
+
+    store.applySuccessfulFetch(
+      ProviderFetchResult(
+        usage: usage(accountName: nil),
+        sourceLabel: "Live",
+        sourceKind: .oauth,
+        credentialScopeID: fetchedAccount.credentialScopeID
+      ),
+      provider: .codex,
+      account: nil
+    )
+    await store.waitForPendingQuotaNotifications()
+
+    #expect(center.attemptedRequests.isEmpty)
   }
 
   @Test func claudeAccessTokenRotationPreservesNotificationHistory() async throws {
@@ -224,7 +265,8 @@ extension UsageStoreNotificationTests {
       ProviderFetchResult(
         usage: usage(accountName: nil),
         sourceLabel: "Live",
-        sourceKind: .oauth
+        sourceKind: .oauth,
+        credentialScopeID: automatic.credentialScopeID
       ),
       provider: .codex,
       account: nil
@@ -259,7 +301,8 @@ extension UsageStoreNotificationTests {
       ProviderFetchResult(
         usage: usage(accountName: nil),
         sourceLabel: "Live",
-        sourceKind: .oauth
+        sourceKind: .oauth,
+        credentialScopeID: live.credentialScopeID
       ),
       provider: .codex,
       account: nil

@@ -168,7 +168,8 @@ struct UsageStoreNotificationTests {
       provider: .claude,
       displayName: "Claude Code",
       detail: "Keychain",
-      credentialSource: .claudeKeychain(service: ClaudeCredentialsStore.keychainService)
+      credentialSource: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+      credentialIdentity: "live-token"
     )
     let discovery = StaticAccountDiscovery(accounts: [.claude: [live]])
     let harness = try await makeStore(
@@ -180,7 +181,7 @@ struct UsageStoreNotificationTests {
     let controller = harness.controller
     let center = harness.center
     await store.reloadAccounts()
-    let value = claudeFetchResult()
+    let value = claudeFetchResult(credentialScopeID: live.credentialScopeID)
 
     store.applySuccessfulFetch(value, provider: .claude, account: nil)
     await store.waitForPendingQuotaNotifications()
@@ -291,7 +292,7 @@ extension UsageStoreNotificationTests {
     )
   }
 
-  func claudeFetchResult() -> ProviderFetchResult {
+  func claudeFetchResult(credentialScopeID: String? = nil) -> ProviderFetchResult {
     ProviderFetchResult(
       usage: UsageSnapshot(
         provider: .claude,
@@ -308,7 +309,8 @@ extension UsageStoreNotificationTests {
         updatedAt: now
       ),
       sourceLabel: "Claude",
-      sourceKind: .oauth
+      sourceKind: .oauth,
+      credentialScopeID: credentialScopeID
     )
   }
 }

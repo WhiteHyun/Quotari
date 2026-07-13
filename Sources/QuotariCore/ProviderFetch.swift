@@ -33,15 +33,30 @@ public struct ProviderFetchResult: Sendable {
   public let usage: UsageSnapshot
   public let sourceLabel: String
   public let sourceKind: ProviderFetchKind?
+  /// Privacy-safe identity of the credential that produced this result.
+  /// Accountless consumers can compare it with a later discovery before
+  /// attributing the result to a mutable CLI slot.
+  public let credentialScopeID: String?
 
-  public init(usage: UsageSnapshot, sourceLabel: String, sourceKind: ProviderFetchKind? = nil) {
+  public init(
+    usage: UsageSnapshot,
+    sourceLabel: String,
+    sourceKind: ProviderFetchKind? = nil,
+    credentialScopeID: String? = nil
+  ) {
     self.usage = usage
     self.sourceLabel = sourceLabel
     self.sourceKind = sourceKind
+    self.credentialScopeID = credentialScopeID
   }
 
   func withSourceKind(_ kind: ProviderFetchKind) -> ProviderFetchResult {
-    ProviderFetchResult(usage: usage, sourceLabel: sourceLabel, sourceKind: sourceKind ?? kind)
+    ProviderFetchResult(
+      usage: usage,
+      sourceLabel: sourceLabel,
+      sourceKind: sourceKind ?? kind,
+      credentialScopeID: credentialScopeID
+    )
   }
 }
 

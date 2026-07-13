@@ -21,7 +21,8 @@ extension UsageStore {
       snapshot: value.usage,
       provider: provider,
       account: account,
-      sourceKind: value.sourceKind
+      sourceKind: value.sourceKind,
+      credentialScopeID: value.credentialScopeID
     )
     let hidesProviderCost = Self.shouldHideProviderCost(sourceKind: value.sourceKind)
     let reportedCostFallback = Self.reportedCostFallback(
