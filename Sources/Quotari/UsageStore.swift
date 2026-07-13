@@ -67,7 +67,7 @@ final class UsageStore {
 
   private(set) var timerTask: Task<Void, Never>?
   private var refreshRequested = false
-  private(set) var accountRevisions: [UsageProvider: UInt] = [:]
+  var accountRevisions: [UsageProvider: UInt] = [:]
   var costTasks: [UsageProvider: Task<Void, Never>] = [:]
   var lastCostScans: [UsageProvider: Date] = [:]
   var lastEmptyCostScans: [UsageProvider: Date] = [:]
@@ -161,10 +161,13 @@ final class UsageStore {
     // Hidden saved copies must track live-token rotations between account
     // reloads too — a slot swapped right after a rotation would otherwise
     // strand the copy on a consumed refresh token.
-    await syncCapturedCopies(of: capturedCopyCandidates)
+    await syncCapturedCopies(of: capturedCopyCandidates.filter { isProviderEnabled($0.provider) })
   }
 
-  private func refresh(provider: UsageProvider) async {
+  func refresh(
+    provider: UsageProvider,
+    serializesProviderFetch: Bool = false
+  ) async {
     // A superseded selection fetch (cancelled when the selection changed) or a
     // fetch that a switch has since started must not hit the network and
     // rotate a credential slot out from under the switch.
