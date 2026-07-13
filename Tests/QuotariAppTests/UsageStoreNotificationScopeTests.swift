@@ -238,6 +238,141 @@ extension UsageStoreNotificationTests {
     #expect(center.attemptedRequests.first?.key.logicalAccountID == fetched.credentialScopeID)
   }
 
+  @Test func automaticClaudeCapturedCopyUsesTheLiveVerifiedProfile() async throws {
+    let source = ProviderCredentialSource.claudeKeychain(
+      service: ClaudeCredentialsStore.keychainService
+    )
+    let live = ProviderAccount(
+      provider: .claude,
+      displayName: "Live Claude login",
+      detail: nil,
+      credentialSource: source,
+      credentialIdentity: "claude-live-token"
+    )
+    let saved = ProviderAccount(
+      provider: .claude,
+      displayName: "Saved Claude login",
+      detail: nil,
+      credentialSource: .quotariRegistry(id: "claude:saved")
+    )
+    let discovery = StaticAccountDiscovery(
+      accounts: [.claude: [live]],
+      capturedCopies: [live.id: saved]
+    )
+    let harness = try await makeStore(
+      "captured-claude-profile",
+      discovery: discovery,
+      claudeCredentialLoader: { _ in ClaudeCredentials(accessToken: "claude-live-token") }
+    )
+    let store = harness.store
+    let center = harness.center
+    let accountID = "stable-captured-claude-account"
+    store.claudeProfiles[live.id] = ClaudeProfile(
+      accountID: accountID,
+      fingerprint: ProviderCredentialIdentity.fingerprint(of: "claude-live-token")
+    )
+
+    store.applySuccessfulFetch(
+      claudeFetchResult(credentialScopeID: live.credentialScopeID),
+      provider: .claude,
+      account: nil
+    )
+    await store.waitForPendingQuotaNotifications()
+
+    let logicalAccountID = "claude:account:\(ProviderCredentialIdentity.fingerprint(of: "id:\(accountID)"))"
+    #expect(center.attemptedRequests.map(\.key.logicalAccountID) == [logicalAccountID, logicalAccountID])
+  }
+
+  @Test func automaticClaudeRotationRetriesTheDeferredSnapshotAfterProfileFetch() async throws {
+    let source = ProviderCredentialSource.claudeKeychain(
+      service: ClaudeCredentialsStore.keychainService
+    )
+    let beforeRotation = ProviderAccount(
+      provider: .claude,
+      displayName: "Claude before rotation",
+      detail: nil,
+      credentialSource: source,
+      credentialIdentity: "claude-token-before"
+    )
+    let afterRotation = ProviderAccount(
+      provider: .claude,
+      displayName: "Claude after rotation",
+      detail: nil,
+      credentialSource: source,
+      credentialIdentity: "claude-token-after"
+    )
+    let discovery = MutableAccountDiscovery(
+      StaticAccountDiscovery(accounts: [.claude: [beforeRotation]])
+    )
+    let token = NotificationTokenBox("claude-token-before")
+    let harness = try await makeStore(
+      "automatic-claude-deferred-profile",
+      discovery: discovery,
+      claudeCredentialLoader: { _ in ClaudeCredentials(accessToken: token.value) }
+    )
+    let store = harness.store
+    let center = harness.center
+    let accountID = "stable-rotating-claude-account"
+    store.claudeProfiles[beforeRotation.id] = ClaudeProfile(
+      accountID: accountID,
+      fingerprint: ProviderCredentialIdentity.fingerprint(of: "claude-token-before")
+    )
+
+    store.applySuccessfulFetch(
+      claudeFetchResult(credentialScopeID: beforeRotation.credentialScopeID),
+      provider: .claude,
+      account: nil
+    )
+    await store.waitForPendingQuotaNotifications()
+    let initialResetID = try #require(
+      center.attemptedRequests.first(where: { $0.kind == .weeklyReset })?.requestID
+    )
+
+    token.value = "claude-token-after"
+    discovery.update(StaticAccountDiscovery(accounts: [.claude: [afterRotation]]))
+    let deferredSnapshot = UsageSnapshot(
+      provider: .claude,
+      primary: RateWindow(
+        kind: .session,
+        usedPercent: 80,
+        resetsAt: now.addingTimeInterval(6 * 3600)
+      ),
+      secondary: RateWindow(
+        kind: .weekly,
+        usedPercent: 20,
+        resetsAt: now.addingTimeInterval(8 * 24 * 3600)
+      ),
+      updatedAt: now.addingTimeInterval(60)
+    )
+    store.applySuccessfulFetch(
+      ProviderFetchResult(
+        usage: deferredSnapshot,
+        sourceLabel: "Claude",
+        sourceKind: .oauth,
+        credentialScopeID: afterRotation.credentialScopeID
+      ),
+      provider: .claude,
+      account: nil
+    )
+    await store.waitForPendingQuotaNotifications()
+
+    #expect(center.pendingIDs == [initialResetID])
+
+    store.claudeProfiles[afterRotation.id] = ClaudeProfile(
+      accountID: accountID,
+      fingerprint: ProviderCredentialIdentity.fingerprint(of: "claude-token-after")
+    )
+    store.enqueueClaudeQuotaNotificationScopeRestore()
+    await store.waitForPendingQuotaNotifications()
+
+    #expect(center.attemptedRequests.filter { $0.kind == .weeklyReset }.count == 2)
+    #expect(center.pendingIDs.count == 1)
+    #expect(
+      center.attemptedRequests.last(where: { $0.kind == .weeklyReset })?.cycleResetAt
+        == deferredSnapshot.secondary?.resetsAt
+    )
+  }
+
   @Test func replacedClaudeLoginStartsIndependentNotificationHistory() async throws {
     let source = ProviderCredentialSource.claudeKeychain(
       service: ClaudeCredentialsStore.keychainService

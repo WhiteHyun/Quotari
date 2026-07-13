@@ -79,6 +79,7 @@ final class UsageStore {
   /// it (it may rotate/persist the live token the switch is about to back up).
   var selectionRefreshTasks: [UsageProvider: Task<Void, Never>] = [:]
   var quotaNotificationTask: Task<Void, Never>?
+  var deferredClaudeQuotaNotification: DeferredClaudeQuotaNotification?
 
   /// Tests inject mock descriptors so results don't depend on credentials
   /// present on the machine running them.
