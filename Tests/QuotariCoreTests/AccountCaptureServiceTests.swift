@@ -13,6 +13,18 @@ private func codexAuthFile(_ contents: String) throws -> URL {
   return url
 }
 
+private func testJWT(exp: TimeInterval) -> String {
+  func base64URL(_ data: Data) -> String {
+    data.base64EncodedString()
+      .replacingOccurrences(of: "+", with: "-")
+      .replacingOccurrences(of: "/", with: "_")
+      .replacingOccurrences(of: "=", with: "")
+  }
+  let header = base64URL(Data(#"{"alg":"none"}"#.utf8))
+  let payload = base64URL((try? JSONSerialization.data(withJSONObject: ["exp": exp])) ?? Data())
+  return "\(header).\(payload).sig"
+}
+
 struct AccountCaptureServiceTests {
   @Test func capturesCodexFilePayloadIntoTheRegistry() throws {
     let url = try codexAuthFile(codexPayload)
@@ -336,5 +348,36 @@ struct AccountCaptureCopyMaintenanceTests {
 
     #expect(removed == "codex:acct-1")
     #expect(store.load().isEmpty)
+  }
+
+  @Test func syncNeverLetsAStaleSlotClobberAFresherSavedPair() throws {
+    let store = makeStore(InMemoryKeychain())
+    let service = AccountCaptureService(capturedAccounts: store)
+    let freshJWT = testJWT(exp: 100_000)
+    let staleJWT = testJWT(exp: 1000)
+    let freshURL = try codexAuthFile(
+      #"{"tokens":{"access_token":"\#(freshJWT)","account_id":"acct-1","refresh_token":"ref-new"}}"#
+    )
+    defer { try? FileManager.default.removeItem(at: freshURL) }
+    _ = try service.capture(ProviderAccount(
+      provider: .codex, displayName: "Codex", detail: "Default",
+      credentialSource: .codexAuthFile(path: freshURL.path)
+    ), now: captureNow)
+
+    // A second slot with the same identity still holds the older pair.
+    let staleURL = try codexAuthFile(
+      #"{"tokens":{"access_token":"\#(staleJWT)","account_id":"acct-1","refresh_token":"ref-old"}}"#
+    )
+    defer { try? FileManager.default.removeItem(at: staleURL) }
+    service.syncCapturedCopies(of: [ProviderAccount(
+      provider: .codex, displayName: "Codex", detail: "CODEX_HOME",
+      credentialSource: .codexAuthFile(path: staleURL.path)
+    )])
+
+    let saved = try CodexCredentialsStore.load(
+      source: .quotariRegistry(id: "codex:acct-1"), capturedAccounts: store
+    )
+    #expect(saved.accessToken == freshJWT)
+    #expect(saved.refreshToken == "ref-new")
   }
 }

@@ -9,7 +9,8 @@ struct ProviderAccountDiscoveryCaptureTests {
     let home = FileManager.default.temporaryDirectory.appendingPathComponent("codex-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
     let url = home.appendingPathComponent("auth.json")
-    try Data(#"{"tokens":{"access_token":"\#(token)","account_id":"\#(accountID)"}}"#.utf8).write(to: url)
+    try Data(#"{"tokens":{"access_token":"\#(token)","account_id":"\#(accountID)","refresh_token":"live-ref"}}"#.utf8)
+      .write(to: url)
     try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     return home
   }
@@ -179,5 +180,37 @@ struct ProviderAccountDiscoveryCaptureTests {
       capturedAccounts: otherStore
     )
     #expect(await otherDiscovery.capturedCopies(among: accounts) == [:])
+  }
+
+  @Test func anUnrenewableLiveLoginDoesNotHideTheSavedCopy() async throws {
+    // The live slot parses (same account_id) but has no refresh token, so it
+    // can't renew itself — the saved copy that can must stay visible.
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent("codex-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+    let url = home.appendingPathComponent("auth.json")
+    try Data(#"{"tokens":{"access_token":"tok","account_id":"acct-1"}}"#.utf8).write(to: url)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    defer { try? FileManager.default.removeItem(at: home) }
+    let store = CapturedAccountStore(keychain: InMemoryKeychain().store, service: "Test-Disc-\(UUID().uuidString)")
+    try store.save(CapturedAccount(
+      id: "codex:acct-1",
+      provider: .codex,
+      displayName: "Codex",
+      detail: "Default",
+      capturedAt: Date(timeIntervalSince1970: 1000),
+      origin: .codexAuthFile(path: url.path),
+      payload: Data(#"{"tokens":{"access_token":"tok","account_id":"acct-1","refresh_token":"ref"}}"#.utf8)
+    ))
+    let discovery = ProviderAccountDiscovery(
+      environment: ["CODEX_HOME": home.path],
+      home: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
+      keychainData: { nil },
+      capturedAccounts: store
+    )
+
+    let accounts = await discovery.accounts(for: .codex)
+
+    #expect(accounts.contains { $0.credentialSource.isCaptured })
+    #expect(await discovery.capturedCopies(among: accounts) == [:])
   }
 }

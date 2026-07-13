@@ -106,8 +106,23 @@ public struct AccountCaptureService: Sendable {
       else { continue }
       let id = registryID(provider: account.provider, identity: identity)
       guard let existing = capturedAccounts.account(id: id), existing.payload != payload else { continue }
-      // Same identity: the live credential is that account's newest truth.
+      // Same identity, but slots can be duplicated (default + CODEX_HOME):
+      // never let a stale slot clobber a fresher saved pair.
+      if let stored = Self.expiry(provider: account.provider, payload: existing.payload),
+         let candidate = Self.expiry(provider: account.provider, payload: payload),
+         candidate < stored {
+        continue
+      }
       try? capturedAccounts.updatePayload(id: id) { _ in payload }
+    }
+  }
+
+  /// The access-token expiry a payload reports, used to order competing
+  /// snapshots of the same identity.
+  private static func expiry(provider: UsageProvider, payload: Data) -> Date? {
+    switch provider {
+    case .codex: (try? CodexCredentialsStore.parse(payload))?.expiresAt
+    case .claude: (try? ClaudeCredentialsStore.parse(payload))?.expiresAt
     }
   }
 

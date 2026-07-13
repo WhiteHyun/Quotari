@@ -54,9 +54,10 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
     case .claude: claudeAccounts()
     }
     // Captured snapshots join discovery so selection and usage reuse the same
-    // path. A captured entry is hidden when its identity matches a live login,
-    // so the same account isn't listed twice while it's the CLI credential.
-    let liveIdentities = Set(live.compactMap { identity(of: $0.credentialSource, provider: provider) })
+    // path. A captured entry is hidden when its identity matches a RENEWABLE
+    // live login — an unrenewable live payload (no refresh token) must not
+    // hide the saved copy that can still refresh itself.
+    let liveIdentities = Set(live.compactMap { renewableIdentity(of: $0.credentialSource, provider: provider) })
     let saved = capturedAccounts.load()
       .filter { $0.provider == provider }
       .filter { captured in
@@ -100,7 +101,7 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
       }
     var copies: [String: ProviderAccount] = [:]
     for account in accounts where !account.credentialSource.isCaptured {
-      guard let key = identity(of: account.credentialSource, provider: account.provider),
+      guard let key = renewableIdentity(of: account.credentialSource, provider: account.provider),
             let item = byIdentity[account.provider]?[key] else { continue }
       copies[account.id] = ProviderAccount(
         provider: item.provider,
@@ -113,7 +114,21 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
   }
 
   private func identity(of source: ProviderCredentialSource, provider: UsageProvider) -> String? {
-    let payload: Data? = switch source {
+    rawPayload(of: source).flatMap { ProviderCredentialIdentity.key(provider: provider, payload: $0) }
+  }
+
+  /// The identity of a live login, but only when its payload can renew
+  /// itself (carries a refresh token) — the bar for standing in for a saved
+  /// copy, hiding it, or feeding a sync.
+  private func renewableIdentity(of source: ProviderCredentialSource, provider: UsageProvider) -> String? {
+    guard let payload = rawPayload(of: source),
+          ProviderCredentialMinimizer.minimize(provider: provider, payload: payload) != nil
+    else { return nil }
+    return ProviderCredentialIdentity.key(provider: provider, payload: payload)
+  }
+
+  private func rawPayload(of source: ProviderCredentialSource) -> Data? {
+    switch source {
     case let .codexAuthFile(path), let .claudeCredentialsFile(path):
       try? Data(contentsOf: URL(fileURLWithPath: path))
     case .claudeKeychain:
@@ -121,7 +136,6 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
     case .claudeEnvironment, .quotariRegistry:
       nil
     }
-    return payload.flatMap { ProviderCredentialIdentity.key(provider: provider, payload: $0) }
   }
 
   private func codexAccounts() -> [ProviderAccount] {

@@ -152,6 +152,9 @@ extension UsageStore {
       )
       refreshingAccountUsageProviders.remove(provider)
       accountUsageRefreshTasks[provider] = nil
+      // Per-account fetches can rotate a live token too; keep any hidden
+      // saved copy of that identity in step.
+      await syncCapturedCopies(of: capturedCopyCandidates.filter { $0.provider == provider })
     }
     accountUsageRefreshTasks[provider] = AccountUsageRefreshTask(task: task, force: force)
     await task.value

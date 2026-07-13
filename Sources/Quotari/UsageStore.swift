@@ -136,6 +136,7 @@ final class UsageStore {
     guard (accountRevisions[provider] ?? 0) == revision else { return }
     apply(provider: provider, account: account, result: result)
     lastRefresh = Date()
+    await syncCapturedCopies(of: capturedCopyCandidates.filter { $0.provider == provider })
   }
 
   func reloadAccounts() async {
