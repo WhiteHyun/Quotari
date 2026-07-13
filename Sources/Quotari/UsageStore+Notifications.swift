@@ -44,8 +44,9 @@ extension UsageStore {
     origin: ProviderAccount?,
     provider: UsageProvider
   ) {
+    let scopeID = (origin ?? account).map { notificationScopeID(for: $0) }
     quotaNotifications.setActiveLogicalAccountID(
-      origin?.id ?? account?.id,
+      scopeID,
       for: provider
     )
   }
@@ -58,35 +59,51 @@ extension UsageStore {
   ) -> String? {
     guard sourceKind != .mock else { return nil }
     if let origin = reconciledSelectionOrigins[provider] {
-      return origin.id
+      return notificationScopeID(for: origin)
     }
     if let account {
-      return account.id
+      return notificationScopeID(for: account)
     }
     if let matchedAccount = matchedAccount(for: snapshot, provider: provider) {
-      return capturedEquivalents[matchedAccount.id]?.id ?? matchedAccount.id
+      return notificationScopeID(for: matchedAccount)
     }
     guard snapshot.account == nil else { return nil }
-    return automaticClaudeNotificationAccountID(
+    return automaticNotificationAccountID(
       provider: provider,
       sourceKind: sourceKind
     )
   }
 
-  private func automaticClaudeNotificationAccountID(
+  private func automaticNotificationAccountID(
     provider: UsageProvider,
     sourceKind: ProviderFetchKind?
   ) -> String? {
-    guard provider == .claude, sourceKind == .oauth else { return nil }
-    let account = (accounts[provider] ?? [])
-      .compactMap { account -> (rank: Int, account: ProviderAccount)? in
-        guard let rank = Self.automaticClaudeSourceRank(account.credentialSource) else { return nil }
-        return (rank, account)
+    guard sourceKind == .oauth else { return nil }
+    let account: ProviderAccount?
+    switch provider {
+    case .codex:
+      let liveAccounts = (accounts[provider] ?? []).filter {
+        if case .codexAuthFile = $0.credentialSource {
+          return true
+        }
+        return false
       }
-      .min { $0.rank < $1.rank }?
-      .account
+      account = liveAccounts.count == 1 ? liveAccounts[0] : nil
+    case .claude:
+      account = (accounts[provider] ?? [])
+        .compactMap { account -> (rank: Int, account: ProviderAccount)? in
+          guard let rank = Self.automaticClaudeSourceRank(account.credentialSource) else { return nil }
+          return (rank, account)
+        }
+        .min { $0.rank < $1.rank }?
+        .account
+    }
     guard let account else { return nil }
-    return capturedEquivalents[account.id]?.id ?? account.id
+    return notificationScopeID(for: account)
+  }
+
+  private func notificationScopeID(for account: ProviderAccount) -> String {
+    (capturedEquivalents[account.id] ?? account).credentialScopeID
   }
 
   private nonisolated static func automaticClaudeSourceRank(

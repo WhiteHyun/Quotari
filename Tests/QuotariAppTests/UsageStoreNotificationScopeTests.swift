@@ -102,6 +102,94 @@ extension UsageStoreNotificationTests {
     #expect(controller.ledger.windows[reset.key]?.scheduledReset == nil)
   }
 
+  @Test func reusedLiveSlotStartsIndependentThresholdHistory() async throws {
+    let path = "/tmp/reused-auth.json"
+    let first = ProviderAccount(
+      provider: .codex,
+      displayName: "First login",
+      detail: nil,
+      credentialSource: .codexAuthFile(path: path),
+      credentialIdentity: "acct-first"
+    )
+    let second = ProviderAccount(
+      provider: .codex,
+      displayName: "Second login",
+      detail: nil,
+      credentialSource: .codexAuthFile(path: path),
+      credentialIdentity: "acct-second"
+    )
+    let discovery = MutableAccountDiscovery(
+      StaticAccountDiscovery(accounts: [.codex: [first]])
+    )
+    let harness = try await makeStore(
+      "reused-live-slot",
+      providers: [emptyDescriptor(for: .codex)],
+      discovery: discovery
+    )
+    let store = harness.store
+    let center = harness.center
+    await store.reloadAccounts()
+
+    store.applySuccessfulFetch(
+      ProviderFetchResult(
+        usage: usage(accountName: first.displayName),
+        sourceLabel: "Live",
+        sourceKind: .oauth
+      ),
+      provider: .codex,
+      account: nil
+    )
+    await store.waitForPendingQuotaNotifications()
+    #expect(center.attemptedRequests.count == 1)
+
+    discovery.update(StaticAccountDiscovery(accounts: [.codex: [second]]))
+    await store.reloadAccounts()
+    store.applySuccessfulFetch(
+      ProviderFetchResult(
+        usage: usage(accountName: second.displayName),
+        sourceLabel: "Live",
+        sourceKind: .oauth
+      ),
+      provider: .codex,
+      account: nil
+    )
+    await store.waitForPendingQuotaNotifications()
+
+    #expect(center.attemptedRequests.count == 2)
+    #expect(Set(center.attemptedRequests.map(\.key.logicalAccountID)).count == 2)
+  }
+
+  @Test func accountlessAutomaticCodexOAuthUsesItsOnlyDiscoveredLiveSlot() async throws {
+    let live = ProviderAccount(
+      provider: .codex,
+      displayName: "Codex account",
+      detail: nil,
+      credentialSource: .codexAuthFile(path: "/tmp/account-id-only-auth.json"),
+      credentialIdentity: "acct-id-only"
+    )
+    let harness = try await makeStore(
+      "accountless-codex-oauth",
+      providers: [emptyDescriptor(for: .codex)],
+      discovery: StaticAccountDiscovery(accounts: [.codex: [live]])
+    )
+    let store = harness.store
+    let center = harness.center
+    await store.reloadAccounts()
+
+    store.applySuccessfulFetch(
+      ProviderFetchResult(
+        usage: usage(accountName: nil),
+        sourceLabel: "Live",
+        sourceKind: .oauth
+      ),
+      provider: .codex,
+      account: nil
+    )
+    await store.waitForPendingQuotaNotifications()
+
+    #expect(center.attemptedRequests.count == 1)
+  }
+
   func weeklyFetchResult(accountName: String?) -> ProviderFetchResult {
     ProviderFetchResult(
       usage: weeklyUsage(accountName: accountName),
