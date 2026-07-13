@@ -8,24 +8,25 @@ extension UsageStore {
     account: ProviderAccount?,
     sourceKind: ProviderFetchKind?
   ) {
-    let logicalAccountID = quotaNotificationAccountID(
-      snapshot: snapshot,
-      provider: provider,
-      account: account,
-      sourceKind: sourceKind
-    )
-    // Automatic mode has no selected account to establish scope. Every real
-    // provider result replaces the prior scope before queued work runs; an
-    // unattributed result clears stale reset schedules rather than letting the
-    // previous account's reminder survive. A transient mock fallback preserves
-    // the last real scope and cannot create notifications itself.
-    if account == nil, sourceKind != .mock {
-      quotaNotifications.setActiveLogicalAccountID(logicalAccountID, for: provider)
-    }
+    // Automatic mode has no selected account to establish scope. Resolve the
+    // live identity in the serial notification tail so the matching process
+    // uses the same freshly-discovered account. A transient mock fallback
+    // preserves the last real scope and cannot notify.
+    let updatesAutomaticScope = account == nil && sourceKind != .mock
     let previous = quotaNotificationTask
     let controller = quotaNotifications
-    quotaNotificationTask = Task {
+    quotaNotificationTask = Task { [weak self] in
       await previous?.value
+      guard let self else { return }
+      let logicalAccountID = await quotaNotificationAccountID(
+        snapshot: snapshot,
+        provider: provider,
+        account: account,
+        sourceKind: sourceKind
+      )
+      if updatesAutomaticScope {
+        controller.setActiveLogicalAccountID(logicalAccountID, for: provider)
+      }
       _ = await controller.process(
         snapshot: snapshot,
         logicalAccountID: logicalAccountID,
@@ -56,7 +57,7 @@ extension UsageStore {
     provider: UsageProvider,
     account: ProviderAccount?,
     sourceKind: ProviderFetchKind?
-  ) -> String? {
+  ) async -> String? {
     guard sourceKind != .mock else { return nil }
     if let origin = reconciledSelectionOrigins[provider] {
       return notificationScopeID(for: origin)
@@ -68,7 +69,7 @@ extension UsageStore {
       return notificationScopeID(for: matchedAccount)
     }
     guard snapshot.account == nil else { return nil }
-    return automaticNotificationAccountID(
+    return await automaticNotificationAccountID(
       provider: provider,
       sourceKind: sourceKind
     )
@@ -77,12 +78,19 @@ extension UsageStore {
   private func automaticNotificationAccountID(
     provider: UsageProvider,
     sourceKind: ProviderFetchKind?
-  ) -> String? {
+  ) async -> String? {
     guard sourceKind == .oauth else { return nil }
+    // Automatic fetches read the live credential directly. Rediscover after
+    // that fetch instead of consulting the last account scan, so an external
+    // login replacement cannot inherit the previous slot occupant's ledger.
+    let discoveredAccounts = await accountDiscovery.accounts(for: provider)
+    let currentCapturedCopies = await accountDiscovery.capturedCopies(
+      among: discoveredAccounts
+    )
     let account: ProviderAccount?
     switch provider {
     case .codex:
-      let liveAccounts = (accounts[provider] ?? []).filter {
+      let liveAccounts = discoveredAccounts.filter {
         if case .codexAuthFile = $0.credentialSource {
           return true
         }
@@ -90,7 +98,7 @@ extension UsageStore {
       }
       account = liveAccounts.count == 1 ? liveAccounts[0] : nil
     case .claude:
-      account = (accounts[provider] ?? [])
+      account = discoveredAccounts
         .compactMap { account -> (rank: Int, account: ProviderAccount)? in
           guard let rank = Self.automaticClaudeSourceRank(account.credentialSource) else { return nil }
           return (rank, account)
@@ -99,11 +107,25 @@ extension UsageStore {
         .account
     }
     guard let account else { return nil }
-    return notificationScopeID(for: account)
+    return notificationScopeID(
+      forLogicalAccount: currentCapturedCopies[account.id] ?? account
+    )
   }
 
   private func notificationScopeID(for account: ProviderAccount) -> String {
-    (capturedEquivalents[account.id] ?? account).credentialScopeID
+    notificationScopeID(forLogicalAccount: capturedEquivalents[account.id] ?? account)
+  }
+
+  private func notificationScopeID(forLogicalAccount account: ProviderAccount) -> String {
+    switch account.provider {
+    case .codex:
+      account.credentialScopeID
+    case .claude:
+      // Claude discovery can only key an unsaved live account by its access
+      // token. That token rotates during routine refreshes, so keep the
+      // notification ledger on the durable source/registry id instead.
+      account.id
+    }
   }
 
   private nonisolated static func automaticClaudeSourceRank(

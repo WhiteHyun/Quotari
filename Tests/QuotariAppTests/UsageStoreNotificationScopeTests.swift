@@ -102,7 +102,7 @@ extension UsageStoreNotificationTests {
     #expect(controller.ledger.windows[reset.key]?.scheduledReset == nil)
   }
 
-  @Test func reusedLiveSlotStartsIndependentThresholdHistory() async throws {
+  @Test func automaticCodexSlotReuseRefreshesIdentityBeforeAttribution() async throws {
     let path = "/tmp/reused-auth.json"
     let first = ProviderAccount(
       provider: .codex,
@@ -132,7 +132,7 @@ extension UsageStoreNotificationTests {
 
     store.applySuccessfulFetch(
       ProviderFetchResult(
-        usage: usage(accountName: first.displayName),
+        usage: usage(accountName: nil),
         sourceLabel: "Live",
         sourceKind: .oauth
       ),
@@ -143,10 +143,9 @@ extension UsageStoreNotificationTests {
     #expect(center.attemptedRequests.count == 1)
 
     discovery.update(StaticAccountDiscovery(accounts: [.codex: [second]]))
-    await store.reloadAccounts()
     store.applySuccessfulFetch(
       ProviderFetchResult(
-        usage: usage(accountName: second.displayName),
+        usage: usage(accountName: nil),
         sourceLabel: "Live",
         sourceKind: .oauth
       ),
@@ -157,6 +156,45 @@ extension UsageStoreNotificationTests {
 
     #expect(center.attemptedRequests.count == 2)
     #expect(Set(center.attemptedRequests.map(\.key.logicalAccountID)).count == 2)
+  }
+
+  @Test func claudeAccessTokenRotationPreservesNotificationHistory() async throws {
+    let source = ProviderCredentialSource.claudeKeychain(
+      service: ClaudeCredentialsStore.keychainService
+    )
+    let beforeRotation = ProviderAccount(
+      provider: .claude,
+      displayName: "Claude Code",
+      detail: "Keychain",
+      credentialSource: source,
+      credentialIdentity: "access-token-before"
+    )
+    let afterRotation = ProviderAccount(
+      provider: .claude,
+      displayName: "Claude Code",
+      detail: "Keychain",
+      credentialSource: source,
+      credentialIdentity: "access-token-after"
+    )
+    let harness = try await makeStore("claude-token-rotation")
+    let store = harness.store
+    let center = harness.center
+
+    store.applySuccessfulFetch(
+      claudeFetchResult(),
+      provider: .claude,
+      account: beforeRotation
+    )
+    await store.waitForPendingQuotaNotifications()
+    store.applySuccessfulFetch(
+      claudeFetchResult(),
+      provider: .claude,
+      account: afterRotation
+    )
+    await store.waitForPendingQuotaNotifications()
+
+    #expect(center.attemptedRequests.map(\.kind) == [.warning, .weeklyReset])
+    #expect(Set(center.attemptedRequests.map(\.key.logicalAccountID)) == [beforeRotation.id])
   }
 
   @Test func accountlessAutomaticCodexOAuthUsesItsOnlyDiscoveredLiveSlot() async throws {
