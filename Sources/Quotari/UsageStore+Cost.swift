@@ -10,12 +10,20 @@ private struct LocalCostRefreshDecision {
   let cacheHit: Bool
 }
 
+private struct CostRefreshContext {
+  let provider: UsageProvider
+  let account: ProviderAccount?
+  let revision: UInt
+  let generation: UUID
+}
+
 extension UsageStore {
   func applySuccessfulFetch(
     _ value: ProviderFetchResult,
     provider: UsageProvider,
     account: ProviderAccount?
   ) {
+    guard isProviderEnabled(provider) else { return }
     let usage = recordAccountUsageSuccess(value, provider: provider, account: account)
     enqueueQuotaNotification(
       snapshot: value.usage,
@@ -110,8 +118,7 @@ extension UsageStore {
     } else {
       lastEmptyCostScans[provider] = nil
       latestReportedCostFallbacks[provider] = nil
-      costTasks[provider]?.cancel()
-      costTasks[provider] = nil
+      cancelCostRefresh(for: provider)
     }
   }
 
@@ -123,51 +130,80 @@ extension UsageStore {
     cacheHit: Bool
   ) {
     latestReportedCostFallbacks[provider] = ReportedCostFallback(cost: reportedCostFallback)
-    guard costTasks[provider] == nil else { return }
-    if let lastEmptyCostScan = lastEmptyCostScans[provider],
-       now.timeIntervalSince(lastEmptyCostScan) < Self.localCostScanThrottle {
-      return
-    }
-    if cacheHit,
-       let lastCostScan = lastCostScans[provider],
-       now.timeIntervalSince(lastCostScan) < Self.localCostScanThrottle {
-      return
+    let previousTask: Task<Void, Never>?
+    if let existingTask = costTasks[provider] {
+      guard existingTask.cancellationRequested else { return }
+      previousTask = existingTask.task
+    } else {
+      if let lastEmptyCostScan = lastEmptyCostScans[provider],
+         now.timeIntervalSince(lastEmptyCostScan) < Self.localCostScanThrottle {
+        return
+      }
+      if cacheHit,
+         let lastCostScan = lastCostScans[provider],
+         now.timeIntervalSince(lastCostScan) < Self.localCostScanThrottle {
+        return
+      }
+      previousTask = nil
     }
     lastCostScans[provider] = now
     let revision = accountRevisions[provider] ?? 0
     let costEstimator = costEstimator
-    costTasks[provider] = Task { [weak self] in
-      let cost = await costEstimator.costSummary(
-        provider: provider,
-        account: account,
-        now: now,
-        historyDays: 30
-      )
-      guard !Task.isCancelled else { return }
+    let generation = UUID()
+    let context = CostRefreshContext(
+      provider: provider,
+      account: account,
+      revision: revision,
+      generation: generation
+    )
+    let task = Task { [weak self] in
+      await previousTask?.value
+      let cost: CostSummary? = if Task.isCancelled {
+        nil
+      } else {
+        await costEstimator.costSummary(
+          provider: provider,
+          account: account,
+          now: now,
+          historyDays: 30
+        )
+      }
+      let wasCancelled = Task.isCancelled
       await MainActor.run {
         self?.finishCostRefresh(
           cost,
-          provider: provider,
-          account: account,
-          revision: revision
+          context: context,
+          wasCancelled: wasCancelled
         )
       }
     }
+    costTasks[provider] = CostRefreshTask(generation: generation, task: task)
+  }
+
+  func cancelCostRefresh(for provider: UsageProvider) {
+    guard var costTask = costTasks[provider] else { return }
+    costTask.task.cancel()
+    costTask.cancellationRequested = true
+    costTasks[provider] = costTask
   }
 
   private func finishCostRefresh(
     _ cost: CostSummary?,
-    provider: UsageProvider,
-    account: ProviderAccount?,
-    revision: UInt
+    context: CostRefreshContext,
+    wasCancelled: Bool
   ) {
-    guard (accountRevisions[provider] ?? 0) == revision else { return }
+    let provider = context.provider
+    guard costTasks[provider]?.generation == context.generation else { return }
     costTasks[provider] = nil
+    guard !wasCancelled,
+          isProviderEnabled(provider),
+          (accountRevisions[provider] ?? 0) == context.revision
+    else { return }
     guard let cost else {
       lastEmptyCostScans[provider] = Date()
       costEstimator.invalidateCachedCostSummary(
         provider: provider,
-        account: account,
+        account: context.account,
         historyDays: 30
       )
       let reportedCostFallback = latestReportedCostFallbacks[provider]?.cost
@@ -224,4 +260,10 @@ extension UsageStore {
     guard let cost else { return true }
     return shouldUseLocalCost(existing: cost) || cost.sourceDescription.localizedCaseInsensitiveContains("local")
   }
+}
+
+struct CostRefreshTask {
+  let generation: UUID
+  let task: Task<Void, Never>
+  var cancellationRequested = false
 }

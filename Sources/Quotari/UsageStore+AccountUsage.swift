@@ -7,6 +7,7 @@ extension UsageStore {
   /// account — guessing would mark the wrong account as active and let
   /// unattributed (or demo) provider data surface under a real account.
   func activeAccount(for provider: UsageProvider) -> ProviderAccount? {
+    guard isProviderEnabled(provider) else { return nil }
     if let selected = selectedAccounts[provider] {
       return selected
     }
@@ -96,6 +97,7 @@ extension UsageStore {
   }
 
   func accountUsage(for account: ProviderAccount) -> ProviderAccountUsage? {
+    guard isProviderEnabled(account.provider) else { return nil }
     if let usage = currentAccountUsage(for: account) {
       return usage
     }
@@ -115,10 +117,7 @@ extension UsageStore {
     // while a switch is rewriting a credential slot.
     guard !isSwitching, isProviderEnabled(provider) else { return }
     if let current = accountUsageRefreshTasks[provider] {
-      await current.task.value
-      if force, !current.force {
-        await refreshAccountUsage(for: provider, force: true)
-      }
+      await awaitAccountUsageRefresh(current, provider: provider, force: force)
       return
     }
     guard let descriptor = providers.first(where: { $0.id == provider }) else { return }
@@ -134,16 +133,22 @@ extension UsageStore {
     }
 
     refreshingAccountUsageProviders.insert(provider)
+    let revision = accountRevisions[provider] ?? 0
     let task = Task { [weak self] in
       guard let self else { return }
       await performAccountUsageRefresh(
         provider: provider,
         descriptor: descriptor,
         accounts: accountsToFetch,
-        now: now
+        now: now,
+        revision: revision
       )
       refreshingAccountUsageProviders.remove(provider)
       accountUsageRefreshTasks[provider] = nil
+      guard !Task.isCancelled,
+            isProviderEnabled(provider),
+            (accountRevisions[provider] ?? 0) == revision
+      else { return }
       // Per-account fetches can rotate a live token too; keep any hidden
       // saved copy of that identity in step.
       await syncCapturedCopies(of: capturedCopyCandidates.filter { $0.provider == provider })
@@ -157,6 +162,24 @@ extension UsageStore {
     }
     accountUsageRefreshTasks[provider] = AccountUsageRefreshTask(task: task, force: force)
     await task.value
+  }
+
+  private func awaitAccountUsageRefresh(
+    _ current: AccountUsageRefreshTask,
+    provider: UsageProvider,
+    force: Bool
+  ) async {
+    await current.task.value
+    guard isProviderEnabled(provider) else { return }
+    // Disabling cancels but intentionally retains the old handle until its
+    // closure finishes. If the provider was re-enabled while that fetch was
+    // draining, replace the cancelled generation instead of treating it as
+    // a successful coalesced request and leaving the cleared cache empty.
+    if current.task.isCancelled {
+      await refreshAccountUsage(for: provider, force: force)
+    } else if force, !current.force {
+      await refreshAccountUsage(for: provider, force: true)
+    }
   }
 
   func reconcileAccountUsage(
@@ -182,6 +205,7 @@ extension UsageStore {
     account: ProviderAccount?
   ) -> UsageSnapshot {
     let usage = Self.normalizedSnapshot(value.usage, account: account)
+    guard isProviderEnabled(provider) else { return usage }
     // The automatic pipeline falls back to demo data when the live fetch
     // fails; its fabricated snapshot must never be stored under a real account.
     if account == nil, value.sourceKind == .mock {
@@ -208,7 +232,7 @@ extension UsageStore {
   ) {
     // Automatic-mode failures stay at the provider level (errors[provider]);
     // guessing an account here would blame the wrong credentials.
-    guard let account else { return }
+    guard isProviderEnabled(provider), let account else { return }
     var usage = accountUsage[provider]?[account.id] ?? ProviderAccountUsage()
     usage.error = error.localizedDescription
     setAccountUsage(usage, for: account)
@@ -286,7 +310,8 @@ extension UsageStore {
     provider: UsageProvider,
     descriptor: ProviderDescriptor,
     accounts: [ProviderAccount],
-    now: Date
+    now: Date,
+    revision: UInt
   ) async {
     await withTaskGroup(of: (ProviderAccount, Result<ProviderFetchResult, Error>).self) { group in
       for account in accounts {
@@ -303,7 +328,11 @@ extension UsageStore {
         }
       }
       for await (account, result) in group {
-        guard self.accounts[provider]?.contains(account) == true else { continue }
+        guard !Task.isCancelled,
+              isProviderEnabled(provider),
+              (accountRevisions[provider] ?? 0) == revision,
+              self.accounts[provider]?.contains(account) == true
+        else { continue }
         applyAccountUsageResult(result, account: account)
       }
     }

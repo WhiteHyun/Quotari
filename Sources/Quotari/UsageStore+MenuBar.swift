@@ -3,15 +3,21 @@ import QuotariCore
 
 extension UsageStore {
   var highestUsedPercent: Double {
-    snapshots.values.map(\.highestUsedPercent).max() ?? 0
+    enabledProviderDescriptors
+      .compactMap { snapshots[$0.id]?.highestUsedPercent }
+      .max() ?? 0
   }
 
   var menuBarUsedPercent: Double? {
     switch menuBarPreferences.preferences.usageSource {
     case .mostConstrained:
-      snapshots.values.compactMap { menuBarUsedPercent(for: $0) }.max()
+      return enabledProviderDescriptors
+        .compactMap { snapshots[$0.id] }
+        .compactMap { menuBarUsedPercent(for: $0) }
+        .max()
     case let .provider(provider):
-      snapshots[provider].flatMap { menuBarUsedPercent(for: $0) }
+      guard isProviderEnabled(provider) else { return nil }
+      return snapshots[provider].flatMap { menuBarUsedPercent(for: $0) }
     }
   }
 
@@ -35,6 +41,9 @@ extension UsageStore {
   }
 
   var menuBarAccessibilityLabel: String {
+    guard !enabledProviderDescriptors.isEmpty else {
+      return "Quotari, no providers enabled"
+    }
     guard let usedPercent = menuBarUsedPercent,
           let remaining = menuBarRemainingPercent
     else {

@@ -326,13 +326,6 @@ extension UsageStoreNotificationTests {
   }
 }
 
-@MainActor
-struct UsageNotificationHarness {
-  var store: UsageStore
-  var controller: QuotaNotificationController
-  var center: UsageNotificationCenterStub
-}
-
 private struct NotificationUsageStrategy: ProviderFetchStrategy {
   let snapshot: UsageSnapshot
   let id = "notification-usage"
@@ -341,39 +334,4 @@ private struct NotificationUsageStrategy: ProviderFetchStrategy {
   func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
     ProviderFetchResult(usage: snapshot, sourceLabel: "Live")
   }
-}
-
-@MainActor
-final class UsageNotificationCenterStub: QuotaNotificationCenterTransport {
-  var attemptedRequests: [QuotaNotificationRequest] = []
-  private(set) var pendingIDs: Set<String> = []
-
-  func authorizationStatus() async -> QuotaNotificationAuthorizationStatus {
-    .authorized
-  }
-
-  func requestAuthorization() async throws -> Bool {
-    true
-  }
-
-  func pendingScheduledRequestIdentifiers() async -> Set<String> {
-    pendingIDs
-  }
-
-  func add(_ request: QuotaNotificationRequest) async throws {
-    attemptedRequests.append(request)
-    if request.kind == .weeklyReset {
-      pendingIDs.insert(request.requestID)
-    }
-  }
-
-  func removePendingRequests(withIdentifiers identifiers: [String]) {
-    pendingIDs.subtract(identifiers)
-  }
-
-  func removeRequests(withIdentifiers identifiers: [String]) {
-    pendingIDs.subtract(identifiers)
-  }
-
-  func configureForegroundPresentation() {}
 }
