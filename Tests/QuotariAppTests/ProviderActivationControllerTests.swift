@@ -43,6 +43,19 @@ struct ProviderActivationControllerTests {
     #expect(controller.preferences.disabledProviders.isEmpty)
   }
 
+  @Test func usageStoreSubscriptRoutesWritesThroughActivation() {
+    let store = UsageStore.isolatedForTesting(
+      providers: ProviderRegistry.all,
+      startsAutomatically: false
+    )
+
+    store[providerEnabled: .codex] = false
+    #expect(!store[providerEnabled: .codex])
+
+    store[providerEnabled: .codex] = true
+    #expect(store[providerEnabled: .codex])
+  }
+
   @Test func corruptedDataFallsBackToDefaultsAndRepairsPersistence() throws {
     let (defaults, suiteName) = try makeDefaults()
     defer { defaults.removePersistentDomain(forName: suiteName) }

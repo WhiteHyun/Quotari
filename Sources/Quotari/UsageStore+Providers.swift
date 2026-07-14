@@ -7,6 +7,11 @@ enum ProviderCredentialDiscoveryState {
 }
 
 extension UsageStore {
+  subscript(providerEnabled provider: UsageProvider) -> Bool {
+    get { isProviderEnabled(provider) }
+    set { setProviderEnabled(provider, enabled: newValue) }
+  }
+
   var enabledProviderDescriptors: [ProviderDescriptor] {
     providers.filter { isProviderEnabled($0.id) }
   }

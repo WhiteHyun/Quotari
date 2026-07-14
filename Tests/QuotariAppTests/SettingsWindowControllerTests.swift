@@ -17,5 +17,7 @@ struct SettingsWindowControllerTests {
 
     #expect(controller.isVisible)
     #expect(controller.windowTitle == "Settings")
+    #expect(controller.isResizable)
+    #expect(controller.minimumContentSize == NSSize(width: 460, height: 420))
   }
 }

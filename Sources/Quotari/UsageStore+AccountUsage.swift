@@ -2,6 +2,11 @@ import Foundation
 import QuotariCore
 
 extension UsageStore {
+  subscript(selectedAccountID provider: UsageProvider) -> String {
+    get { selectedAccounts[provider]?.id ?? "" }
+    set { selectAccount(id: newValue.isEmpty ? nil : newValue, for: provider) }
+  }
+
   /// The explicitly selected account, or the discovered account the current
   /// provider snapshot confidently names. Without either there is no active
   /// account — guessing would mark the wrong account as active and let
@@ -19,18 +24,6 @@ extension UsageStore {
   /// usage payload reports the email, so this matches the fetched profile
   /// email (the visible label) as well as the discovered display name —
   /// otherwise a Claude row labeled by email would never match its own usage.
-  private func accountMatchesSnapshot(_ account: ProviderAccount, name: String) -> Bool {
-    if account.displayName.localizedCaseInsensitiveCompare(name) == .orderedSame {
-      return true
-    }
-    if account.provider == .claude,
-       let email = claudeProfiles[account.id]?.email,
-       email.localizedCaseInsensitiveCompare(name) == .orderedSame {
-      return true
-    }
-    return false
-  }
-
   /// Where a previously selected account landed after rediscovery, evaluated
   /// from the account the user *logically* selected: a live stand-in defers
   /// to the saved account it stands in for. When the saved account is
@@ -379,11 +372,6 @@ extension UsageStore {
 
   /// Results without a confident name match stay unattributed rather than
   /// being credited to an arbitrary account.
-  func matchedAccount(for snapshot: UsageSnapshot, provider: UsageProvider) -> ProviderAccount? {
-    guard let name = snapshot.account else { return nil }
-    return (accounts[provider] ?? []).first { accountMatchesSnapshot($0, name: name) }
-  }
-
   private nonisolated static func isExpired(_ snapshot: UsageSnapshot) -> Bool {
     Date().timeIntervalSince(snapshot.updatedAt) >= cachedAccountUsageLifetime
   }

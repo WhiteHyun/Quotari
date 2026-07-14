@@ -36,6 +36,41 @@ final class QuotaNotificationController {
       : nil
   }
 
+  var notificationsEnabled: Bool {
+    get { preferences.isEnabled }
+    set {
+      guard newValue != preferences.isEnabled else { return }
+      Task { @MainActor [weak self] in
+        await self?.setNotificationsEnabled(newValue)
+      }
+    }
+  }
+
+  var warningThreshold: Int {
+    get { preferences.warningThreshold }
+    set {
+      _ = updateThresholds(
+        warning: newValue,
+        critical: preferences.criticalThreshold
+      )
+    }
+  }
+
+  var criticalThreshold: Int {
+    get { preferences.criticalThreshold }
+    set {
+      _ = updateThresholds(
+        warning: preferences.warningThreshold,
+        critical: newValue
+      )
+    }
+  }
+
+  subscript(providerEnabled provider: UsageProvider) -> Bool {
+    get { preferences.enabledProviders.contains(provider) }
+    set { setProvider(provider, enabled: newValue) }
+  }
+
   init(
     center: any QuotaNotificationCenterTransport = SystemQuotaNotificationCenter(),
     defaults: UserDefaults = .standard
@@ -306,36 +341,6 @@ private extension QuotaNotificationController {
 
   func persistLedger() {
     Self.save(policy.ledger, key: PersistenceKey.ledger, defaults: defaults)
-  }
-
-  static func load<Value: Decodable>(
-    _ type: Value.Type,
-    key: String,
-    defaults: UserDefaults
-  ) -> Value? {
-    guard let data = defaults.data(forKey: key) else { return nil }
-    return try? JSONDecoder().decode(type, from: data)
-  }
-
-  static func save(
-    _ value: some Encodable,
-    key: String,
-    defaults: UserDefaults
-  ) {
-    guard let data = try? JSONEncoder().encode(value) else { return }
-    defaults.set(data, forKey: key)
-  }
-
-  static func normalized(
-    _ preferences: QuotaNotificationPreferences
-  ) -> QuotaNotificationPreferences {
-    var preferences = preferences
-    preferences.warningThreshold = min(max(preferences.warningThreshold, 1), 99)
-    preferences.criticalThreshold = min(
-      max(preferences.criticalThreshold, preferences.warningThreshold + 1),
-      100
-    )
-    return preferences
   }
 
   func deliveryIsEnabled(for provider: UsageProvider) -> Bool {
