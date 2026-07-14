@@ -64,6 +64,11 @@ extension ClaudeUsageStrategy {
         ResolvedClaudeCredentials(credentials: $0, source: resolved.source)
       }
       return ClaudeRefreshResolution(resolved: authoritative ?? resolved)
+    } catch ClaudeCredentialPersistError.mirrorRecoveryOwnerChanged {
+      let authoritative = (try? reloadCredentials(resolved.source)).map {
+        ResolvedClaudeCredentials(credentials: $0, source: resolved.source)
+      }
+      return ClaudeRefreshResolution(resolved: authoritative ?? resolved)
     } catch ClaudeCredentialPersistError.staleSource {
       return nil
     } catch {

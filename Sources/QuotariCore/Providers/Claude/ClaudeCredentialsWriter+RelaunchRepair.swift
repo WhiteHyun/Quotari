@@ -64,7 +64,7 @@ extension ClaudeCredentialsWriter {
         underlying: "The canonical keychain grant is installed, but its credentials file mirror is still pending."
       )
     case .staleCanonical:
-      throw ClaudeCredentialPersistError.staleSource
+      throw ClaudeCredentialPersistError.mirrorRecoveryOwnerChanged
     }
     guard removeResolvedMirrorJournals(recovery), removeRecoveryJournal(canonical) else {
       throw ClaudeCredentialPersistError.mirrorRecoveryPending(

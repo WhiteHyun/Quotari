@@ -16,7 +16,7 @@ extension ClaudeMirrorRelaunchRepairTests {
       return fixture.slot.value
     })
 
-    expectClaudeStaleSource(writer, fixture.grant, replacing: "old-tok")
+    expectClaudeMirrorOwnerChange(writer, fixture.grant, replacing: "old-tok")
 
     #expect(fixture.slot.value == unrelated)
     #expect(try Data(contentsOf: fixture.fileURL) == original)
@@ -35,7 +35,7 @@ extension ClaudeMirrorRelaunchRepairTests {
       try secureWriter.commit(temporary, replacing: destination)
     })
 
-    expectClaudeStaleSource(writer, fixture.grant, replacing: "old-tok")
+    expectClaudeMirrorOwnerChange(writer, fixture.grant, replacing: "old-tok")
 
     #expect(fixture.slot.value == unrelated)
     #expect(try ClaudeCredentialsStore.parse(Data(contentsOf: fixture.fileURL)).accessToken == "new-tok")
@@ -65,6 +65,52 @@ extension ClaudeMirrorRelaunchRepairTests {
 
     #expect(fixture.slot.value == rewrittenPayload)
     #expect(try ClaudeCredentialsStore.parse(Data(contentsOf: fixture.fileURL)).accessToken == "new-tok")
+    #expect(try fixture.pending(id: fixture.keychainPendingID) == nil)
+    #expect(try fixture.pending(id: fixture.filePendingID) == nil)
+  }
+
+  @Test func canonicalChangeDuringRepairKeepsBothJournalsForObsoleteCleanup() async throws {
+    let fixture = try MirrorRepairFixture()
+    defer { fixture.remove() }
+    let original = try queueMirrorRepair(in: fixture)
+    let unrelated = fixture.payload(access: "other-tok", refresh: "other-ref")
+    let secureWriter = SecureCredentialFileWriter(setOwnerOnlyPermissions: { _ in })
+    let writer = fixture.writer(commitMirroredFile: { temporary, destination in
+      fixture.slot.value = unrelated
+      try secureWriter.commit(temporary, replacing: destination)
+    })
+    let strategy = ClaudeUsageStrategy(
+      transport: RefreshStubTransport(json: usageJSON),
+      resolveCredentials: fixture.resolve,
+      reloadCredentials: { _ in try fixture.resolve().credentials },
+      refresher: nil,
+      persister: writer,
+      capturedAccounts: fixture.store,
+      refreshCoordinator: ClaudeTokenRefreshCoordinator()
+    )
+    let pending = ClaudePendingGrant(
+      grant: fixture.grant,
+      previousAccessToken: "old-tok",
+      consumedRefreshToken: "old-ref"
+    )
+
+    let resolution = try await strategy.persisted(
+      pending,
+      resolved: ResolvedClaudeCredentials(
+        credentials: ClaudeCredentialsStore.parse(original),
+        source: fixture.source
+      )
+    )
+
+    #expect(resolution?.resolved.credentials.accessToken == "other-tok")
+    #expect(resolution?.resolved.credentials.refreshToken == "other-ref")
+    #expect(resolution?.acceptedGrant == nil)
+    #expect(try fixture.pending(id: fixture.keychainPendingID) != nil)
+    #expect(try fixture.pending(id: fixture.filePendingID) != nil)
+
+    #expect(throws: ClaudeCredentialPersistError.self) {
+      try fixture.normalWriter.persist(fixture.grant, replacing: "old-tok", to: fixture.source)
+    }
     #expect(try fixture.pending(id: fixture.keychainPendingID) == nil)
     #expect(try fixture.pending(id: fixture.filePendingID) == nil)
   }
@@ -157,7 +203,7 @@ extension ClaudeMirrorRelaunchRepairTests {
     return original
   }
 
-  private func expectClaudeStaleSource(
+  private func expectClaudeMirrorOwnerChange(
     _ writer: ClaudeCredentialsWriter,
     _ grant: ClaudeTokenGrant,
     replacing previousAccessToken: String
@@ -166,14 +212,14 @@ extension ClaudeMirrorRelaunchRepairTests {
       try writer.persist(grant, replacing: previousAccessToken, to: .claudeKeychain(
         service: ClaudeCredentialsStore.keychainService
       ))
-      Issue.record("expected staleSource")
+      Issue.record("expected mirrorRecoveryOwnerChanged")
     } catch let error as ClaudeCredentialPersistError {
-      guard case .staleSource = error else {
-        Issue.record("expected staleSource, got \(error)")
+      guard case .mirrorRecoveryOwnerChanged = error else {
+        Issue.record("expected mirrorRecoveryOwnerChanged, got \(error)")
         return
       }
     } catch {
-      Issue.record("expected staleSource, got \(error)")
+      Issue.record("expected mirrorRecoveryOwnerChanged, got \(error)")
     }
   }
 }

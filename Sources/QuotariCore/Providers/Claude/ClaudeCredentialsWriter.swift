@@ -19,6 +19,7 @@ public enum ClaudeCredentialPersistError: LocalizedError, Sendable {
   case keychainWriteFailed(status: Int32)
   case recoveryJournalFailed(underlying: String)
   case mirrorRecoveryPending(underlying: String)
+  case mirrorRecoveryOwnerChanged
   case obsoleteRecoveryCleanupPending(underlying: String)
 
   public var errorDescription: String? {
@@ -31,6 +32,8 @@ public enum ClaudeCredentialPersistError: LocalizedError, Sendable {
       "Saving Claude's mirror recovery journal failed: \(underlying)"
     case let .mirrorRecoveryPending(underlying):
       "Claude's canonical credential is installed, but mirror recovery is pending: \(underlying)"
+    case .mirrorRecoveryOwnerChanged:
+      "Claude's canonical credential changed while mirror recovery was in progress."
     case let .obsoleteRecoveryCleanupPending(underlying):
       "Claude's credential source changed, but obsolete recovery cleanup is pending: \(underlying)"
     }
