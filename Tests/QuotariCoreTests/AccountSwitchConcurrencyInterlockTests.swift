@@ -28,6 +28,14 @@ struct CLIActivityDetectorTests {
         (29, ["/opt/homebrew/bin/node", "-e", "console.log('ok')", "/Users/test/.npm/bin/codex"]),
         (30, ["/bin/bash", "--rcfile", "/tmp/bashrc", "/Users/test/.local/bin/claude"]),
         (31, ["/bin/bash", "-c", "/Users/test/.local/bin/claude"]),
+        (32, ["/bin/bash", "-lc", "/Users/test/.local/bin/claude"]),
+        (33, ["/usr/bin/python3", "-im", "codex"]),
+        (34, ["/usr/bin/ruby", "-we", "/Users/test/.local/bin/claude"]),
+        (35, ["/opt/homebrew/bin/node", "-C", "development", "/Users/test/.npm/bin/codex"]),
+        (36, ["/opt/homebrew/bin/node", "-Cdevelopment", "/Users/test/.npm/bin/claude"]),
+        (37, ["/bin/bash", "-lO", "extglob", "/Users/test/.local/bin/claude"]),
+        (38, ["/usr/bin/python3", "-iW", "ignore", "/Users/test/.npm/bin/codex"]),
+        (39, ["/usr/bin/ruby", "-wI", "/tmp", "/Users/test/.local/bin/claude"]),
       ]
     })
 
@@ -36,6 +44,7 @@ struct CLIActivityDetectorTests {
         [
           "codex (PID 10)", "codex (PID 14)", "codex (PID 22)",
           "codex (PID 24)", "codex (PID 26)", "codex (PID 28)",
+          "codex (PID 35)", "codex (PID 38)",
         ]
     )
     #expect(
@@ -43,6 +52,7 @@ struct CLIActivityDetectorTests {
         [
           "claude (PID 12)", "claude (PID 15)", "claude (PID 23)",
           "claude (PID 25)", "claude (PID 27)", "claude (PID 30)",
+          "claude (PID 36)", "claude (PID 37)", "claude (PID 39)",
         ]
     )
   }

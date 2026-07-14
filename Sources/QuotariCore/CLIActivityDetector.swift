@@ -85,6 +85,19 @@ public struct CLIActivityDetector: Sendable {
         || isInlineCommand {
         return nil
       }
+      switch shortOptionCluster(
+        argument,
+        valueOptions: valueOptions,
+        commandOptions: commandOptions
+      ) {
+      case .command:
+        return nil
+      case let .value(consumesNext):
+        index += consumesNext ? 2 : 1
+        continue
+      case .flags:
+        break
+      }
       if valueOptions.contains(argument) {
         index += 2
       } else {
@@ -94,12 +107,37 @@ public struct CLIActivityDetector: Sendable {
     return nil
   }
 
+  private enum ShortOptionCluster {
+    case command
+    case value(consumesNext: Bool)
+    case flags
+  }
+
+  private static func shortOptionCluster(
+    _ argument: String,
+    valueOptions: Set<String>,
+    commandOptions: Set<String>
+  ) -> ShortOptionCluster {
+    guard argument.hasPrefix("-"), !argument.hasPrefix("--") else { return .flags }
+    let flags = Array(argument.dropFirst())
+    for (index, flag) in flags.enumerated() {
+      let option = "-\(flag)"
+      if commandOptions.contains(option) {
+        return .command
+      }
+      if valueOptions.contains(option) {
+        return .value(consumesNext: index == flags.index(before: flags.endIndex))
+      }
+    }
+    return .flags
+  }
+
   private static let interpreterValueOptions: [String: Set<String>] = [
     "bash": ["--init-file", "--rcfile", "-O", "-o"],
     "dash": ["-o"],
     "fish": ["--init-command", "-C"],
-    "node": ["--conditions", "--experimental-loader", "--import", "--loader", "--require", "-r"],
-    "nodejs": ["--conditions", "--experimental-loader", "--import", "--loader", "--require", "-r"],
+    "node": ["--conditions", "--experimental-loader", "--import", "--loader", "--require", "-C", "-r"],
+    "nodejs": ["--conditions", "--experimental-loader", "--import", "--loader", "--require", "-C", "-r"],
     "python": ["--check-hash-based-pycs", "-W", "-X"],
     "python3": ["--check-hash-based-pycs", "-W", "-X"],
     "ruby": ["--encoding", "--external-encoding", "--internal-encoding", "-C", "-E", "-F", "-I", "-K", "-r"],
@@ -108,8 +146,8 @@ public struct CLIActivityDetector: Sendable {
   ]
 
   private static let interpreterInlineValueOptions: [String: Set<String>] = [
-    "node": ["-e", "-p", "-r"],
-    "nodejs": ["-e", "-p", "-r"],
+    "node": ["-C", "-e", "-p", "-r"],
+    "nodejs": ["-C", "-e", "-p", "-r"],
     "python": ["-W", "-X", "-c", "-m"],
     "python3": ["-W", "-X", "-c", "-m"],
     "ruby": ["-C", "-E", "-F", "-I", "-K", "-e", "-r"],
