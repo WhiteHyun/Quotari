@@ -131,11 +131,7 @@ extension AccountSwitchService {
     fallback: CodexFallbackTransition,
     now: Date
   ) throws {
-    do {
-      try requireCLIInactive(.codex)
-    } catch {
-      throw AccountSwitchError.partialSwitch(underlying: error.localizedDescription)
-    }
+    try requireCodexInactiveAfterKeychainInstallation(fallback)
     do {
       try verifyCodexKeychain(installed, storage: storage)
     } catch {
@@ -178,6 +174,26 @@ extension AccountSwitchService {
       )
     }
     try verifyCodexKeychain(installed, storage: storage)
+  }
+
+  private func requireCodexInactiveAfterKeychainInstallation(
+    _ fallback: CodexFallbackTransition
+  ) throws {
+    do {
+      try requireCLIInactive(.codex)
+    } catch {
+      let activityError = error
+      do {
+        try discardCodexFallback(fallback)
+      } catch {
+        throw AccountSwitchError.partialSwitch(
+          underlying: "Codex became active after the keychain update, and its prior fallback "
+            + "couldn't be removed safely: \(activityError.localizedDescription) "
+            + error.localizedDescription
+        )
+      }
+      throw AccountSwitchError.partialSwitch(underlying: activityError.localizedDescription)
+    }
   }
 
   private func verifyCodexKeychain(

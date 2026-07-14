@@ -79,6 +79,44 @@ struct AccountSwitchCodexPostWriteTests {
     #expect(try Data(contentsOf: storage.authFileURL) == fallback)
   }
 
+  @Test func codexActivityAfterKeyringWriteDiscardsTheQuarantinedFallback() throws {
+    let registry = makeSwitchRegistry()
+    let saved = try savedCodexAccount(registry: registry)
+    let home = try postWriteCodexHome(mode: "keyring")
+    defer { try? FileManager.default.removeItem(at: home) }
+    let originalKeyring = postWriteCodexPayload(account: "acct-key", token: "key", refresh: "key-ref")
+    let fallback = postWriteCodexPayload(account: "acct-file", token: "file", refresh: "file-ref")
+    let keychain = CodexKeychainSlot(originalKeyring)
+    let storage = CodexAuthStorage(environment: [:], home: home, keychainRead: keychain.read)
+    try writePostWriteCredential(fallback, to: storage.authFileURL)
+    let activity = PostWriteActivityDetector(activeOnCheck: 4)
+    let service = AccountSwitchService(
+      capturedAccounts: registry,
+      environment: [:],
+      home: home,
+      codexKeychainRead: keychain.read,
+      codexKeychainWrite: keychain.write,
+      codexKeychainDelete: { service, account in
+        keychain.delete(service: service, account: account)
+      },
+      activeCLIProcesses: activity.inspect
+    )
+
+    let thrown = capturePostWriteError(service, accountID: saved.id)
+
+    guard case .partialSwitch = thrown else {
+      Issue.record("expected .partialSwitch, got \(String(describing: thrown))")
+      return
+    }
+    #expect(try CodexCredentialsStore.parse(#require(keychain.value)).accountID == "acct-saved")
+    #expect(!FileManager.default.fileExists(atPath: storage.authFileURL.path))
+    let quarantines = try FileManager.default.contentsOfDirectory(
+      at: storage.authFileURL.deletingLastPathComponent(),
+      includingPropertiesForKeys: nil
+    ).filter { $0.lastPathComponent.hasPrefix(".auth.json.quotari-quarantine.") }
+    #expect(quarantines.isEmpty)
+  }
+
   @Test func codexReplacementBackupFailureCleansTheQuarantinedFallback() throws {
     let registry = makeSwitchRegistry()
     let saved = try savedCodexAccount(registry: registry)
@@ -223,5 +261,22 @@ private final class CodexFallbackReplacementReader: @unchecked Sendable {
       try writePostWriteCredential(replacement, to: authURL)
     }
     return data
+  }
+}
+
+private final class PostWriteActivityDetector: @unchecked Sendable {
+  private let lock = NSLock()
+  private let activeOnCheck: Int
+  private var checkCount = 0
+
+  init(activeOnCheck: Int) {
+    self.activeOnCheck = activeOnCheck
+  }
+
+  func inspect(_: UsageProvider) -> [String] {
+    lock.withLock {
+      checkCount += 1
+      return checkCount == activeOnCheck ? ["codex (PID 42)"] : []
+    }
   }
 }
