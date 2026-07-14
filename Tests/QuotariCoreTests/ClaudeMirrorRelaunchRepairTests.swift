@@ -80,6 +80,7 @@ struct ClaudeMirrorRelaunchRepairTests {
       )
     )
     #expect(firstResolution?.resolved.credentials.accessToken == "new-tok")
+    #expect(firstResolution?.acceptedGrant == pending)
     #expect(fixture.keychainWrites == 1)
     #expect(try Data(contentsOf: fixture.fileURL) == original)
     #expect(try fixture.pending(id: fixture.keychainPendingID) != nil)

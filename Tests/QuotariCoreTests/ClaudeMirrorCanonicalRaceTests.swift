@@ -16,7 +16,7 @@ extension ClaudeMirrorRelaunchRepairTests {
       return fixture.slot.value
     })
 
-    expectClaudeMirrorRecoveryFailure(writer, fixture.grant, replacing: "old-tok")
+    expectClaudeStaleSource(writer, fixture.grant, replacing: "old-tok")
 
     #expect(fixture.slot.value == unrelated)
     #expect(try Data(contentsOf: fixture.fileURL) == original)
@@ -35,7 +35,7 @@ extension ClaudeMirrorRelaunchRepairTests {
       try secureWriter.commit(temporary, replacing: destination)
     })
 
-    expectClaudeMirrorRecoveryFailure(writer, fixture.grant, replacing: "old-tok")
+    expectClaudeStaleSource(writer, fixture.grant, replacing: "old-tok")
 
     #expect(fixture.slot.value == unrelated)
     #expect(try ClaudeCredentialsStore.parse(Data(contentsOf: fixture.fileURL)).accessToken == "new-tok")
@@ -86,6 +86,21 @@ extension ClaudeMirrorRelaunchRepairTests {
     #expect(try fixture.pending(id: fixture.filePendingID) == mirrored)
   }
 
+  @Test func indeterminateMirrorAbsenceRetainsRecoveryOwnership() throws {
+    let fixture = try MirrorRepairFixture()
+    defer { fixture.remove() }
+    _ = try queueMirrorRepair(in: fixture)
+    try FileManager.default.removeItem(at: fixture.fileURL)
+    let writer = fixture.writer(fileRead: { _ in
+      throw CocoaError(.fileReadNoPermission)
+    })
+
+    expectClaudeMirrorRecoveryFailure(writer, fixture.grant, replacing: "old-tok")
+
+    #expect(try fixture.pending(id: fixture.keychainPendingID) != nil)
+    #expect(try fixture.pending(id: fixture.filePendingID) != nil)
+  }
+
   private func queueMirrorRepair(in fixture: MirrorRepairFixture) throws -> Data {
     let original = fixture.payload(access: "old-tok", refresh: "old-ref")
     try original.write(to: fixture.fileURL)
@@ -98,6 +113,26 @@ extension ClaudeMirrorRelaunchRepairTests {
       )
     }
     return original
+  }
+
+  private func expectClaudeStaleSource(
+    _ writer: ClaudeCredentialsWriter,
+    _ grant: ClaudeTokenGrant,
+    replacing previousAccessToken: String
+  ) {
+    do {
+      try writer.persist(grant, replacing: previousAccessToken, to: .claudeKeychain(
+        service: ClaudeCredentialsStore.keychainService
+      ))
+      Issue.record("expected staleSource")
+    } catch let error as ClaudeCredentialPersistError {
+      guard case .staleSource = error else {
+        Issue.record("expected staleSource, got \(error)")
+        return
+      }
+    } catch {
+      Issue.record("expected staleSource, got \(error)")
+    }
   }
 }
 

@@ -4,10 +4,10 @@ import Testing
 func expectClaudeMirrorRecoveryFailure(_ operation: () throws -> Void) {
   do {
     try operation()
-    Issue.record("expected recoveryJournalFailed")
+    Issue.record("expected mirrorRecoveryPending")
   } catch let error as ClaudeCredentialPersistError {
-    guard case .recoveryJournalFailed = error else {
-      Issue.record("expected recoveryJournalFailed, got \(error)")
+    guard case .mirrorRecoveryPending = error else {
+      Issue.record("expected mirrorRecoveryPending, got \(error)")
       return
     }
   } catch {

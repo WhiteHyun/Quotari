@@ -1,6 +1,12 @@
 import Foundation
 
 extension ClaudeCredentialsWriter {
+  private enum CanonicalMirrorCommitResult {
+    case resolved
+    case pending
+    case staleCanonical
+  }
+
   /// A previous launch may have installed the rotated keychain pair and then
   /// failed to update Claude's matching credentials file. The canonical
   /// journal proves which exact generation owns that repair; unrelated
@@ -40,40 +46,45 @@ extension ClaudeCredentialsWriter {
     if let journal = recovery.journal {
       try installRecoveryJournal(journal)
     }
-    guard commitMirrorWhileCanonicalUnchanged(
+    switch commitMirrorWhileCanonicalUnchanged(
       recovery.preparation,
       pending: recovery.journal?.pending ?? canonical.pending,
       canonicalPayload: canonicalPayload,
       keychainService: keychainService
-    ) else {
-      throw ClaudeCredentialPersistError.recoveryJournalFailed(
+    ) {
+    case .resolved:
+      break
+    case .pending:
+      throw ClaudeCredentialPersistError.mirrorRecoveryPending(
         underlying: "The canonical keychain grant is installed, but its credentials file mirror is still pending."
       )
+    case .staleCanonical:
+      throw ClaudeCredentialPersistError.staleSource
     }
     guard removeResolvedMirrorJournals(recovery), removeRecoveryJournal(canonical) else {
-      throw ClaudeCredentialPersistError.recoveryJournalFailed(
+      throw ClaudeCredentialPersistError.mirrorRecoveryPending(
         underlying: "The mirror is repaired, but its recovery journal cleanup is still pending."
       )
     }
     return true
   }
 
-  func commitMirrorWhileCanonicalUnchanged(
+  private func commitMirrorWhileCanonicalUnchanged(
     _ preparation: MirrorPreparation,
     pending: ClaudePendingGrant?,
     canonicalPayload: Data,
     keychainService: String
-  ) -> Bool {
+  ) -> CanonicalMirrorCommitResult {
     guard keychainRead(keychainService) == canonicalPayload else {
       Self.logger.notice("Claude's canonical keychain changed before mirror repair; leaving recovery queued.")
-      return false
+      return .staleCanonical
     }
     let resolved = commitMirrorIfUnchanged(preparation, pending: pending)
     guard keychainRead(keychainService) == canonicalPayload else {
       Self.logger.notice("Claude's canonical keychain changed during mirror repair; leaving recovery queued.")
-      return false
+      return .staleCanonical
     }
-    return resolved
+    return resolved ? .resolved : .pending
   }
 
   func removeResolvedMirrorJournals(_ recovery: MirrorRecovery) -> Bool {
@@ -91,12 +102,20 @@ extension ClaudeCredentialsWriter {
     _ pending: ClaudePendingGrant,
     destination: URL
   ) -> Bool {
-    guard FileManager.default.fileExists(atPath: destination.path) else { return true }
     do {
       return try !mirrorNeedsRecovery(fileRead(destination), pending: pending)
     } catch {
-      return false
+      return mirrorDestinationIsMissing(error)
     }
+  }
+
+  func mirrorDestinationIsMissing(_ error: Error) -> Bool {
+    let error = error as NSError
+    if error.domain == NSCocoaErrorDomain {
+      return error.code == NSFileNoSuchFileError || error.code == NSFileReadNoSuchFileError
+    }
+    return error.domain == NSPOSIXErrorDomain
+      && error.code == Int(POSIXErrorCode.ENOENT.rawValue)
   }
 
   func mirrorNeedsRecovery(

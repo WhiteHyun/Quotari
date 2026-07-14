@@ -215,13 +215,13 @@ extension ClaudeCredentialsWriter {
     keychainService: String
   ) -> MirrorPreparation {
     guard keychainService == ClaudeCredentialsStore.keychainService,
-          let destination = mirroredCredentialsFileURL,
-          FileManager.default.fileExists(atPath: destination.path)
+          let destination = mirroredCredentialsFileURL
     else { return .none }
     let original: Data
     do {
       original = try fileRead(destination)
     } catch {
+      guard !mirrorDestinationIsMissing(error) else { return .none }
       Self.logger
         .error("Reading the mirrored Claude credentials file failed: \(error.localizedDescription, privacy: .public)")
       return .failed(destination: destination)

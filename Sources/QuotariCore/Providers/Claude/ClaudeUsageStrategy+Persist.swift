@@ -59,6 +59,11 @@ extension ClaudeUsageStrategy {
     } catch ClaudeCredentialPersistError.staleSource {
       return nil
     } catch {
+      if let persistError = error as? ClaudeCredentialPersistError,
+         case .mirrorRecoveryPending = persistError,
+         !resolved.source.isCaptured {
+        acceptedGrant = pending
+      }
       // The refresh already happened server-side, so dropping the fetch
       // wouldn't undo the rotation — continue with the in-memory pair and
       // queue any grant whose consumed refresh token can no longer recover it.

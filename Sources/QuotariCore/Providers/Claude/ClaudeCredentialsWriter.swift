@@ -18,6 +18,7 @@ public enum ClaudeCredentialPersistError: LocalizedError, Sendable {
   case staleSource
   case keychainWriteFailed(status: Int32)
   case recoveryJournalFailed(underlying: String)
+  case mirrorRecoveryPending(underlying: String)
 
   public var errorDescription: String? {
     switch self {
@@ -27,6 +28,8 @@ public enum ClaudeCredentialPersistError: LocalizedError, Sendable {
     case let .keychainWriteFailed(status): "Writing the keychain item failed (security exited \(status))."
     case let .recoveryJournalFailed(underlying):
       "Saving Claude's mirror recovery journal failed: \(underlying)"
+    case let .mirrorRecoveryPending(underlying):
+      "Claude's canonical credential is installed, but mirror recovery is pending: \(underlying)"
     }
   }
 }
@@ -153,7 +156,7 @@ public struct ClaudeCredentialsWriter: ClaudeCredentialPersisting {
       try finishMirrorRecovery(recovery, canonicalJournal: canonicalJournal)
       return
     }
-    throw ClaudeCredentialPersistError.recoveryJournalFailed(
+    throw ClaudeCredentialPersistError.mirrorRecoveryPending(
       underlying: "The canonical keychain grant is installed, but its credentials file mirror is still pending."
     )
   }
@@ -165,7 +168,7 @@ public struct ClaudeCredentialsWriter: ClaudeCredentialPersisting {
     let mirrorJournalsResolved = removeResolvedMirrorJournals(recovery)
     guard let canonicalJournal else { return }
     guard mirrorJournalsResolved, removeRecoveryJournal(canonicalJournal) else {
-      throw ClaudeCredentialPersistError.recoveryJournalFailed(
+      throw ClaudeCredentialPersistError.mirrorRecoveryPending(
         underlying: "The mirror is updated, but its recovery journal cleanup is still pending."
       )
     }
