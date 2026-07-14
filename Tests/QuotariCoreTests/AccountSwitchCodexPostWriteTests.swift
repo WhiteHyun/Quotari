@@ -156,7 +156,8 @@ private func writePostWriteCredential(_ data: Data, to url: URL) throws {
 private func postWriteCodexPayload(account: String, token: String, refresh: String) -> Data {
   let idToken = "e30.eyJlbWFpbCI6InRlc3RAZXhhbXBsZS5jb20ifQ.sig"
   return Data(
-    #"{"tokens":{"id_token":"\#(idToken)","access_token":"\#(token)","account_id":"\#(account)","refresh_token":"\#(refresh)"}}"#.utf8
+    #"{"tokens":{"id_token":"\#(idToken)","access_token":"\#(token)","account_id":"\#(account)","refresh_token":"\#(refresh)"}}"#
+      .utf8
   )
 }
 

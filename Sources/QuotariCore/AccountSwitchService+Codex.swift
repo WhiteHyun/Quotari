@@ -245,5 +245,4 @@ extension AccountSwitchService {
     try backUp(provider: .codex, payload: payload, origin: source, now: now)
     return payload
   }
-
 }
