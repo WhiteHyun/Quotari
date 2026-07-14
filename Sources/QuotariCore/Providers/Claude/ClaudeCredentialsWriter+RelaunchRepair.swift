@@ -87,6 +87,33 @@ extension ClaudeCredentialsWriter {
     return resolved
   }
 
+  func mirrorJournalIsResolved(
+    _ pending: ClaudePendingGrant,
+    destination: URL
+  ) -> Bool {
+    guard FileManager.default.fileExists(atPath: destination.path) else { return true }
+    do {
+      return try !mirrorNeedsRecovery(fileRead(destination), pending: pending)
+    } catch {
+      return false
+    }
+  }
+
+  func mirrorNeedsRecovery(
+    _ payload: Data,
+    pending: ClaudePendingGrant?
+  ) -> Bool {
+    guard let pending else { return false }
+    guard let credentials = try? ClaudeCredentialsStore.parse(payload) else { return true }
+    if credentials.accessToken == pending.grant.accessToken {
+      return pending.grant.refreshToken.map { credentials.refreshToken != $0 } ?? false
+    }
+    return pending.supersedes(
+      accessToken: credentials.accessToken,
+      refreshToken: credentials.refreshToken
+    )
+  }
+
   @discardableResult
   func removeRecoveryJournal(_ journal: MirrorRecoveryJournal) -> Bool {
     do {

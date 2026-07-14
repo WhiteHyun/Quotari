@@ -75,7 +75,12 @@ extension ClaudeCredentialsWriter {
     )
     switch initial {
     case .none:
-      return try mirrorRecoveryReconcilingMissingPreparation(initial, context: context, id: id)
+      return try mirrorRecoveryReconcilingMissingPreparation(
+        initial,
+        context: context,
+        id: id,
+        destination: destination
+      )
     case .failed, .prepared:
       return try mirrorRecoveryReconcilingPreparedMirror(initial, context: context, id: id)
     }
@@ -84,7 +89,8 @@ extension ClaudeCredentialsWriter {
   private func mirrorRecoveryReconcilingMissingPreparation(
     _ initial: MirrorPreparation,
     context: MirrorRecoveryContext,
-    id: String
+    id: String,
+    destination: URL
   ) throws -> MirrorRecovery {
     // The file may be one rotation behind the canonical keychain. Only an
     // exact existing journal can bridge that lineage; an unrelated file is
@@ -110,6 +116,13 @@ extension ClaudeCredentialsWriter {
       keychainService: context.keychainService
     )
     guard preparation.requiresJournal else {
+      guard mirrorJournalIsResolved(effective, destination: destination) else {
+        return MirrorRecovery(
+          preparation: .failed(destination: destination),
+          journal: nil,
+          cleanup: nil
+        )
+      }
       return MirrorRecovery(
         preparation: preparation,
         journal: nil,
@@ -289,21 +302,6 @@ extension ClaudeCredentialsWriter {
           )
     else { return nil }
     return credentials.accessToken
-  }
-
-  private func mirrorNeedsRecovery(
-    _ payload: Data,
-    pending: ClaudePendingGrant?
-  ) -> Bool {
-    guard let pending else { return false }
-    guard let credentials = try? ClaudeCredentialsStore.parse(payload) else { return true }
-    if credentials.accessToken == pending.grant.accessToken {
-      return pending.grant.refreshToken.map { credentials.refreshToken != $0 } ?? false
-    }
-    return pending.supersedes(
-      accessToken: credentials.accessToken,
-      refreshToken: credentials.refreshToken
-    )
   }
 
   func mirrorPendingGrant(
