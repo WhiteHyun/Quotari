@@ -26,9 +26,8 @@ extension AccountSwitchService {
   /// `nil` only for a genuinely absent file; a file that exists but can't be
   /// read throws (aborting the switch rather than treating it as empty).
   func readFile(_ url: URL) throws -> Data? {
-    guard FileManager.default.fileExists(atPath: url.path) else { return nil }
     do {
-      return try Data(contentsOf: url)
+      return try credentialFileRead(url)
     } catch {
       throw AccountSwitchError.slotReadFailed(underlying: error.localizedDescription)
     }

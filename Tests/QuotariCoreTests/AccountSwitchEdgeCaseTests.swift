@@ -249,7 +249,10 @@ struct AccountSwitchRecoveryTests {
       environment: [:],
       home: home,
       keychainRead: { _ in reads.next() },
-      keychainWrite: { data, _ in written.value = data }
+      keychainWrite: { data, _ in
+        reads.write(data)
+        written.value = data
+      }
     )
 
     try service.switchCLI(
@@ -362,6 +365,7 @@ private final class KeychainReadSequence: @unchecked Sendable {
   private let lock = NSLock()
   private let values: [Data]
   private var index = 0
+  private var written: Data?
 
   init(_ values: [Data]) {
     self.values = values
@@ -369,9 +373,16 @@ private final class KeychainReadSequence: @unchecked Sendable {
 
   func next() -> Data? {
     lock.withLock {
+      if let written {
+        return written
+      }
       guard !values.isEmpty else { return nil }
       defer { index += 1 }
       return values[min(index, values.count - 1)]
     }
+  }
+
+  func write(_ data: Data) {
+    lock.withLock { written = data }
   }
 }

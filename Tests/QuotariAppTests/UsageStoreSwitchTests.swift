@@ -289,6 +289,7 @@ extension UsageStoreSwitchTests {
     let directory = try TemporaryDirectory()
     let home = directory.url
     let registry = CapturedAccountStore.inMemoryForTesting()
+    let keychain = KeychainPayloadBox()
     try registry.save(CapturedAccount(
       id: "claude:fp-saved",
       provider: .claude,
@@ -316,7 +317,10 @@ extension UsageStoreSwitchTests {
       costEstimator: EmptyCostEstimator(),
       accountDiscovery: discovery,
       accountSwitch: .isolatedForTesting(
-        capturedAccounts: registry, home: home, keychainWrite: { _, _ in }
+        capturedAccounts: registry,
+        home: home,
+        keychainRead: { _ in keychain.value },
+        keychainWrite: { payload, _ in keychain.value = payload }
       ),
       startsAutomatically: false
     )
@@ -361,5 +365,15 @@ extension UsageStoreSwitchTests {
 
     let fetches = await recorder.accounts.count
     #expect(fetches == 0)
+  }
+}
+
+private final class KeychainPayloadBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var payload: Data?
+
+  var value: Data? {
+    get { lock.withLock { payload } }
+    set { lock.withLock { payload = newValue } }
   }
 }

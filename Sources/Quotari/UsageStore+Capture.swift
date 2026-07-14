@@ -109,8 +109,9 @@ extension UsageStore {
     let now = Date()
     do {
       // The write runs detached (off the main actor), and `isSwitching`
-      // suppresses Quotari refreshes for the window. A separate CLI process
-      // is not covered, hence the confirmation shown before this call.
+      // suppresses Quotari refreshes for the window. The switch service also
+      // checks separate CLI processes; the confirmation explains its residual
+      // non-cooperative launch window.
       let writtenSource = try await Task.detached {
         try switcher.switchCLI(
           toRegistryAccount: id,
