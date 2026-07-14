@@ -22,16 +22,28 @@ struct CLIActivityDetectorTests {
         (23, ["/Users/test/.local/bin/claude", "(continue the session)"]),
         (24, ["/opt/homebrew/bin/node", "/Users/Jane Doe/.npm/bin/codex", "--quiet"]),
         (25, ["/bin/bash", "/Users/Jane Doe/.local/bin/claude", "--continue"]),
+        (26, ["/opt/homebrew/bin/node", "-r", "preload", "/Users/test/.npm/bin/codex"]),
+        (27, ["/opt/homebrew/bin/node", "--require", "preload", "/Users/test/.npm/bin/claude"]),
+        (28, ["/opt/homebrew/bin/node", "--require=preload", "/Users/test/.npm/bin/codex"]),
+        (29, ["/opt/homebrew/bin/node", "-e", "console.log('ok')", "/Users/test/.npm/bin/codex"]),
+        (30, ["/bin/bash", "--rcfile", "/tmp/bashrc", "/Users/test/.local/bin/claude"]),
+        (31, ["/bin/bash", "-c", "/Users/test/.local/bin/claude"]),
       ]
     })
 
     #expect(
       try detector.activeProcesses(for: .codex) ==
-        ["codex (PID 10)", "codex (PID 14)", "codex (PID 22)", "codex (PID 24)"]
+        [
+          "codex (PID 10)", "codex (PID 14)", "codex (PID 22)",
+          "codex (PID 24)", "codex (PID 26)", "codex (PID 28)",
+        ]
     )
     #expect(
       try detector.activeProcesses(for: .claude) ==
-        ["claude (PID 12)", "claude (PID 15)", "claude (PID 23)", "claude (PID 25)"]
+        [
+          "claude (PID 12)", "claude (PID 15)", "claude (PID 23)",
+          "claude (PID 25)", "claude (PID 27)", "claude (PID 30)",
+        ]
     )
   }
 

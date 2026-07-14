@@ -45,7 +45,7 @@ public struct CLIActivityDetector: Sendable {
   }
 
   private static func matches(arguments originalArguments: [String], expectedName: String) -> Bool {
-    var arguments = originalArguments
+    let arguments = originalArguments
     guard let executable = arguments.first else { return false }
     let executableName = URL(fileURLWithPath: executable).lastPathComponent
     if executableName == expectedName {
@@ -53,14 +53,80 @@ public struct CLIActivityDetector: Sendable {
     }
     let interpreters = ["bash", "dash", "fish", "node", "nodejs", "python", "python3", "ruby", "sh", "zsh"]
     guard interpreters.contains(executableName.lowercased()) else { return false }
-    arguments.removeFirst()
-    while arguments.first?.hasPrefix("-") == true {
-      arguments.removeFirst()
-    }
-    guard let script = arguments.first else { return false }
+    guard let script = interpreterScript(
+      in: Array(arguments.dropFirst()),
+      interpreter: executableName.lowercased()
+    ) else { return false }
     return !isAppBundlePath(script)
       && URL(fileURLWithPath: script).lastPathComponent == expectedName
   }
+
+  private static func interpreterScript(
+    in arguments: [String],
+    interpreter: String
+  ) -> String? {
+    let valueOptions = interpreterValueOptions[interpreter, default: []]
+    let inlineValueOptions = interpreterInlineValueOptions[interpreter, default: []]
+    let commandOptions = interpreterCommandOptions[interpreter, default: []]
+    var index = 0
+    while index < arguments.count {
+      let argument = arguments[index]
+      if argument == "--" {
+        return arguments.dropFirst(index + 1).first
+      }
+      guard argument.hasPrefix("-") else { return argument }
+      let isInlineCommand = commandOptions.contains { option in
+        inlineValueOptions.contains(option)
+          && argument.count > option.count
+          && argument.hasPrefix(option)
+      }
+      if commandOptions.contains(argument)
+        || commandOptions.contains(where: { argument.hasPrefix("\($0)=") })
+        || isInlineCommand {
+        return nil
+      }
+      if valueOptions.contains(argument) {
+        index += 2
+      } else {
+        index += 1
+      }
+    }
+    return nil
+  }
+
+  private static let interpreterValueOptions: [String: Set<String>] = [
+    "bash": ["--init-file", "--rcfile", "-O", "-o"],
+    "dash": ["-o"],
+    "fish": ["--init-command", "-C"],
+    "node": ["--conditions", "--experimental-loader", "--import", "--loader", "--require", "-r"],
+    "nodejs": ["--conditions", "--experimental-loader", "--import", "--loader", "--require", "-r"],
+    "python": ["--check-hash-based-pycs", "-W", "-X"],
+    "python3": ["--check-hash-based-pycs", "-W", "-X"],
+    "ruby": ["--encoding", "--external-encoding", "--internal-encoding", "-C", "-E", "-F", "-I", "-K", "-r"],
+    "sh": ["-o"],
+    "zsh": ["-o"],
+  ]
+
+  private static let interpreterInlineValueOptions: [String: Set<String>] = [
+    "node": ["-e", "-p", "-r"],
+    "nodejs": ["-e", "-p", "-r"],
+    "python": ["-W", "-X", "-c", "-m"],
+    "python3": ["-W", "-X", "-c", "-m"],
+    "ruby": ["-C", "-E", "-F", "-I", "-K", "-e", "-r"],
+  ]
+
+  private static let interpreterCommandOptions: [String: Set<String>] = [
+    "bash": ["-c"],
+    "dash": ["-c"],
+    "fish": ["--command", "-c"],
+    "node": ["--eval", "--print", "-e", "-p"],
+    "nodejs": ["--eval", "--print", "-e", "-p"],
+    "python": ["-c", "-m"],
+    "python3": ["-c", "-m"],
+    "ruby": ["-e"],
+    "sh": ["-c"],
+    "zsh": ["-c"],
+  ]
 
   private static func isAppBundlePath(_ path: String) -> Bool {
     path.range(of: ".app/Contents/", options: .caseInsensitive) != nil
