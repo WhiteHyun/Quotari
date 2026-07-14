@@ -33,16 +33,12 @@ extension ClaudeCredentialsWriter {
     guard current.accessToken == canonical.pending.grant.accessToken,
           current.refreshToken == canonical.pending.grant.refreshToken
     else {
-      if !canonical.pending.supersedes(
-        accessToken: current.accessToken,
-        refreshToken: current.refreshToken
-      ) {
-        guard removeObsoleteRecovery(canonical, keychainService: keychainService) else {
-          throw ClaudeCredentialPersistError.mirrorRecoveryPending(
-            underlying: "The canonical source changed, but obsolete mirror cleanup is still pending."
-          )
-        }
-      }
+      try removeObsoleteRecoveryIfNeeded(
+        canonical,
+        currentAccessToken: current.accessToken,
+        currentRefreshToken: current.refreshToken,
+        keychainService: keychainService
+      )
       return false
     }
 
@@ -225,6 +221,23 @@ extension ClaudeCredentialsWriter {
         "Inspecting Claude's obsolete mirror recovery failed: \(error.localizedDescription, privacy: .public)"
       )
       return false
+    }
+  }
+
+  private func removeObsoleteRecoveryIfNeeded(
+    _ canonical: MirrorRecoveryJournal,
+    currentAccessToken: String,
+    currentRefreshToken: String?,
+    keychainService: String
+  ) throws {
+    guard !canonical.pending.supersedes(
+      accessToken: currentAccessToken,
+      refreshToken: currentRefreshToken
+    ) else { return }
+    guard removeObsoleteRecovery(canonical, keychainService: keychainService) else {
+      throw ClaudeCredentialPersistError.mirrorRecoveryPending(
+        underlying: "The canonical source changed, but obsolete mirror cleanup is still pending."
+      )
     }
   }
 }
