@@ -85,7 +85,7 @@ extension UsageStore {
     guard capturedEquivalents[account.id] == nil else { return false }
     switch account.credentialSource {
     case .quotariRegistry, .claudeEnvironment: return false
-    case .codexAuthFile, .claudeKeychain, .claudeCredentialsFile: return true
+    case .codexAuthFile, .codexKeychain, .claudeKeychain, .claudeCredentialsFile: return true
     }
   }
 

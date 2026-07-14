@@ -123,10 +123,12 @@ extension UsageStore {
     switch provider {
     case .codex:
       let liveAccounts = discoveredAccounts.filter {
-        if case .codexAuthFile = $0.credentialSource {
-          return true
+        switch $0.credentialSource {
+        case .codexAuthFile, .codexKeychain:
+          true
+        case .claudeEnvironment, .claudeKeychain, .claudeCredentialsFile, .quotariRegistry:
+          false
         }
-        return false
       }
       account = liveAccounts.first { $0.credentialScopeID == credentialScopeID }
     case .claude:
@@ -255,7 +257,7 @@ extension UsageStore {
       1
     case .claudeCredentialsFile:
       2
-    case .codexAuthFile, .claudeEnvironment, .claudeKeychain, .quotariRegistry:
+    case .codexAuthFile, .codexKeychain, .claudeEnvironment, .claudeKeychain, .quotariRegistry:
       nil
     }
   }

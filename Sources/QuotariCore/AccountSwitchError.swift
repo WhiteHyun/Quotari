@@ -5,9 +5,9 @@ public enum AccountSwitchError: LocalizedError, Sendable {
   case slotReadFailed(underlying: String)
   case backupFailed(underlying: String)
   case writeFailed(underlying: String)
-  /// The keychain was switched but the credentials-file write failed AND the
-  /// keychain rollback also failed: the two Claude stores now disagree. Both
-  /// logins are still backed up, but the user must reconcile.
+  /// A credential write landed but its follow-up failed, and restoring the
+  /// previous credential also failed. Both logins are backed up, but the user
+  /// must reconcile the CLI's stores manually.
   case partialSwitch(underlying: String)
 
   public var errorDescription: String? {
@@ -22,7 +22,7 @@ public enum AccountSwitchError: LocalizedError, Sendable {
       "Couldn't write the account's credentials into the CLI's slot: \(underlying)"
     case let .partialSwitch(underlying):
       "The switch half-applied and couldn't be rolled back (\(underlying)); "
-        + "Claude's keychain and credentials file now differ. Both prior logins are saved in Quotari."
+        + "the CLI's credential stores may now differ. Both prior logins are saved in Quotari."
     }
   }
 }

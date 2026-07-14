@@ -18,7 +18,8 @@ public struct KnownLiveClaudeTarget: Equatable, Sendable {
 /// account's credentials into the CLI's own credential slot — the Claude Code
 /// keychain item AND `~/.claude/.credentials.json` when present (both, so the
 /// CLI's read-precedence can't resurrect the old login), or the effective
-/// Codex `auth.json` (`CODEX_HOME` over the default).
+/// Codex's configured file/keyring/auto credential backend (scoped by the
+/// effective `CODEX_HOME`).
 ///
 /// The switch preserves every login it observes before overwriting a slot.
 /// Every slot it will overwrite is read (a read *failure* aborts — only a
@@ -43,6 +44,9 @@ public struct AccountSwitchService: Sendable {
   let home: URL
   let keychainRead: @Sendable (String) throws -> Data?
   let keychainWrite: @Sendable (Data, String) throws -> Void
+  let codexKeychainRead: @Sendable (String, String) throws -> Data?
+  let codexKeychainWrite: @Sendable (Data, String, String) throws -> Void
+  let codexKeychainDelete: @Sendable (String, String) throws -> Void
   let secureFileWriter: SecureCredentialFileWriter
 
   public init(
@@ -52,10 +56,21 @@ public struct AccountSwitchService: Sendable {
     home: URL = FileManager.default.homeDirectoryForCurrentUser,
     keychainRead: (@Sendable (String) throws -> Data?)? = nil,
     keychainWrite: (@Sendable (Data, String) throws -> Void)? = nil,
+    codexKeychainRead: (@Sendable (String, String) throws -> Data?)? = nil,
+    codexKeychainWrite: (@Sendable (Data, String, String) throws -> Void)? = nil,
+    codexKeychainDelete: (@Sendable (String, String) throws -> Void)? = nil,
     setOwnerOnlyPermissions: (@Sendable (URL) throws -> Void)? = nil
   ) {
+    let resolvedCodexKeychainRead = codexKeychainRead ?? { service, account in
+      try KeychainItemStore(account: account).read(service: service)
+    }
     self.capturedAccounts = capturedAccounts
-    self.capture = capture ?? AccountCaptureService(capturedAccounts: capturedAccounts)
+    self.capture = capture ?? AccountCaptureService(
+      capturedAccounts: capturedAccounts,
+      codexKeychainRead: { service, account in
+        try? resolvedCodexKeychainRead(service, account)
+      }
+    )
     self.environment = environment
     self.home = home
     // Read the Claude item by service only (no account filter), matching how
@@ -67,6 +82,13 @@ public struct AccountSwitchService: Sendable {
     self
       .keychainWrite = keychainWrite ??
       { data, service in try KeychainItemStore.writeByService(data, service: service) }
+    self.codexKeychainRead = resolvedCodexKeychainRead
+    self.codexKeychainWrite = codexKeychainWrite ?? { data, service, account in
+      try KeychainItemStore(account: account).write(data, service: service)
+    }
+    self.codexKeychainDelete = codexKeychainDelete ?? { service, account in
+      try KeychainItemStore(account: account).delete(service: service)
+    }
     let setOwnerOnlyPermissions = setOwnerOnlyPermissions ?? { url in
       try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
@@ -78,8 +100,8 @@ public struct AccountSwitchService: Sendable {
 
 public extension AccountSwitchService {
   /// Performs the switch and returns the credential source it wrote — the
-  /// live slot the CLI now reads (Claude keychain, or the effective Codex
-  /// `auth.json`). The caller selects the discovered live row with exactly
+  /// live slot the CLI now reads (Claude keychain, or Codex's resolved file or
+  /// keychain backend). The caller selects the discovered live row with exactly
   /// this source, so usage/refresh follow the store that was switched rather
   /// than a duplicate slot or the registry copy.
   @discardableResult
@@ -342,52 +364,5 @@ private extension AccountSwitchService {
           == knownLiveTarget.accessTokenFingerprint
     else { return nil }
     return registryID
-  }
-
-  // MARK: - Codex (single effective slot)
-
-  private func switchCodex(registryID: String, now: Date) throws -> ProviderCredentialSource {
-    let url = CodexCredentialsStore.effectiveURL(environment: environment, home: home)
-    let source = ProviderCredentialSource.codexAuthFile(path: url.standardizedFileURL.path)
-
-    // Honor the same permission policy as capture: refuse to snapshot a
-    // group/world-readable token file. Aborting here (rather than backing it
-    // up anyway) keeps the switch fail-closed — the slot stays untouched.
-    try requireSecureCodexSlot(url)
-
-    let livePayload = try readFile(url)
-    try backUp(provider: .codex, payload: livePayload, origin: source, now: now)
-
-    let liveNow = try readFile(url)
-    if liveNow != livePayload {
-      try backUp(provider: .codex, payload: liveNow, origin: source, now: now)
-    }
-
-    // Re-read the target AFTER backups (a backup may have refreshed its id).
-    let savedPayload = try targetPayload(registryID: registryID)
-    let merged: Data
-    do {
-      merged = try Self.transplantCodex(saved: savedPayload, intoLive: liveNow)
-    } catch {
-      throw AccountSwitchError.writeFailed(underlying: error.localizedDescription)
-    }
-    let preparedFile: URL
-    do {
-      try FileManager.default.createDirectory(
-        at: url.deletingLastPathComponent(),
-        withIntermediateDirectories: true
-      )
-      preparedFile = try secureFileWriter.prepare(merged, replacing: url)
-    } catch {
-      throw AccountSwitchError.writeFailed(underlying: error.localizedDescription)
-    }
-    defer { secureFileWriter.discard(preparedFile) }
-
-    do {
-      try secureFileWriter.commit(preparedFile, replacing: url)
-    } catch {
-      throw AccountSwitchError.writeFailed(underlying: error.localizedDescription)
-    }
-    return source
   }
 }

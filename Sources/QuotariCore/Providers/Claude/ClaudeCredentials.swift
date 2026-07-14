@@ -120,7 +120,7 @@ public enum ClaudeCredentialsStore {
         throw ClaudeCredentialsError.notFound
       }
       return try parse(captured.payload)
-    case .codexAuthFile:
+    case .codexAuthFile, .codexKeychain:
       throw ClaudeCredentialsError.notFound
     }
   }

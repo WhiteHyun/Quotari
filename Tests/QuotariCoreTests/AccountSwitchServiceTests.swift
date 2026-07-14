@@ -50,6 +50,21 @@ struct AccountSwitchTransplantTests {
     #expect((root?["tokens"] as? [String: Any])?["access_token"] as? String == "saved-tok")
     #expect(root?["last_refresh"] as? String == "1970-01-01T00:00:00Z")
   }
+
+  @Test func codexTransplantPreservesADeepUnknownLiveField() throws {
+    let nested = String(repeating: "[", count: 5000) + "null" + String(repeating: "]", count: 5000)
+    let live = Data(#"{"OPENAI_API_KEY":"sk-live","unknown":\#(nested)}"#.utf8)
+    let saved = Data(
+      #"{"tokens":{"access_token":"saved","refresh_token":"saved-ref"}}"#.utf8
+    )
+
+    let merged = try AccountSwitchService.transplantCodex(saved: saved, intoLive: live)
+    let fields = try #require(CodexJSONProjector.topLevelFields(merged))
+
+    #expect(fields["OPENAI_API_KEY"] == Data(#""sk-live""#.utf8))
+    #expect(fields["unknown"] == Data(nested.utf8))
+    #expect(try CodexCredentialsStore.parse(merged).accessToken == "saved")
+  }
 }
 
 struct AccountSwitchServiceTests {

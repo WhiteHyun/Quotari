@@ -1,14 +1,20 @@
 import Foundation
 import os
 
-/// Fetches Codex usage over OAuth: reads `~/.codex/auth.json`, calls the usage
-/// endpoint, and parses via the generic window mapper. Not available when no
-/// credentials are present, so the pipeline can fall through.
+private struct LoadedCodexCredentials: Sendable {
+  var credentials: CodexCredentials
+  var source: ProviderCredentialSource
+}
+
+/// Fetches Codex usage over OAuth from its configured file/keyring/auto auth
+/// backend, calls the usage endpoint, and parses via the generic window
+/// mapper. Not available when no credentials are present, so the pipeline can
+/// fall through.
 ///
 /// Saved (registry) accounts refresh their own expired access tokens against
 /// the OAuth token endpoint and persist the rotated pair back to the registry.
-/// Live `auth.json` credentials are left alone — that file is the Codex CLI's
-/// to manage, and racing its refresh loop could burn the rotating token pair.
+/// Live CLI credentials are left alone — that store is Codex's to manage, and
+/// racing its refresh loop could burn the rotating token pair.
 public struct CodexUsageStrategy: ProviderFetchStrategy {
   public let id = "codex.oauth"
   public let kind: ProviderFetchKind = .oauth
@@ -16,8 +22,7 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
   private static let logger = Logger(subsystem: "com.quotari.QuotariCore", category: "codex-oauth")
 
   private let transport: any ProviderHTTPTransport
-  private let loadCredentials: @Sendable () throws -> CodexCredentials
-  private let automaticCredentialSource: ProviderCredentialSource
+  private let loadAutomaticCredentials: @Sendable () throws -> LoadedCodexCredentials
   private let usageURL: URL
   private let refresher: (any CodexTokenRefreshing)?
   private let persister: any CodexCredentialPersisting
@@ -30,19 +35,37 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
     loadCredentials: (@Sendable () throws -> CodexCredentials)? = nil,
     environment: [String: String] = ProcessInfo.processInfo.environment,
     home: URL = FileManager.default.homeDirectoryForCurrentUser,
+    codexKeychainRead: (@Sendable (String, String) throws -> Data?)? = nil,
     refresher: (any CodexTokenRefreshing)? = CodexTokenRefresher(),
     persister: (any CodexCredentialPersisting)? = nil,
     capturedAccounts: CapturedAccountStore = CapturedAccountStore(),
     refreshCoordinator: CodexTokenRefreshCoordinator = .shared
   ) {
-    let automaticURL = CodexCredentialsStore.effectiveURL(
+    let keychainRead = codexKeychainRead ?? { service, account in
+      try KeychainItemStore(account: account).read(service: service)
+    }
+    let storage = CodexAuthStorage(
       environment: environment,
-      home: home
-    ).standardizedFileURL
+      home: home,
+      keychainRead: keychainRead
+    )
+    let fallbackSource = ProviderCredentialSource.codexAuthFile(path: storage.authFileURL.path)
     self.transport = transport
     self.usageURL = usageURL
-    self.loadCredentials = loadCredentials ?? { try CodexCredentialsStore.load(url: automaticURL) }
-    automaticCredentialSource = .codexAuthFile(path: automaticURL.path)
+    if let loadCredentials {
+      loadAutomaticCredentials = {
+        try LoadedCodexCredentials(credentials: loadCredentials(), source: fallbackSource)
+      }
+    } else {
+      loadAutomaticCredentials = {
+        let snapshot = try storage.snapshot()
+        guard let payload = snapshot.payload else { throw CodexCredentialsError.notFound }
+        return try LoadedCodexCredentials(
+          credentials: CodexCredentialsStore.parse(payload),
+          source: snapshot.source
+        )
+      }
+    }
     self.refresher = refresher
     self.persister = persister ?? CodexCredentialsWriter(capturedAccounts: capturedAccounts)
     self.capturedAccounts = capturedAccounts
@@ -57,13 +80,22 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
   }
 
   public func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
-    var credentials = try credentials(for: context)
+    let loaded = try credentials(for: context)
+    var credentials = loaded.credentials
     guard case let .quotariRegistry(id) = context.account?.credentialSource else {
-      return try await usageResult(with: credentials, context: context)
+      return try await usageResult(
+        with: credentials,
+        credentialSource: loaded.source,
+        context: context
+      )
     }
     credentials = await refreshIfExpired(credentials, registryID: id, now: context.now)
     do {
-      return try await usageResult(with: credentials, context: context)
+      return try await usageResult(
+        with: credentials,
+        credentialSource: loaded.source,
+        context: context
+      )
     } catch ProviderHTTPError.unauthorized {
       // A saved account can be denied before its local expiry says so (token
       // revoked early, or an `exp` claim we can't read). The registry still
@@ -77,12 +109,17 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
       guard retried.accessToken != credentials.accessToken else {
         throw ProviderHTTPError.unauthorized
       }
-      return try await usageResult(with: retried, context: context)
+      return try await usageResult(
+        with: retried,
+        credentialSource: loaded.source,
+        context: context
+      )
     }
   }
 
   private func usageResult(
     with credentials: CodexCredentials,
+    credentialSource: ProviderCredentialSource,
     context: ProviderFetchContext
   ) async throws -> ProviderFetchResult {
     var headers: [String: String] = [:]
@@ -94,12 +131,11 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
     if usage.account == nil {
       usage.account = credentials.email
     }
-    let source = context.account?.credentialSource ?? automaticCredentialSource
     let account = ProviderAccount(
       provider: context.provider,
       displayName: credentials.email ?? credentials.accountID ?? "Codex account",
       detail: nil,
-      credentialSource: source,
+      credentialSource: credentialSource,
       credentialIdentity: credentials.accountID
         ?? credentials.email
         ?? credentials.refreshToken
@@ -121,18 +157,21 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
     return !(error is ProviderHTTPError)
   }
 
-  private func credentials(for context: ProviderFetchContext) throws -> CodexCredentials {
+  private func credentials(for context: ProviderFetchContext) throws -> LoadedCodexCredentials {
     if let account = context.account {
       do {
-        return try CodexCredentialsStore.load(
-          source: account.credentialSource,
-          capturedAccounts: capturedAccounts
+        return try LoadedCodexCredentials(
+          credentials: CodexCredentialsStore.load(
+            source: account.credentialSource,
+            capturedAccounts: capturedAccounts
+          ),
+          source: account.credentialSource
         )
       } catch {
         throw ProviderFetchError.selectedCredentialUnavailable(context.provider)
       }
     }
-    return try loadCredentials()
+    return try loadAutomaticCredentials()
   }
 }
 

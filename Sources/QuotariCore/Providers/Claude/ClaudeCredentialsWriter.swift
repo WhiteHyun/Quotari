@@ -99,7 +99,7 @@ public struct ClaudeCredentialsWriter: ClaudeCredentialPersisting {
       try capturedAccounts.updatePayload(id: id) { payload in
         try merge(grant, replacing: previousAccessToken, into: payload)
       }
-    case .codexAuthFile:
+    case .codexAuthFile, .codexKeychain:
       throw ClaudeCredentialPersistError.sourceUnavailable
     }
   }

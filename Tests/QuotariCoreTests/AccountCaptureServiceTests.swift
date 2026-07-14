@@ -220,6 +220,21 @@ struct AccountCaptureServiceTests {
     #expect(text.contains("account_id"))
   }
 
+  @Test func codexMinimizerPreservesDeepTokenFieldsWithoutKeepingRootSiblings() throws {
+    let nested = String(repeating: "[", count: 5000) + "null" + String(repeating: "]", count: 5000)
+    let payload = Data(
+      #"{"unknown":\#(nested),"tokens":{"access_token":"a","refresh_token":"r","future":\#(nested)}}"#.utf8
+    )
+
+    let minimal = try #require(ProviderCredentialMinimizer.minimize(provider: .codex, payload: payload))
+    let fields = try #require(CodexJSONProjector.topLevelFields(minimal))
+    let tokenFields = try #require(fields["tokens"].flatMap(CodexJSONProjector.topLevelFields))
+
+    #expect(fields["unknown"] == nil)
+    #expect(tokenFields["future"] == Data(nested.utf8))
+    #expect(try CodexCredentialsStore.parse(minimal).refreshToken == "r")
+  }
+
   @Test func codexEmptyAccountIDFallsBackAndDoesNotCollide() throws {
     let store = makeStore(InMemoryKeychain())
     let service = AccountCaptureService(capturedAccounts: store)

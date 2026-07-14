@@ -25,13 +25,18 @@ public enum AccountCaptureError: LocalizedError, Sendable {
 public struct AccountCaptureService: Sendable {
   private let capturedAccounts: CapturedAccountStore
   private let claudeKeychainRead: @Sendable (String) -> Data?
+  private let codexKeychainRead: @Sendable (String, String) -> Data?
 
   public init(
     capturedAccounts: CapturedAccountStore = CapturedAccountStore(),
-    claudeKeychainRead: (@Sendable (String) -> Data?)? = nil
+    claudeKeychainRead: (@Sendable (String) -> Data?)? = nil,
+    codexKeychainRead: (@Sendable (String, String) -> Data?)? = nil
   ) {
     self.capturedAccounts = capturedAccounts
     self.claudeKeychainRead = claudeKeychainRead ?? { ClaudeCredentialsStore.keychainItem(service: $0) }
+    self.codexKeychainRead = codexKeychainRead ?? { service, account in
+      try? KeychainItemStore(account: account).read(service: service)
+    }
   }
 
   /// Captures `account` (as currently discovered) into the registry. If an
@@ -221,6 +226,11 @@ public struct AccountCaptureService: Sendable {
       // snapshot a bearer token out of a group/world-readable auth.json.
       guard (try? CodexCredentialsStore.load(url: URL(fileURLWithPath: path))) != nil else { return nil }
       return try? Data(contentsOf: URL(fileURLWithPath: path))
+    case let .codexKeychain(service, account):
+      guard let payload = codexKeychainRead(service, account),
+            (try? CodexCredentialsStore.parse(payload)) != nil
+      else { return nil }
+      return payload
     case let .claudeCredentialsFile(path):
       return try? Data(contentsOf: URL(fileURLWithPath: path))
     case let .claudeKeychain(service):
@@ -329,45 +339,45 @@ public enum ProviderCredentialIdentity {
 /// expiry, exactly why env tokens aren't capturable either.
 public enum ProviderCredentialMinimizer {
   public static func minimize(provider: UsageProvider, payload: Data) -> Data? {
-    guard let root = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else { return nil }
     switch provider {
     case .claude:
+      guard let root = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else { return nil }
       guard let oauth = root["claudeAiOauth"] as? [String: Any],
             let accessToken = oauth["accessToken"] as? String, !accessToken.isEmpty,
             let refreshToken = oauth["refreshToken"] as? String, !refreshToken.isEmpty
       else { return nil }
       return try? JSONSerialization.data(withJSONObject: ["claudeAiOauth": oauth], options: [.sortedKeys])
     case .codex:
-      guard let tokens = root["tokens"] as? [String: Any],
-            let accessToken = tokens["access_token"] as? String, !accessToken.isEmpty,
-            let refreshToken = tokens["refresh_token"] as? String, !refreshToken.isEmpty
+      guard let credentials = try? CodexCredentialsStore.parse(payload),
+            credentials.refreshToken != nil,
+            let fields = CodexJSONProjector.topLevelFields(payload),
+            let tokens = fields["tokens"]
       else { return nil }
       // Codex requires `last_refresh` alongside `tokens` before it will expose
       // the token data. Keep that provider-owned timestamp while still
       // dropping unrelated root secrets such as OPENAI_API_KEY.
-      var minimized: [String: Any] = ["tokens": tokens]
-      if let lastRefresh = root["last_refresh"] as? String, !lastRefresh.isEmpty {
-        minimized["last_refresh"] = lastRefresh
+      var minimized = ["tokens": tokens]
+      if let refreshData = fields["last_refresh"],
+         let lastRefresh = try? JSONDecoder().decode(String.self, from: refreshData),
+         !lastRefresh.isEmpty {
+        minimized["last_refresh"] = refreshData
       }
-      return try? JSONSerialization.data(withJSONObject: minimized, options: [.sortedKeys])
+      return CodexJSONProjector.replacingTopLevelFields(in: Data("{}".utf8), with: minimized)
     }
   }
 
   /// Whether the payload carries the provider's access token at all — used to
   /// tell "unreadable payload" apart from "readable but not renewable".
   public static func hasAccessToken(provider: UsageProvider, payload: Data) -> Bool {
-    guard let root = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else { return false }
     switch provider {
     case .claude:
+      guard let root = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else { return false }
       guard let oauth = root["claudeAiOauth"] as? [String: Any],
             let accessToken = oauth["accessToken"] as? String
       else { return false }
       return !accessToken.isEmpty
     case .codex:
-      guard let tokens = root["tokens"] as? [String: Any],
-            let accessToken = tokens["access_token"] as? String
-      else { return false }
-      return !accessToken.isEmpty
+      return (try? CodexCredentialsStore.parse(payload)) != nil
     }
   }
 }
