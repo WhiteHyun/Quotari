@@ -347,11 +347,7 @@ private extension AccountSwitchService {
   // MARK: - Codex (single effective slot)
 
   private func switchCodex(registryID: String, now: Date) throws -> ProviderCredentialSource {
-    let url: URL = if let codexHome = environment["CODEX_HOME"], !codexHome.isEmpty {
-      URL(fileURLWithPath: codexHome).appendingPathComponent("auth.json")
-    } else {
-      CodexCredentialsStore.defaultURL(home: home)
-    }
+    let url = CodexCredentialsStore.effectiveURL(environment: environment, home: home)
     let source = ProviderCredentialSource.codexAuthFile(path: url.standardizedFileURL.path)
 
     // Honor the same permission policy as capture: refuse to snapshot a
