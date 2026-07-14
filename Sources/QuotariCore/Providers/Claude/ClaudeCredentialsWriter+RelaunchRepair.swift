@@ -49,7 +49,6 @@ extension ClaudeCredentialsWriter {
     switch commitMirrorWhileCanonicalUnchanged(
       recovery.preparation,
       pending: recovery.journal?.pending ?? canonical.pending,
-      canonicalPayload: canonicalPayload,
       keychainService: keychainService
     ) {
     case .resolved:
@@ -71,20 +70,30 @@ extension ClaudeCredentialsWriter {
 
   private func commitMirrorWhileCanonicalUnchanged(
     _ preparation: MirrorPreparation,
-    pending: ClaudePendingGrant?,
-    canonicalPayload: Data,
+    pending: ClaudePendingGrant,
     keychainService: String
   ) -> CanonicalMirrorCommitResult {
-    guard keychainRead(keychainService) == canonicalPayload else {
+    guard canonicalSourceOwns(pending, keychainService: keychainService) else {
       Self.logger.notice("Claude's canonical keychain changed before mirror repair; leaving recovery queued.")
       return .staleCanonical
     }
     let resolved = commitMirrorIfUnchanged(preparation, pending: pending)
-    guard keychainRead(keychainService) == canonicalPayload else {
+    guard canonicalSourceOwns(pending, keychainService: keychainService) else {
       Self.logger.notice("Claude's canonical keychain changed during mirror repair; leaving recovery queued.")
       return .staleCanonical
     }
     return resolved ? .resolved : .pending
+  }
+
+  private func canonicalSourceOwns(
+    _ pending: ClaudePendingGrant,
+    keychainService: String
+  ) -> Bool {
+    guard let payload = keychainRead(keychainService),
+          let credentials = try? ClaudeCredentialsStore.parse(payload)
+    else { return false }
+    return credentials.accessToken == pending.grant.accessToken
+      && credentials.refreshToken == pending.grant.refreshToken
   }
 
   func removeResolvedMirrorJournals(_ recovery: MirrorRecovery) -> Bool {

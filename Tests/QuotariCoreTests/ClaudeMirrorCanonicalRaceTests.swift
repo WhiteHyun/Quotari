@@ -43,6 +43,32 @@ extension ClaudeMirrorRelaunchRepairTests {
     #expect(try fixture.pending(id: fixture.filePendingID) != nil)
   }
 
+  @Test func canonicalMetadataChangeWithSameGrantCompletesMirrorRepair() throws {
+    let fixture = try MirrorRepairFixture()
+    defer { fixture.remove() }
+    _ = try queueMirrorRepair(in: fixture)
+    let canonicalPayload = try #require(fixture.slot.value)
+    var metadataRewrite = try #require(
+      JSONSerialization.jsonObject(with: canonicalPayload) as? [String: Any]
+    )
+    metadataRewrite["unknown"] = "changed"
+    let rewrittenPayload = try JSONSerialization.data(withJSONObject: metadataRewrite)
+    let reads = RaceReadCounter()
+    let writer = fixture.writer(keychainRead: { _ in
+      if reads.next() == 2 {
+        fixture.slot.value = rewrittenPayload
+      }
+      return fixture.slot.value
+    })
+
+    try writer.persist(fixture.grant, replacing: "old-tok", to: fixture.source)
+
+    #expect(fixture.slot.value == rewrittenPayload)
+    #expect(try ClaudeCredentialsStore.parse(Data(contentsOf: fixture.fileURL)).accessToken == "new-tok")
+    #expect(try fixture.pending(id: fixture.keychainPendingID) == nil)
+    #expect(try fixture.pending(id: fixture.filePendingID) == nil)
+  }
+
   @Test func changedMirrorUsesReconciledRecoveryLineage() throws {
     let fixture = try MirrorRepairFixture()
     defer { fixture.remove() }
