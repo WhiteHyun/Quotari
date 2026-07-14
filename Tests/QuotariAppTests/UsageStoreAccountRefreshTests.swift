@@ -5,6 +5,105 @@ import Testing
 
 @MainActor
 struct UsageStoreAccountRefreshTests {
+  @Test func concurrentCredentialRediscoveryRequestsShareOneDiscoveryPass() async throws {
+    let account = ProviderAccount(
+      provider: .codex,
+      displayName: "Codex CLI",
+      detail: "Default",
+      credentialSource: .codexAuthFile(path: "/tmp/auth.json")
+    )
+    let discovery = GatedAccountRediscovery(account: account)
+    let descriptor = ProviderDescriptor(
+      id: .codex,
+      metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
+      pipeline: ProviderFetchPipeline { _ in [] }
+    )
+    let store = UsageStore.isolatedForTesting(
+      providers: [descriptor],
+      accountDiscovery: discovery,
+      startsAutomatically: false
+    )
+
+    store.beginAccountRediscovery()
+    let reload = try #require(store.inFlightAccountReload)
+    store.beginAccountRediscovery()
+    await discovery.waitUntilRequestStarts()
+
+    #expect(await discovery.requestCount == 1)
+
+    await discovery.resume()
+    await reload.value
+
+    #expect(await discovery.requestCount == 1)
+    #expect(store.accounts[.codex] == [account])
+  }
+
+  @Test func externalLoginAndLogoutRefreshSettingsCredentialStateAndAccountPicker() async {
+    let account = ProviderAccount(
+      provider: .codex,
+      displayName: "Codex CLI",
+      detail: "Default",
+      credentialSource: .codexAuthFile(path: "/tmp/auth.json")
+    )
+    let discovery = MutableAccountDiscovery(StaticAccountDiscovery())
+    let descriptor = ProviderDescriptor(
+      id: .codex,
+      metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
+      pipeline: ProviderFetchPipeline { _ in [] }
+    )
+    let store = UsageStore.isolatedForTesting(
+      providers: [descriptor],
+      accountDiscovery: discovery,
+      startsAutomatically: false
+    )
+
+    await store.reloadAccounts()
+    #expect(store.credentialDiscoveryState(for: .codex) == .absent)
+    #expect(store.accounts[.codex] == [])
+
+    discovery.update(StaticAccountDiscovery(accounts: [.codex: [account]]))
+    await store.reloadAccounts()
+    #expect(store.credentialDiscoveryState(for: .codex) == .present)
+    #expect(store.accounts[.codex] == [account])
+
+    discovery.update(StaticAccountDiscovery())
+    await store.reloadAccounts()
+    #expect(store.credentialDiscoveryState(for: .codex) == .absent)
+    #expect(store.accounts[.codex] == [])
+  }
+
+  @Test func newerActivationRequestRerunsAnInFlightCredentialDiscovery() async throws {
+    let account = ProviderAccount(
+      provider: .codex,
+      displayName: "Codex CLI",
+      detail: "Default",
+      credentialSource: .codexAuthFile(path: "/tmp/auth.json")
+    )
+    let discovery = GatedAccountRediscovery(account: account)
+    let descriptor = ProviderDescriptor(
+      id: .codex,
+      metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
+      pipeline: ProviderFetchPipeline { _ in [] }
+    )
+    let store = UsageStore.isolatedForTesting(
+      providers: [descriptor],
+      accountDiscovery: discovery,
+      startsAutomatically: false
+    )
+
+    store.beginAccountRediscovery()
+    let reload = try #require(store.inFlightAccountReload)
+    await discovery.waitUntilRequestStarts()
+    await discovery.update(StaticAccountDiscovery())
+    store.beginAccountRediscovery()
+    await discovery.resume()
+    await reload.value
+
+    #expect(await discovery.requestCount == 2)
+    #expect(store.credentialDiscoveryState(for: .codex) == .absent)
+    #expect(store.accounts[.codex] == [])
+  }
+
   @Test func implicitRefreshCarriesTheFirstLiveAccountsSavedCopyLink() async {
     let live = ProviderAccount(
       provider: .claude,

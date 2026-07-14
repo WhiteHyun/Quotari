@@ -93,6 +93,7 @@ extension UsageStore {
     var shouldRefresh = false
     defer {
       isSwitching = false
+      startQueuedAccountRediscoveryIfNeeded()
       if shouldRefresh {
         // A selection refresh created during reload can observe the closed
         // gate and exit. Replace it after opening the gate so every successful
@@ -102,6 +103,7 @@ extension UsageStore {
     }
     // Drain whatever was already running when the gate closed.
     await inFlightRefresh?.value
+    await inFlightAccountReload?.value
     await accountUsageRefreshTasks[provider]?.task.value
     await selectionRefreshTasks[provider]?.value
     let switcher = accountSwitch
@@ -119,7 +121,7 @@ extension UsageStore {
           knownLiveTarget: knownLiveTarget
         )
       }.value
-      await reloadAccounts()
+      await reloadAccountsDuringSwitch()
       guard selectSwitchedInAccount(saved: account, writtenSource: writtenSource, provider: provider) else {
         // The write succeeded but discovery didn't surface the switched-in
         // login (transient read miss); don't claim success on a stale

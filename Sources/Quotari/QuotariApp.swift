@@ -1,3 +1,4 @@
+import Combine
 import Darwin
 import Foundation
 import MenuBarExtraAccess
@@ -55,6 +56,9 @@ private struct MenuBarMascotLabel: View {
     }
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(store.menuBarAccessibilityLabel)
+    .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+      applicationDidBecomeActive()
+    }
     .task(id: animationConfiguration) {
       let configuration = animationConfiguration
       guard configuration.animates, IconRenderer.frameCount > 1 else {
@@ -77,6 +81,10 @@ private struct MenuBarMascotLabel: View {
       animates: store.menuBarPreferences.preferences.animatesMascot,
       interval: store.menuBarAnimationInterval
     )
+  }
+
+  private func applicationDidBecomeActive() {
+    store.beginAccountRediscovery()
   }
 }
 
