@@ -56,6 +56,11 @@ extension ClaudeUsageStrategy {
       } else if case .claudeCredentialsFile = resolved.source {
         acceptedGrant = pending
       }
+    } catch ClaudeCredentialPersistError.obsoleteRecoveryCleanupPending {
+      let authoritative = (try? reloadCredentials(resolved.source)).map {
+        ResolvedClaudeCredentials(credentials: $0, source: resolved.source)
+      }
+      return ClaudeRefreshResolution(resolved: authoritative ?? resolved)
     } catch ClaudeCredentialPersistError.staleSource {
       return nil
     } catch {

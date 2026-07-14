@@ -235,7 +235,7 @@ extension ClaudeCredentialsWriter {
       refreshToken: currentRefreshToken
     ) else { return }
     guard removeObsoleteRecovery(canonical, keychainService: keychainService) else {
-      throw ClaudeCredentialPersistError.mirrorRecoveryPending(
+      throw ClaudeCredentialPersistError.obsoleteRecoveryCleanupPending(
         underlying: "The canonical source changed, but obsolete mirror cleanup is still pending."
       )
     }

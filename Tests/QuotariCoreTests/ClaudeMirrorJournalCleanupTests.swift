@@ -49,7 +49,7 @@ extension ClaudeMirrorRelaunchRepairTests {
     fixture.slot.value = fixture.payload(access: "other-tok", refresh: "other-ref")
     fixture.failFileJournalDeletes()
 
-    expectClaudeMirrorRecoveryFailure {
+    expectClaudeObsoleteCleanupFailure {
       try fixture.normalWriter.persist(
         fixture.grant,
         replacing: "old-tok",
@@ -71,6 +71,51 @@ extension ClaudeMirrorRelaunchRepairTests {
 
     #expect(try fixture.pending(id: fixture.keychainPendingID) == nil)
     #expect(try fixture.pending(id: fixture.filePendingID) == nil)
+  }
+
+  @Test func obsoleteCleanupFailureReloadsTheCanonicalGeneration() async throws {
+    let fixture = try MirrorRepairFixture()
+    defer { fixture.remove() }
+    let original = fixture.payload(access: "old-tok", refresh: "old-ref")
+    try original.write(to: fixture.fileURL)
+    fixture.slot.value = original
+    expectClaudeMirrorRecoveryFailure {
+      try fixture.failingWriter(stage: .rename).persist(
+        fixture.grant,
+        replacing: "old-tok",
+        to: fixture.source
+      )
+    }
+    let canonical = fixture.payload(access: "other-tok", refresh: "other-ref")
+    fixture.slot.value = canonical
+    fixture.failFileJournalDeletes()
+    let strategy = ClaudeUsageStrategy(
+      transport: RefreshStubTransport(json: usageJSON),
+      resolveCredentials: fixture.resolve,
+      reloadCredentials: { _ in try fixture.resolve().credentials },
+      refresher: nil,
+      persister: fixture.normalWriter,
+      capturedAccounts: fixture.store,
+      refreshCoordinator: ClaudeTokenRefreshCoordinator()
+    )
+    let pending = ClaudePendingGrant(
+      grant: fixture.grant,
+      previousAccessToken: "old-tok",
+      consumedRefreshToken: "old-ref"
+    )
+
+    let resolution = try await strategy.persisted(
+      pending,
+      resolved: ResolvedClaudeCredentials(
+        credentials: ClaudeCredentialsStore.parse(original),
+        source: fixture.source
+      )
+    )
+
+    #expect(resolution?.resolved.credentials.accessToken == "other-tok")
+    #expect(resolution?.acceptedGrant == nil)
+    #expect(try fixture.pending(id: fixture.keychainPendingID) != nil)
+    #expect(try fixture.pending(id: fixture.filePendingID) != nil)
   }
 
   @Test func obsoleteCanonicalCleanupRemovesItsChainedMirrorPredecessor() throws {

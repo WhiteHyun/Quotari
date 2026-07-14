@@ -28,3 +28,17 @@ func expectClaudeMirrorRecoveryFailure(
     )
   }
 }
+
+func expectClaudeObsoleteCleanupFailure(_ operation: () throws -> Void) {
+  do {
+    try operation()
+    Issue.record("expected obsoleteRecoveryCleanupPending")
+  } catch let error as ClaudeCredentialPersistError {
+    guard case .obsoleteRecoveryCleanupPending = error else {
+      Issue.record("expected obsoleteRecoveryCleanupPending, got \(error)")
+      return
+    }
+  } catch {
+    Issue.record("expected ClaudeCredentialPersistError, got \(error)")
+  }
+}
