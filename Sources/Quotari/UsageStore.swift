@@ -362,25 +362,18 @@ extension UsageStore {
     // A live stand-in can silently start pointing at a different login when
     // its CLI slot is reused; rediscover first so the timer path reconciles
     // the selection just like a manual reload.
-    await prepareReconciledAccountsForRefresh()
+    guard await prepareReconciledAccountsForRefresh() else { return }
     repeat {
       refreshRequested = false
+      // A switch can close the gate after the discovery await above, or while
+      // draining a previous pass. Never begin another provider fetch inside
+      // that protected write window.
+      guard !isSwitching else { return }
       await performRefresh()
     } while refreshRequested
     // Self-heal email labels after a usage refresh may have rotated a token:
     // the access-token fingerprint changes, so this re-fetches exactly once.
     refreshClaudeProfiles()
-  }
-
-  func prepareReconciledAccountsForRefresh() async {
-    guard !reconciledSelectionOrigins.isEmpty else { return }
-    guard !isSwitching else {
-      // The switch already owes a post-write discovery. Queue this request
-      // without making the refresh being drained wait behind its own gate.
-      beginAccountRediscovery()
-      return
-    }
-    await reloadAccounts()
   }
 
   private func startTimer() {

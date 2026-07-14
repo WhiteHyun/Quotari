@@ -68,10 +68,53 @@ struct UsageStoreSwitchRediscoveryTests {
     store.isSwitching = true
     let request = store.accountRediscoveryRequest
 
-    await store.prepareReconciledAccountsForRefresh()
+    let canRefresh = await store.prepareReconciledAccountsForRefresh()
 
+    #expect(!canRefresh)
     #expect(store.accountRediscoveryRequest == request + 1)
     #expect(store.inFlightAccountReload == nil)
+    store.isSwitching = false
+    store.startQueuedAccountRediscoveryIfNeeded()
+    await store.inFlightAccountReload?.value
+  }
+
+  @Test func switchGateClosingDuringRediscoveryStopsTheDashboardFetch() async throws {
+    let live = ProviderAccount(
+      provider: .codex,
+      displayName: "Codex CLI",
+      detail: "Default",
+      credentialSource: .codexAuthFile(path: "/tmp/auth.json")
+    )
+    let saved = ProviderAccount(
+      provider: .codex,
+      displayName: "Saved Codex",
+      detail: "Saved in Quotari",
+      credentialSource: .quotariRegistry(id: "codex:saved")
+    )
+    let discovery = GatedAccountRediscovery(account: live)
+    let recorder = AccountRecorder()
+    let descriptor = ProviderDescriptor(
+      id: .codex,
+      metadata: ProviderMetadata(displayName: "Codex", accent: .init(0, 0.6, 0.5), supportsWeekly: true),
+      pipeline: ProviderFetchPipeline { _ in [RecordingAccountStrategy(recorder: recorder)] }
+    )
+    let store = UsageStore.isolatedForTesting(
+      providers: [descriptor],
+      costEstimator: EmptyCostEstimator(),
+      accountDiscovery: discovery,
+      startsAutomatically: false
+    )
+    store.reconciledSelectionOrigins[.codex] = saved
+
+    store.beginRefresh()
+    let refresh = try #require(store.inFlightRefresh)
+    await discovery.waitUntilRequestStarts()
+    store.isSwitching = true
+    await discovery.resume()
+    await refresh.value
+
+    #expect(await recorder.accounts.isEmpty)
+    #expect(store.completedAccountRediscoveryRequest < store.accountRediscoveryRequest)
     store.isSwitching = false
     store.startQueuedAccountRediscoveryIfNeeded()
     await store.inFlightAccountReload?.value

@@ -2,6 +2,25 @@ import Foundation
 import QuotariCore
 
 extension UsageStore {
+  func prepareReconciledAccountsForRefresh() async -> Bool {
+    guard !reconciledSelectionOrigins.isEmpty else { return true }
+    guard !isSwitching else {
+      // The switch already owes a post-write discovery. Queue this request
+      // without making the refresh being drained wait behind its own gate.
+      beginAccountRediscovery()
+      return false
+    }
+    await reloadAccounts()
+    guard !isSwitching else {
+      // The switch may have closed the gate while this pre-existing discovery
+      // was draining. Leave a fresh generation for the post-write pass and do
+      // not fetch with the pre-switch account mapping.
+      beginAccountRediscovery()
+      return false
+    }
+    return true
+  }
+
   func performRefresh() async {
     let now = Date()
     await withTaskGroup(
