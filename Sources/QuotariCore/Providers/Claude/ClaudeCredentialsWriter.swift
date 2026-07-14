@@ -110,6 +110,14 @@ public struct ClaudeCredentialsWriter: ClaudeCredentialPersisting {
     service: String
   ) throws {
     guard let data = keychainRead(service) else { throw ClaudeCredentialPersistError.sourceUnavailable }
+    if try repairInstalledMirrorIfNeeded(
+      grant,
+      replacing: previousAccessToken,
+      canonicalPayload: data,
+      keychainService: service
+    ) {
+      return
+    }
     let mergedKeychain = try merge(grant, replacing: previousAccessToken, into: data)
     let pending = mirrorPendingGrant(
       grant,
@@ -137,17 +145,29 @@ public struct ClaudeCredentialsWriter: ClaudeCredentialPersisting {
       try installRecoveryJournal(journal)
     }
     try keychainWrite(mergedKeychain, service)
-    if let canonicalJournal {
-      // The canonical source now owns the grant. Its short-lived journal is
-      // no longer needed; the file journal remains until the mirror lands.
-      removeRecoveryJournal(canonicalJournal)
-    }
     let mirrorResolved = commitMirrorIfUnchanged(
       recovery.preparation,
       pending: recovery.journal?.pending ?? pending
     )
-    if mirrorResolved, let journal = recovery.journal {
-      removeRecoveryJournal(journal)
+    if mirrorResolved {
+      try finishMirrorRecovery(recovery, canonicalJournal: canonicalJournal)
+      return
+    }
+    throw ClaudeCredentialPersistError.recoveryJournalFailed(
+      underlying: "The canonical keychain grant is installed, but its credentials file mirror is still pending."
+    )
+  }
+
+  private func finishMirrorRecovery(
+    _ recovery: MirrorRecovery,
+    canonicalJournal: MirrorRecoveryJournal?
+  ) throws {
+    let mirrorJournalsResolved = removeResolvedMirrorJournals(recovery)
+    guard let canonicalJournal else { return }
+    guard mirrorJournalsResolved, removeRecoveryJournal(canonicalJournal) else {
+      throw ClaudeCredentialPersistError.recoveryJournalFailed(
+        underlying: "The mirror is updated, but its recovery journal cleanup is still pending."
+      )
     }
   }
 

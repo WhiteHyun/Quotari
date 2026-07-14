@@ -60,6 +60,10 @@ final class InMemoryKeychain: @unchecked Sendable {
     lock.withLock { _ = failingDeletes.insert(service) }
   }
 
+  func stopFailingDeletes(of service: String) {
+    lock.withLock { _ = failingDeletes.remove(service) }
+  }
+
   func failReads(of service: String) {
     lock.withLock { _ = failing.insert(service) }
   }

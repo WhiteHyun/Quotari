@@ -86,11 +86,7 @@ struct ClaudeCredentialsMirrorTests {
     )
     let grant = ClaudeTokenGrant(accessToken: "new-tok", refreshToken: "new-ref")
 
-    try writer.persist(
-      grant,
-      replacing: "old-tok",
-      to: .claudeKeychain(service: ClaudeCredentialsStore.keychainService)
-    )
+    expectClaudeMirrorRecoveryFailure(writer, grant, replacing: "old-tok")
 
     #expect(try ClaudeCredentialsStore.parse(#require(box.keychainData)).accessToken == "new-tok")
     #expect(try Data(contentsOf: url) == original)
@@ -98,11 +94,18 @@ struct ClaudeCredentialsMirrorTests {
     let pendingID = try #require(fileSource.claudeLivePendingGrantID)
     let pendingData = try #require(store.pendingGrantData(id: pendingID))
     let pending = try JSONDecoder().decode(ClaudePendingGrant.self, from: pendingData)
-    #expect(pending == ClaudePendingGrant(
+    let expected = ClaudePendingGrant(
       grant: grant,
       previousAccessToken: "old-tok",
       consumedRefreshToken: "old-ref"
-    ))
+    )
+    #expect(pending == expected)
+    let keychainSource = ProviderCredentialSource.claudeKeychain(
+      service: ClaudeCredentialsStore.keychainService
+    )
+    let keychainPendingID = try #require(keychainSource.claudeLivePendingGrantID)
+    let keychainPendingData = try #require(store.pendingGrantData(id: keychainPendingID))
+    #expect(try JSONDecoder().decode(ClaudePendingGrant.self, from: keychainPendingData) == expected)
   }
 
   @Test func canonicalRotationMirrorsAFileSharingTheConsumedRefreshGeneration() throws {
@@ -177,11 +180,7 @@ struct ClaudeCredentialsMirrorTests {
     )
     let grant = ClaudeTokenGrant(accessToken: "new-tok", refreshToken: "new-ref")
 
-    try writer.persist(
-      grant,
-      replacing: "old-tok",
-      to: .claudeKeychain(service: ClaudeCredentialsStore.keychainService)
-    )
+    expectClaudeMirrorRecoveryFailure(writer, grant, replacing: "old-tok")
 
     #expect(try ClaudeCredentialsStore.parse(#require(box.keychainData)).accessToken == "new-tok")
     #expect(try Data(contentsOf: url) == changed)
