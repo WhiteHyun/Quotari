@@ -4,6 +4,14 @@ import Foundation
 /// Renders the Quotari flame mascot as a compact, animated menu-bar item.
 /// Its animation speeds up as the most-constrained quota gets closer to its limit.
 enum IconRenderer {
+  private static let resourceBundle: Bundle = {
+    if let url = Bundle.main.url(forResource: "Quotari_Quotari", withExtension: "bundle"),
+       let packaged = Bundle(url: url) {
+      return packaged
+    }
+    return .module
+  }()
+
   private static let stepsPerTransition = 3
   private static let iconSize = NSSize(width: 18, height: 18)
   private static let bitmapScale = 2
@@ -16,6 +24,15 @@ enum IconRenderer {
   private static let frames = makeFrames()
   static var frameCount: Int {
     frames.count
+  }
+
+  /// Used by the release packaging smoke check to reject SwiftPM's absolute
+  /// build-directory fallback and prove the copied app owns the decoded sprite.
+  static var packagedResourcesAreReady: Bool {
+    guard let resourceURL = Bundle.main.resourceURL else { return false }
+    return frameCount > 1
+      && resourceBundle.bundleURL.deletingLastPathComponent().standardizedFileURL
+      == resourceURL.standardizedFileURL
   }
 
   static func mascotIcon(frame: Int) -> NSImage {
@@ -32,7 +49,7 @@ enum IconRenderer {
   }
 
   private static func makeFrames() -> [NSImage] {
-    guard let url = Bundle.module.url(forResource: "flame-mascot-sprite", withExtension: "png"),
+    guard let url = resourceBundle.url(forResource: "flame-mascot-sprite", withExtension: "png"),
           let data = try? Data(contentsOf: url),
           let sprite = NSBitmapImageRep(data: data),
           sprite.hasAlpha

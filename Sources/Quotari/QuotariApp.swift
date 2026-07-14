@@ -1,3 +1,5 @@
+import Darwin
+import Foundation
 import MenuBarExtraAccess
 import QuotariCore
 import SwiftUI
@@ -80,6 +82,14 @@ private struct MenuBarMascotLabel: View {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
+    if CommandLine.arguments.contains("--verify-packaged-resources") {
+      guard IconRenderer.packagedResourcesAreReady else {
+        let message = "Packaged SwiftPM resources failed validation.\n"
+        try? FileHandle.standardError.write(contentsOf: Data(message.utf8))
+        Darwin.exit(EXIT_FAILURE)
+      }
+      Darwin.exit(EXIT_SUCCESS)
+    }
     NSApp.setActivationPolicy(.accessory) // menu-bar only, no Dock icon
     _ = UpdaterController.shared // start background update checks when packaged
   }

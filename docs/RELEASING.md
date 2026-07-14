@@ -80,5 +80,8 @@ but consider disabling the feed for cask builds later.)
 - Without `CODESIGN_IDENTITY`, the script ad-hoc signs; fine locally, but
   Gatekeeper will block it on other machines. Real releases must be signed and
   notarized.
+- `package-app.sh` copies the SwiftPM resource bundle into `Contents/Resources`,
+  verifies the complete code signature, then launches an isolated copy with a
+  resource smoke-check argument before creating the zip.
 - Builds are arm64-only for now; add `--arch x86_64 --arch arm64` to the build
   step for universal binaries when needed.
