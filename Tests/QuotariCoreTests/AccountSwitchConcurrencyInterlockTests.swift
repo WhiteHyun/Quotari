@@ -142,7 +142,7 @@ struct AccountSwitchConcurrencyInterlockTests {
     let keychain = CodexKeychainSlot(keyringOriginal)
     let storage = CodexAuthStorage(environment: [:], home: home, keychainRead: keychain.read)
     #expect(try storage.snapshot().payload == keyringOriginal)
-    let interlock = ActivityInterlock(check: 4) {
+    let interlock = ActivityInterlock(check: 5) {
       try keychain.write(keyringRotated, service: "Codex Auth", account: "test")
     }
     let service = AccountSwitchService(

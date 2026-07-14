@@ -89,7 +89,7 @@ struct AccountSwitchCodexPostWriteTests {
     let keychain = CodexKeychainSlot(originalKeyring)
     let storage = CodexAuthStorage(environment: [:], home: home, keychainRead: keychain.read)
     try writePostWriteCredential(fallback, to: storage.authFileURL)
-    let activity = PostWriteActivityDetector(activeOnCheck: 4)
+    let activity = PostWriteActivityDetector(activeOnCheck: 5)
     let service = AccountSwitchService(
       capturedAccounts: registry,
       environment: [:],
@@ -110,6 +110,53 @@ struct AccountSwitchCodexPostWriteTests {
     }
     #expect(try CodexCredentialsStore.parse(#require(keychain.value)).accountID == "acct-saved")
     #expect(!FileManager.default.fileExists(atPath: storage.authFileURL.path))
+    let quarantines = try FileManager.default.contentsOfDirectory(
+      at: storage.authFileURL.deletingLastPathComponent(),
+      includingPropertiesForKeys: nil
+    ).filter { $0.lastPathComponent.hasPrefix(".auth.json.quotari-quarantine.") }
+    #expect(quarantines.isEmpty)
+  }
+
+  @Test func codexKeyringRotationAfterFallbackQuarantineIsNotOverwritten() throws {
+    let registry = makeSwitchRegistry()
+    let saved = try savedCodexAccount(registry: registry)
+    let home = try postWriteCodexHome(mode: "keyring")
+    defer { try? FileManager.default.removeItem(at: home) }
+    let originalKeyring = postWriteCodexPayload(account: "acct-key", token: "key", refresh: "key-ref")
+    let rotatedKeyring = postWriteCodexPayload(
+      account: "acct-key",
+      token: "rotated",
+      refresh: "rotated-ref"
+    )
+    let fallback = postWriteCodexPayload(account: "acct-file", token: "file", refresh: "file-ref")
+    let keychain = CodexKeychainSlot(originalKeyring)
+    let storage = CodexAuthStorage(environment: [:], home: home, keychainRead: keychain.read)
+    try writePostWriteCredential(fallback, to: storage.authFileURL)
+    let reader = QuarantineKeychainRotator(
+      keychain: keychain,
+      rotatedPayload: rotatedKeyring
+    )
+    let service = AccountSwitchService(
+      capturedAccounts: registry,
+      environment: [:],
+      home: home,
+      codexKeychainRead: keychain.read,
+      codexKeychainWrite: keychain.write,
+      codexKeychainDelete: { service, account in
+        keychain.delete(service: service, account: account)
+      },
+      fileRead: reader.read
+    )
+
+    let thrown = capturePostWriteError(service, accountID: saved.id)
+
+    guard case .concurrentCredentialChange = thrown else {
+      Issue.record("expected concurrentCredentialChange, got \(String(describing: thrown))")
+      return
+    }
+    #expect(keychain.value == rotatedKeyring)
+    #expect(keychain.writeCount == 1)
+    #expect(try Data(contentsOf: storage.authFileURL) == fallback)
     let quarantines = try FileManager.default.contentsOfDirectory(
       at: storage.authFileURL.deletingLastPathComponent(),
       includingPropertiesForKeys: nil
@@ -278,5 +325,37 @@ private final class PostWriteActivityDetector: @unchecked Sendable {
       checkCount += 1
       return checkCount == activeOnCheck ? ["codex (PID 42)"] : []
     }
+  }
+}
+
+private final class QuarantineKeychainRotator: @unchecked Sendable {
+  private let lock = NSLock()
+  private let keychain: CodexKeychainSlot
+  private let rotatedPayload: Data
+  private var didRotate = false
+
+  init(keychain: CodexKeychainSlot, rotatedPayload: Data) {
+    self.keychain = keychain
+    self.rotatedPayload = rotatedPayload
+  }
+
+  func read(_ url: URL) throws -> Data? {
+    guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+    let data = try Data(contentsOf: url)
+    let shouldRotate = lock.withLock {
+      guard !didRotate,
+            url.lastPathComponent.hasPrefix(".auth.json.quotari-quarantine.")
+      else { return false }
+      didRotate = true
+      return true
+    }
+    if shouldRotate {
+      try keychain.write(
+        rotatedPayload,
+        service: CodexAuthStorage.keychainService,
+        account: "test"
+      )
+    }
+    return data
   }
 }

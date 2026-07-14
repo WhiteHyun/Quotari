@@ -14,6 +14,7 @@ extension AccountSwitchService {
       now: now
     )
     do {
+      try requireUnchangedCodexKeychain(previous, storage: storage)
       try writeCodexKeychain(payload, replacing: previous, storage: storage)
     } catch {
       let writeError = error
@@ -34,6 +35,25 @@ extension AccountSwitchService {
       fallback: fallback,
       now: now
     )
+  }
+
+  private func requireUnchangedCodexKeychain(
+    _ expected: Data?,
+    storage: CodexAuthStorage
+  ) throws {
+    try requireCLIInactive(.codex)
+    let observed: Data?
+    do {
+      observed = try codexKeychainRead(
+        CodexAuthStorage.keychainService,
+        storage.keychainAccount
+      )
+    } catch {
+      throw AccountSwitchError.slotReadFailed(underlying: error.localizedDescription)
+    }
+    guard observed == expected else {
+      throw AccountSwitchError.concurrentCredentialChange
+    }
   }
 
   private func prepareCodexFallbackTransition(
