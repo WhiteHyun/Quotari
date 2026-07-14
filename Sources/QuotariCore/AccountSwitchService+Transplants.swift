@@ -27,14 +27,22 @@ extension AccountSwitchService {
   /// makes Codex use the tokens, and deleting the key would permanently lose
   /// an API-key login the backup path can't snapshot (it has no `tokens`).
   static func transplantCodex(saved: Data, intoLive live: Data?) throws -> Data {
-    guard let savedRoot = try? JSONSerialization.jsonObject(with: saved) as? [String: Any],
-          let tokens = savedRoot["tokens"] as? [String: Any]
+    guard let credentials = try? CodexCredentialsStore.parse(saved),
+          credentials.refreshToken != nil,
+          let savedFields = CodexJSONProjector.topLevelFields(saved),
+          let tokens = savedFields["tokens"]
     else { throw CodexCredentialPersistError.malformedPayload }
-    var root = live.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] } ?? [:]
-    root["tokens"] = tokens
-    root["auth_mode"] = "chatgpt"
-    root["last_refresh"] = (savedRoot["last_refresh"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-      ?? "1970-01-01T00:00:00Z"
-    return try JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])
+    let savedRefresh = savedFields["last_refresh"]
+      .flatMap { try? JSONDecoder().decode(String.self, from: $0) }
+      .flatMap { $0.isEmpty ? nil : $0 }
+    let replacements = try [
+      "tokens": tokens,
+      "auth_mode": JSONEncoder().encode("chatgpt"),
+      "last_refresh": JSONEncoder().encode(savedRefresh ?? "1970-01-01T00:00:00Z"),
+    ]
+    guard let merged = CodexJSONProjector.replacingTopLevelFields(
+      in: live ?? Data("{}".utf8), with: replacements
+    ) else { throw CodexCredentialPersistError.malformedPayload }
+    return merged
   }
 }

@@ -38,6 +38,22 @@ struct CodexCredentialsWriterTests {
     #expect(tokens?["refresh_token"] as? String == "old-ref")
   }
 
+  @Test func mergePreservesDeepUnknownRootAndTokenFields() throws {
+    let nested = String(repeating: "[", count: 5000) + "null" + String(repeating: "]", count: 5000)
+    let payload = Data(
+      #"{"unknown":\#(nested),"tokens":{"access_token":"old","refresh_token":"ref","future":\#(nested)}}"#.utf8
+    )
+
+    let merged = try CodexCredentialsWriter()
+      .merge(CodexTokenGrant(accessToken: "new"), replacing: "old", into: payload)
+    let fields = try #require(CodexJSONProjector.topLevelFields(merged))
+    let tokenFields = try #require(fields["tokens"].flatMap(CodexJSONProjector.topLevelFields))
+
+    #expect(fields["unknown"] == Data(nested.utf8))
+    #expect(tokenFields["future"] == Data(nested.utf8))
+    #expect(try CodexCredentialsStore.parse(merged).accessToken == "new")
+  }
+
   @Test func mergeRefusesAStaleSource() {
     let payload = codexAuthPayload(accessToken: "someone-elses-tok")
     #expect(throws: CodexCredentialPersistError.self) {

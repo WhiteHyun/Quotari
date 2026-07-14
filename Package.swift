@@ -16,11 +16,15 @@ let package = Package(
     .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", from: "3.0.1"),
     .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0"),
     .package(url: "https://github.com/SimplyDanny/SwiftLintPlugins", from: "0.65.0"),
+    .package(url: "https://github.com/mattt/swift-toml", from: "2.0.0"),
   ],
   targets: [
     // Domain logic: models, provider abstraction, mock fetch. UI-agnostic.
     .target(
       name: "QuotariCore",
+      dependencies: [
+        .product(name: "TOML", package: "swift-toml"),
+      ],
       plugins: [
         .plugin(name: "SwiftLintBuildToolPlugin", package: "SwiftLintPlugins"),
       ]

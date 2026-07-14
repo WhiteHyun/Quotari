@@ -47,6 +47,7 @@ public struct ProviderAccount: Codable, Equatable, Identifiable, Sendable {
 
 public enum ProviderCredentialSource: Codable, Equatable, Sendable {
   case codexAuthFile(path: String)
+  case codexKeychain(service: String, account: String)
   case claudeEnvironment(name: String)
   case claudeKeychain(service: String)
   case claudeCredentialsFile(path: String)
@@ -57,6 +58,8 @@ public enum ProviderCredentialSource: Codable, Equatable, Sendable {
     switch self {
     case let .codexAuthFile(path):
       "codex-file:\(path)"
+    case let .codexKeychain(service, account):
+      "codex-keychain:\(service):\(account)"
     case let .claudeEnvironment(name):
       "claude-env:\(name)"
     case let .claudeKeychain(service):
@@ -72,6 +75,8 @@ public enum ProviderCredentialSource: Codable, Equatable, Sendable {
     switch self {
     case .codexAuthFile:
       "auth.json"
+    case .codexKeychain:
+      "Keychain"
     case let .claudeEnvironment(name):
       name
     case .claudeKeychain:
@@ -99,7 +104,7 @@ public enum ProviderCredentialSource: Codable, Equatable, Sendable {
     switch self {
     case .claudeKeychain, .claudeCredentialsFile:
       "claude-live:\(ProviderCredentialIdentity.fingerprint(of: stableID))"
-    case .codexAuthFile, .claudeEnvironment, .quotariRegistry:
+    case .codexAuthFile, .codexKeychain, .claudeEnvironment, .quotariRegistry:
       nil
     }
   }

@@ -55,23 +55,32 @@ public struct CodexCredentialsWriter: CodexCredentialPersisting {
   }
 
   func merge(_ grant: CodexTokenGrant, replacing previousAccessToken: String, into data: Data) throws -> Data {
-    guard var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          var tokens = root["tokens"] as? [String: Any]
+    guard let credentials = try? CodexCredentialsStore.parse(data),
+          let fields = CodexJSONProjector.topLevelFields(data),
+          let tokens = fields["tokens"]
     else { throw CodexCredentialPersistError.malformedPayload }
-    guard tokens["access_token"] as? String == previousAccessToken else {
+    guard credentials.accessToken == previousAccessToken else {
       throw CodexCredentialPersistError.staleSource
     }
-    tokens["access_token"] = grant.accessToken
+    var tokenReplacements = try ["access_token": JSONEncoder().encode(grant.accessToken)]
     if let refreshToken = grant.refreshToken {
-      tokens["refresh_token"] = refreshToken
+      tokenReplacements["refresh_token"] = try JSONEncoder().encode(refreshToken)
     }
     if let idToken = grant.idToken {
-      tokens["id_token"] = idToken
+      tokenReplacements["id_token"] = try JSONEncoder().encode(idToken)
     }
-    root["tokens"] = tokens
+    guard let mergedTokens = CodexJSONProjector.replacingTopLevelFields(
+      in: tokens, with: tokenReplacements
+    ) else { throw CodexCredentialPersistError.malformedPayload }
+    var rootReplacements = ["tokens": mergedTokens]
     if let refreshedAt = grant.refreshedAt {
-      root["last_refresh"] = ISO8601DateFormatter().string(from: refreshedAt)
+      rootReplacements["last_refresh"] = try JSONEncoder().encode(
+        ISO8601DateFormatter().string(from: refreshedAt)
+      )
     }
-    return try JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])
+    guard let merged = CodexJSONProjector.replacingTopLevelFields(
+      in: data, with: rootReplacements
+    ) else { throw CodexCredentialPersistError.malformedPayload }
+    return merged
   }
 }

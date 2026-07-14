@@ -282,7 +282,7 @@ struct LocalUsageCostScanner {
   private func sourceDescription(account: ProviderAccount?) -> String? {
     guard let account else { return nil }
     return switch account.credentialSource {
-    case .codexAuthFile:
+    case .codexAuthFile, .codexKeychain:
       "Estimated from selected account's local Codex logs"
     case .claudeCredentialsFile:
       "Estimated from selected account's local Claude cache logs"

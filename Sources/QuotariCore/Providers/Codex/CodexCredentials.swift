@@ -86,6 +86,11 @@ public enum CodexCredentialsStore {
     switch source {
     case let .codexAuthFile(path):
       return try load(url: URL(fileURLWithPath: path))
+    case let .codexKeychain(service, account):
+      guard let payload = try KeychainItemStore(account: account).read(service: service) else {
+        throw CodexCredentialsError.notFound
+      }
+      return try parse(payload)
     case let .quotariRegistry(id):
       guard let captured = capturedAccounts.account(id: id), captured.provider == .codex else {
         throw CodexCredentialsError.notFound
@@ -97,7 +102,10 @@ public enum CodexCredentialsStore {
   }
 
   static func parse(_ data: Data) throws -> CodexCredentials {
-    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+    var duplicateKeyValidator = CodexJSONDuplicateKeyValidator(data)
+    guard duplicateKeyValidator.validate(),
+          let projectedData = CodexJSONProjector.project(data, schema: .authDocument),
+          let root = try? JSONSerialization.jsonObject(with: projectedData) as? [String: Any],
           let tokens = root["tokens"] as? [String: Any],
           let accessToken = tokens["access_token"] as? String,
           !accessToken.isEmpty
@@ -137,6 +145,10 @@ public enum CodexCredentialsStore {
       payload.append("=")
     }
     guard let data = Data(base64Encoded: payload) else { return nil }
-    return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    var duplicateKeyValidator = CodexJSONDuplicateKeyValidator(data)
+    guard duplicateKeyValidator.validate(),
+          let projectedData = CodexJSONProjector.project(data, schema: .tokenClaims)
+    else { return nil }
+    return (try? JSONSerialization.jsonObject(with: projectedData)) as? [String: Any]
   }
 }

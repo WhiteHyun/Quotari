@@ -54,6 +54,47 @@ struct CodexAutomaticCredentialTests {
     #expect(result.credentialScopeID == discovered.credentialScopeID)
   }
 
+  @Test func automaticFetchUsesTheConfiguredKeyringAndMatchesDiscoveryScope() async throws {
+    let home = try CodexAutomaticTemporaryDirectory()
+    let codexHome = home.url.appendingPathComponent(".codex", isDirectory: true)
+    try FileManager.default.createDirectory(at: codexHome, withIntermediateDirectories: true)
+    try Data("cli_auth_credentials_store = \"keyring\"\n".utf8)
+      .write(to: codexHome.appendingPathComponent("config.toml"))
+    let payload = Data(#"""
+    {"tokens":{
+      "id_token":"e30.e30.sig",
+      "access_token":"keyring-token",
+      "account_id":"keyring-account",
+      "refresh_token":"keyring-refresh"
+    }}
+    """#.utf8)
+    let recorder = RequestRecorder()
+    let read: @Sendable (String, String) throws -> Data? = { _, _ in payload }
+    let strategy = CodexUsageStrategy(
+      transport: AutomaticCredentialTransport(recorder: recorder),
+      environment: [:],
+      home: home.url,
+      codexKeychainRead: read
+    )
+    let discovery = ProviderAccountDiscovery(
+      environment: [:],
+      home: home.url,
+      keychainData: { nil },
+      codexKeychainData: { _, _ in payload }
+    )
+
+    let result = try await strategy.fetch(context)
+    let discovered = try #require(await discovery.accounts(for: .codex).first)
+
+    #expect(recorder.authorization == "Bearer keyring-token")
+    #expect(discovered.credentialSource == CodexAuthStorage(
+      environment: [:],
+      home: home.url,
+      keychainRead: read
+    ).keychainSource)
+    #expect(result.credentialScopeID == discovered.credentialScopeID)
+  }
+
   @Test func codexHomeMatchingDefaultProducesOneEffectiveAccount() async throws {
     let home = try CodexAutomaticTemporaryDirectory()
     let codexHome = home.url.appendingPathComponent(".codex", isDirectory: true)

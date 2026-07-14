@@ -34,17 +34,22 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
   private let environment: [String: String]
   private let home: URL
   private let keychainData: @Sendable () -> Data?
+  private let codexKeychainData: @Sendable (String, String) -> Data?
   private let capturedAccounts: CapturedAccountStore
 
   public init(
     environment: [String: String] = ProcessInfo.processInfo.environment,
     home: URL = FileManager.default.homeDirectoryForCurrentUser,
     keychainData: (@Sendable () -> Data?)? = nil,
+    codexKeychainData: (@Sendable (String, String) -> Data?)? = nil,
     capturedAccounts: CapturedAccountStore = CapturedAccountStore()
   ) {
     self.environment = environment
     self.home = home
     self.keychainData = keychainData ?? { ClaudeCredentialsStore.keychainItem() }
+    self.codexKeychainData = codexKeychainData ?? { service, account in
+      try? KeychainItemStore(account: account).read(service: service)
+    }
     self.capturedAccounts = capturedAccounts
   }
 
@@ -99,18 +104,17 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
   private func sourceRank(_ source: ProviderCredentialSource) -> Int {
     switch source {
     case .claudeKeychain: 0
-    case let .codexAuthFile(path): path == effectiveCodexSlotPath ? 0 : 1
+    case .codexAuthFile, .codexKeychain:
+      source == effectiveCodexSource ? 0 : 1
     case .claudeCredentialsFile: 2
     case .claudeEnvironment: 3
     case .quotariRegistry: 4
     }
   }
 
-  /// The `auth.json` path the Codex CLI actually reads: `CODEX_HOME` over the
-  /// default. Nil when neither is resolvable.
-  private var effectiveCodexSlotPath: String? {
-    CodexCredentialsStore.effectiveURL(environment: environment, home: home)
-      .standardizedFileURL.path
+  /// The source Codex actually reads after resolving file/keyring/auto.
+  private var effectiveCodexSource: ProviderCredentialSource? {
+    try? codexAuthStorage.snapshot().source
   }
 
   public func capturedCopies(among accounts: [ProviderAccount]) async -> [String: ProviderAccount] {
@@ -154,6 +158,8 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
     switch source {
     case let .codexAuthFile(path), let .claudeCredentialsFile(path):
       try? Data(contentsOf: URL(fileURLWithPath: path))
+    case let .codexKeychain(service, account):
+      codexKeychainData(service, account)
     case .claudeKeychain:
       keychainData()
     case .claudeEnvironment, .quotariRegistry:
@@ -162,6 +168,21 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
   }
 
   private func codexAccounts() -> [ProviderAccount] {
+    guard let mode = try? codexAuthStorage.configuredMode() else { return [] }
+    if mode != .file {
+      guard let snapshot = try? codexAuthStorage.snapshot(),
+            let payload = snapshot.payload,
+            let credentials = try? CodexCredentialsStore.parse(payload)
+      else { return [] }
+      let detail = switch (mode, snapshot.source) {
+      case (.keyring, _): "Keychain"
+      case (.auto, .codexKeychain): "Auto (Keychain)"
+      case (.auto, _): "Auto (auth.json)"
+      case (.file, _): "Default"
+      }
+      return [codexAccount(credentials: credentials, detail: detail, source: snapshot.source)]
+    }
+
     let defaultURL = CodexCredentialsStore.defaultURL(home: home)
     var candidates: [(URL, String)] = [(defaultURL, "Default")]
     if let codexHome = environment["CODEX_HOME"], !codexHome.isEmpty {
@@ -174,17 +195,33 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
       .compactMap { url, label in
         guard let credentials = try? CodexCredentialsStore.load(url: url) else { return nil }
         let source = ProviderCredentialSource.codexAuthFile(path: url.standardizedFileURL.path)
-        return ProviderAccount(
-          provider: .codex,
-          displayName: credentials.email ?? credentials.accountID ?? "Codex account",
-          detail: label,
-          credentialSource: source,
-          credentialIdentity: credentials.accountID
-            ?? credentials.email
-            ?? credentials.refreshToken
-            ?? credentials.accessToken
-        )
+        return codexAccount(credentials: credentials, detail: label, source: source)
       }
+  }
+
+  private var codexAuthStorage: CodexAuthStorage {
+    CodexAuthStorage(
+      environment: environment,
+      home: home,
+      keychainRead: { service, account in codexKeychainData(service, account) }
+    )
+  }
+
+  private func codexAccount(
+    credentials: CodexCredentials,
+    detail: String,
+    source: ProviderCredentialSource
+  ) -> ProviderAccount {
+    ProviderAccount(
+      provider: .codex,
+      displayName: credentials.email ?? credentials.accountID ?? "Codex account",
+      detail: detail,
+      credentialSource: source,
+      credentialIdentity: credentials.accountID
+        ?? credentials.email
+        ?? credentials.refreshToken
+        ?? credentials.accessToken
+    )
   }
 
   private func claudeAccounts() -> [ProviderAccount] {

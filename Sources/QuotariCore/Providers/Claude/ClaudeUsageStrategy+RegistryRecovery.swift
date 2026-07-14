@@ -199,7 +199,7 @@ extension ClaudeUsageStrategy {
       .capturedAccount(id)
     case .claudeKeychain, .claudeCredentialsFile:
       source.claudeLivePendingGrantID.map(DurablePendingSlot.liveSource)
-    case .codexAuthFile, .claudeEnvironment:
+    case .codexAuthFile, .codexKeychain, .claudeEnvironment:
       nil
     }
   }
