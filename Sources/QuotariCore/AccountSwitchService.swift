@@ -45,6 +45,7 @@ public struct AccountSwitchService: Sendable {
   let home: URL
   let keychainRead: @Sendable (String) throws -> Data?
   let keychainWrite: @Sendable (Data, String) throws -> Void
+  let keychainDelete: @Sendable (String) throws -> Void
   let codexKeychainRead: @Sendable (String, String) throws -> Data?
   let codexKeychainWrite: @Sendable (Data, String, String) throws -> Void
   let codexKeychainDelete: @Sendable (String, String) throws -> Void
@@ -59,6 +60,7 @@ public struct AccountSwitchService: Sendable {
     home: URL = FileManager.default.homeDirectoryForCurrentUser,
     keychainRead: (@Sendable (String) throws -> Data?)? = nil,
     keychainWrite: (@Sendable (Data, String) throws -> Void)? = nil,
+    keychainDelete: (@Sendable (String) throws -> Void)? = nil,
     codexKeychainRead: (@Sendable (String, String) throws -> Data?)? = nil,
     codexKeychainWrite: (@Sendable (Data, String, String) throws -> Void)? = nil,
     codexKeychainDelete: (@Sendable (String, String) throws -> Void)? = nil,
@@ -87,6 +89,9 @@ public struct AccountSwitchService: Sendable {
     self
       .keychainWrite = keychainWrite ??
       { data, service in try KeychainItemStore.writeByService(data, service: service) }
+    self.keychainDelete = keychainDelete ?? { service in
+      try KeychainItemStore.deleteByService(service)
+    }
     self.codexKeychainRead = resolvedCodexKeychainRead
     self.codexKeychainWrite = codexKeychainWrite ?? { data, service, account in
       try KeychainItemStore(account: account).write(data, service: service)

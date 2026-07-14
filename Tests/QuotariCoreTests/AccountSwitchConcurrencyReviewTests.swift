@@ -304,44 +304,6 @@ private final class FailingClaudeKeychainSlot: @unchecked Sendable {
   }
 }
 
-private final class FinalClaudeFileRotator: @unchecked Sendable {
-  private let lock = NSLock()
-  private let fileURL: URL
-  private let replacement: Data
-  private var storage: Data?
-  private var readsAfterWrite = 0
-  private var didWrite = false
-
-  var value: Data? {
-    lock.withLock { storage }
-  }
-
-  init(_ value: Data?, fileURL: URL, replacement: Data) {
-    storage = value
-    self.fileURL = fileURL
-    self.replacement = replacement
-  }
-
-  func read(_: String) throws -> Data? {
-    try lock.withLock {
-      if didWrite {
-        readsAfterWrite += 1
-        if readsAfterWrite == 3 {
-          try writeReviewCredential(replacement, to: fileURL)
-        }
-      }
-      return storage
-    }
-  }
-
-  func write(_ data: Data, _: String) {
-    lock.withLock {
-      storage = data
-      didWrite = true
-    }
-  }
-}
-
 private final class ReviewActivityInterlock: @unchecked Sendable {
   private let lock = NSLock()
   private let targetCheck: Int

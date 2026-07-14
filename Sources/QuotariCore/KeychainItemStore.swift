@@ -87,6 +87,14 @@ public struct KeychainItemStore: Sendable {
     try securityWrite(data, account: account, service: service)
   }
 
+  /// Deletes the item identified by *service*, resolving the same account
+  /// attribute used by ``writeByService(_:service:)``. A genuinely absent
+  /// item is already in the requested state.
+  public static func deleteByService(_ service: String) throws {
+    guard let account = try accountForService(service) else { return }
+    try securityDelete(account: account, service: service)
+  }
+
   /// The `acct` attribute of the item for `service`, read without printing
   /// the secret (`security find-generic-password` without `-g`/`-w`). Nil
   /// only when no item exists (exit 44); throws on a command failure or an

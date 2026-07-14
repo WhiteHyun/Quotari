@@ -115,8 +115,12 @@ extension AccountSwitchService {
     replacing installed: Data?,
     service: String
   ) throws {
-    guard let previous, let installed else { return }
-    try restoreClaudeKeychain(previous, replacing: installed, service: service)
+    guard let installed else { return }
+    if let previous {
+      try restoreClaudeKeychain(previous, replacing: installed, service: service)
+    } else {
+      try removeCreatedClaudeKeychain(replacing: installed, service: service)
+    }
   }
 
   private func verifyClaudeSlots(
@@ -192,6 +196,40 @@ extension AccountSwitchService {
       throw AccountSwitchError.partialSwitch(
         underlying: operationError?.localizedDescription
           ?? "Claude's previous keychain value couldn't be restored."
+      )
+    }
+  }
+
+  private func removeCreatedClaudeKeychain(
+    replacing installed: Data,
+    service: String
+  ) throws {
+    do {
+      try requireCLIInactive(.claude)
+    } catch {
+      throw AccountSwitchError.partialSwitch(underlying: error.localizedDescription)
+    }
+    guard try readClaudeKeychainAfterMutation(
+      service,
+      context: "Claude's keychain couldn't be verified before rollback."
+    ) == installed else {
+      throw AccountSwitchError.partialSwitch(
+        underlying: "Claude's keychain changed after Quotari's write; the newer value was left untouched."
+      )
+    }
+    var operationError: Error?
+    do {
+      try keychainDelete(service)
+    } catch {
+      operationError = error
+    }
+    guard try readClaudeKeychainAfterMutation(
+      service,
+      context: "Claude's keychain rollback couldn't be verified."
+    ) == nil else {
+      throw AccountSwitchError.partialSwitch(
+        underlying: operationError?.localizedDescription
+          ?? "Claude's newly created keychain value couldn't be removed."
       )
     }
   }
