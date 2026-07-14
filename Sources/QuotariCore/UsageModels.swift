@@ -78,8 +78,8 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
     self.updatedAt = updatedAt
   }
 
-  /// Highest used% across the primary/secondary windows — drives the menu-bar
-  /// gauge. Extra named windows are excluded so a minor limit can't dominate.
+  /// Highest used% across the primary/secondary windows. Extra named windows
+  /// are excluded so a minor limit can't dominate when standard limits exist.
   public var highestUsedPercent: Double {
     [primary?.usedPercent, secondary?.usedPercent].compactMap(\.self).max() ?? 0
   }

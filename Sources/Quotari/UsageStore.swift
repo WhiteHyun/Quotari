@@ -52,6 +52,7 @@ final class UsageStore {
   let accountSwitch: AccountSwitchService
   let profileFetcher: any ClaudeProfileFetching
   let profileStore: ClaudeProfileStore
+  let menuBarPreferences: MenuBarPreferencesController
   let quotaNotifications: QuotaNotificationController
   let codexCredentialLoader: @Sendable (ProviderCredentialSource) -> CodexCredentials?
   let claudeCredentialLoader: @Sendable (ProviderCredentialSource) -> ClaudeCredentials?
@@ -104,6 +105,7 @@ final class UsageStore {
       try? ClaudeCredentialsStore.load(source: $0)
     },
     defaults: UserDefaults = .standard,
+    menuBarPreferences: MenuBarPreferencesController? = nil,
     quotaNotifications: QuotaNotificationController? = nil,
     startsAutomatically: Bool = true
   ) {
@@ -119,6 +121,7 @@ final class UsageStore {
     self.codexCredentialLoader = codexCredentialLoader
     self.claudeCredentialLoader = claudeCredentialLoader
     self.defaults = defaults
+    self.menuBarPreferences = menuBarPreferences ?? MenuBarPreferencesController(defaults: defaults)
     self.quotaNotifications = quotaNotifications ?? QuotaNotificationController(defaults: defaults)
     selectedAccounts = accountSelectionStore.load()
     claudeProfiles = profileStore.load()

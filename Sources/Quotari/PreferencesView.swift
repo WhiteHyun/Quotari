@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import KeyboardShortcuts
 import QuotariCore
 import SwiftUI
 
@@ -35,6 +36,19 @@ struct PreferencesView: View {
             .font(.caption)
             .foregroundStyle(.red)
         }
+      }
+      Section("Menu Bar") {
+        Toggle("Show remaining quota", isOn: menuBarRemainingBinding)
+        Picker("Quota source", selection: menuBarUsageSourceBinding) {
+          Text("Most constrained")
+            .tag(MenuBarUsageSource.mostConstrained)
+          ForEach(store.providers, id: \.id) { descriptor in
+            Text(descriptor.metadata.displayName)
+              .tag(MenuBarUsageSource.provider(descriptor.id))
+          }
+        }
+        Toggle("Animate mascot", isOn: menuBarAnimationBinding)
+        KeyboardShortcuts.Recorder("Open dashboard", name: .toggleDashboard)
       }
       Section("Refresh") {
         Slider(value: $intervalMinutes, in: 1 ... 30, step: 1) {
@@ -122,6 +136,27 @@ struct PreferencesView: View {
   private var notificationControlsEnabled: Bool {
     store.quotaNotifications.preferences.isEnabled
       && store.quotaNotifications.authorizationStatus.allowsDelivery
+  }
+
+  private var menuBarRemainingBinding: Binding<Bool> {
+    Binding(
+      get: { store.menuBarPreferences.preferences.showsRemainingPercent },
+      set: { store.menuBarPreferences.setShowsRemainingPercent($0) }
+    )
+  }
+
+  private var menuBarUsageSourceBinding: Binding<MenuBarUsageSource> {
+    Binding(
+      get: { store.menuBarPreferences.preferences.usageSource },
+      set: { store.menuBarPreferences.setUsageSource($0) }
+    )
+  }
+
+  private var menuBarAnimationBinding: Binding<Bool> {
+    Binding(
+      get: { store.menuBarPreferences.preferences.animatesMascot },
+      set: { store.menuBarPreferences.setAnimatesMascot($0) }
+    )
   }
 
   private var notificationsEnabledBinding: Binding<Bool> {
