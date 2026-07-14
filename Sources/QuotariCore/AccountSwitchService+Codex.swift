@@ -14,8 +14,8 @@ extension AccountSwitchService {
     // A source or credential generation that changes while backups are being
     // made is re-snapshotted and backed up before the switch. Bounding the
     // loop fails closed if another process keeps rotating the slot. The final
-    // write still has the narrow non-atomic interprocess window tracked by
-    // PS-144, but no change observed by these CAS-style reads is overwritten.
+    // write still has a narrow non-atomic interprocess window, but post-write
+    // verification preserves any newer generation it observes.
     for _ in 0 ..< 4 {
       try backUp(provider: .codex, payload: current.payload, origin: current.source, now: now)
       let confirmed = try readCodexSnapshot(storage)
@@ -82,9 +82,16 @@ extension AccountSwitchService {
     expectedFallbackFilePayload: Data?,
     now: Date
   ) throws -> ProviderCredentialSource {
+    // The process check is an inactivity handshake, not a cooperative lock.
+    // Pair it with one last active-store generation read immediately before
+    // mutation so a rotation during backup/preparation fails closed.
+    try requireCLIInactive(.codex)
+    guard try readCodexSnapshot(storage) == snapshot else {
+      throw AccountSwitchError.concurrentCredentialChange
+    }
     switch snapshot.mode {
     case .file:
-      try writeCodexFile(payload, to: storage.authFileURL)
+      try writeCodexFile(payload, replacing: snapshot.payload, at: storage.authFileURL)
       return .codexAuthFile(path: storage.authFileURL.path)
     case .keyring:
       guard snapshot.payload != nil else {
@@ -92,21 +99,21 @@ extension AccountSwitchService {
           underlying: "Codex must create its keychain item before Quotari can switch it."
         )
       }
-      try writeCodexKeychain(payload, replacing: snapshot.payload, storage: storage)
-      try removeCodexFallbackFileOrRollBackKeychain(
+      try installCodexKeychain(
+        payload,
+        replacing: snapshot.payload,
         storage,
         expectedFilePayload: expectedFallbackFilePayload,
-        previousKeychainPayload: snapshot.payload,
         now: now
       )
       return storage.keychainSource
     case .auto:
       if case .codexKeychain = snapshot.source {
-        try writeCodexKeychain(payload, replacing: snapshot.payload, storage: storage)
-        try removeCodexFallbackFileOrRollBackKeychain(
+        try installCodexKeychain(
+          payload,
+          replacing: snapshot.payload,
           storage,
           expectedFilePayload: expectedFallbackFilePayload,
-          previousKeychainPayload: snapshot.payload,
           now: now
         )
         return storage.keychainSource
@@ -115,12 +122,17 @@ extension AccountSwitchService {
         throw AccountSwitchError.writeFailed(underlying: "Codex's keychain item is unreadable.")
       }
       // Codex must create a genuinely missing item with its own access policy.
-      try writeCodexFile(payload, to: storage.authFileURL)
+      try writeCodexFile(payload, replacing: snapshot.payload, at: storage.authFileURL)
+      try verifyCodexAutoFileInstallation(payload, storage: storage)
       return .codexAuthFile(path: storage.authFileURL.path)
     }
   }
 
-  private func writeCodexFile(_ payload: Data, to url: URL) throws {
+  private func writeCodexFile(
+    _ payload: Data,
+    replacing expected: Data?,
+    at url: URL
+  ) throws {
     let prepared: URL
     do {
       try FileManager.default.createDirectory(
@@ -132,14 +144,31 @@ extension AccountSwitchService {
       throw AccountSwitchError.writeFailed(underlying: error.localizedDescription)
     }
     defer { secureFileWriter.discard(prepared) }
+    try requireCLIInactive(.codex)
+    guard try readFile(url) == expected else {
+      throw AccountSwitchError.concurrentCredentialChange
+    }
     do {
       try secureFileWriter.commit(prepared, replacing: url)
     } catch {
       throw AccountSwitchError.writeFailed(underlying: error.localizedDescription)
     }
+    let observed: Data?
+    do {
+      observed = try readFile(url)
+    } catch {
+      throw AccountSwitchError.partialSwitch(
+        underlying: "Codex's auth-file write result couldn't be verified: " + error.localizedDescription
+      )
+    }
+    guard observed == payload else {
+      throw AccountSwitchError.partialSwitch(
+        underlying: "Codex's auth file changed while Quotari's write was being verified."
+      )
+    }
   }
 
-  private func writeCodexKeychain(
+  func writeCodexKeychain(
     _ payload: Data,
     replacing previous: Data?,
     storage: CodexAuthStorage
@@ -179,6 +208,32 @@ extension AccountSwitchService {
     }
   }
 
+  private func verifyCodexAutoFileInstallation(
+    _ payload: Data,
+    storage: CodexAuthStorage
+  ) throws {
+    let observed: CodexAuthSnapshot
+    do {
+      observed = try storage.snapshot()
+    } catch {
+      throw AccountSwitchError.partialSwitch(
+        underlying: "Codex's active credential store couldn't be verified after the file update: "
+          + error.localizedDescription
+      )
+    }
+    let expected = CodexAuthSnapshot(
+      mode: .auto,
+      source: .codexAuthFile(path: storage.authFileURL.path),
+      payload: payload,
+      keyringState: .missing
+    )
+    guard observed == expected else {
+      throw AccountSwitchError.partialSwitch(
+        underlying: "Codex's active credential store changed after the file update; the newer value was left untouched."
+      )
+    }
+  }
+
   private func backUpCodexFallbackFile(_ storage: CodexAuthStorage, now: Date) throws -> Data? {
     let source = ProviderCredentialSource.codexAuthFile(path: storage.authFileURL.path)
     let payload: Data?
@@ -189,89 +244,5 @@ extension AccountSwitchService {
     }
     try backUp(provider: .codex, payload: payload, origin: source, now: now)
     return payload
-  }
-
-  private func removeCodexFallbackFileOrRollBackKeychain(
-    _ storage: CodexAuthStorage,
-    expectedFilePayload: Data?,
-    previousKeychainPayload: Data?,
-    now: Date
-  ) throws {
-    let source = ProviderCredentialSource.codexAuthFile(path: storage.authFileURL.path)
-    let observedFilePayload: Data?
-    do {
-      observedFilePayload = try storage.payload(for: source)
-    } catch {
-      try restoreCodexKeychain(previousKeychainPayload, storage: storage)
-      throw AccountSwitchError.writeFailed(
-        underlying: "Codex's fallback file couldn't be verified after the keychain update: "
-          + error.localizedDescription
-      )
-    }
-
-    guard observedFilePayload == expectedFilePayload else {
-      var backupError: Error?
-      if let observedFilePayload {
-        do {
-          try backUp(provider: .codex, payload: observedFilePayload, origin: source, now: now)
-        } catch {
-          backupError = error
-        }
-      }
-      try restoreCodexKeychain(previousKeychainPayload, storage: storage)
-      if let backupError {
-        throw AccountSwitchError.writeFailed(
-          underlying: "Codex's fallback file changed and its new generation couldn't be backed up: "
-            + backupError.localizedDescription
-        )
-      }
-      throw AccountSwitchError.writeFailed(
-        underlying: "Codex's fallback file changed while the keychain update was being verified."
-      )
-    }
-
-    guard let observedFilePayload else { return }
-    guard CodexAuthStorage.canRemoveFallback(observedFilePayload) else { return }
-    do {
-      try FileManager.default.removeItem(at: storage.authFileURL)
-    } catch {
-      try restoreCodexKeychain(previousKeychainPayload, storage: storage)
-      throw AccountSwitchError.writeFailed(underlying: error.localizedDescription)
-    }
-  }
-
-  private func restoreCodexKeychain(
-    _ previousPayload: Data?,
-    storage: CodexAuthStorage
-  ) throws {
-    var operationError: Error?
-    do {
-      if let previousPayload {
-        try codexKeychainWrite(
-          previousPayload,
-          CodexAuthStorage.keychainService,
-          storage.keychainAccount
-        )
-      } else {
-        try codexKeychainDelete(CodexAuthStorage.keychainService, storage.keychainAccount)
-      }
-    } catch {
-      operationError = error
-    }
-
-    let observed: Data?
-    do {
-      observed = try codexKeychainRead(CodexAuthStorage.keychainService, storage.keychainAccount)
-    } catch {
-      throw AccountSwitchError.partialSwitch(
-        underlying: operationError?.localizedDescription ?? error.localizedDescription
-      )
-    }
-    guard observed == previousPayload else {
-      throw AccountSwitchError.partialSwitch(
-        underlying: operationError?.localizedDescription
-          ?? "Codex's previous keychain value couldn't be restored."
-      )
-    }
   }
 }

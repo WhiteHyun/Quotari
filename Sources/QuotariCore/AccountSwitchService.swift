@@ -32,11 +32,12 @@ public struct KnownLiveClaudeTarget: Equatable, Sendable {
 /// credential object is transplanted — every other root key (`mcpOAuth`,
 /// `OPENAI_API_KEY`, unknown future keys) survives.
 ///
-/// A residual window remains between the final re-read and the write: the CLI
-/// is a separate process and these stores do not offer an interprocess CAS.
-/// Callers must ask users to stop active CLI sessions before switching; a CLI
-/// rotation inside that window can otherwise be overwritten before Quotari
-/// observes the new pair.
+/// Production callers pair repeated generation reads with an active-process
+/// check. The CLI remains a separate process and these stores do not offer an
+/// interprocess CAS, so users must still stop active sessions. Post-write
+/// verification preserves any newer generation it observes. If only Claude's
+/// lower-precedence file changes, Quotari rolls back its matching keychain
+/// write so a retry can back up both physical stores safely.
 public struct AccountSwitchService: Sendable {
   let capturedAccounts: CapturedAccountStore
   let capture: AccountCaptureService
@@ -44,9 +45,12 @@ public struct AccountSwitchService: Sendable {
   let home: URL
   let keychainRead: @Sendable (String) throws -> Data?
   let keychainWrite: @Sendable (Data, String) throws -> Void
+  let keychainDelete: @Sendable (String) throws -> Void
   let codexKeychainRead: @Sendable (String, String) throws -> Data?
   let codexKeychainWrite: @Sendable (Data, String, String) throws -> Void
   let codexKeychainDelete: @Sendable (String, String) throws -> Void
+  let activeCLIProcesses: @Sendable (UsageProvider) throws -> [String]
+  let credentialFileRead: @Sendable (URL) throws -> Data?
   let secureFileWriter: SecureCredentialFileWriter
 
   public init(
@@ -56,9 +60,12 @@ public struct AccountSwitchService: Sendable {
     home: URL = FileManager.default.homeDirectoryForCurrentUser,
     keychainRead: (@Sendable (String) throws -> Data?)? = nil,
     keychainWrite: (@Sendable (Data, String) throws -> Void)? = nil,
+    keychainDelete: (@Sendable (String) throws -> Void)? = nil,
     codexKeychainRead: (@Sendable (String, String) throws -> Data?)? = nil,
     codexKeychainWrite: (@Sendable (Data, String, String) throws -> Void)? = nil,
     codexKeychainDelete: (@Sendable (String, String) throws -> Void)? = nil,
+    activeCLIProcesses: @escaping @Sendable (UsageProvider) throws -> [String] = { _ in [] },
+    fileRead: (@Sendable (URL) throws -> Data?)? = nil,
     setOwnerOnlyPermissions: (@Sendable (URL) throws -> Void)? = nil
   ) {
     let resolvedCodexKeychainRead = codexKeychainRead ?? { service, account in
@@ -82,12 +89,20 @@ public struct AccountSwitchService: Sendable {
     self
       .keychainWrite = keychainWrite ??
       { data, service in try KeychainItemStore.writeByService(data, service: service) }
+    self.keychainDelete = keychainDelete ?? { service in
+      try KeychainItemStore.deleteByService(service)
+    }
     self.codexKeychainRead = resolvedCodexKeychainRead
     self.codexKeychainWrite = codexKeychainWrite ?? { data, service, account in
       try KeychainItemStore(account: account).write(data, service: service)
     }
     self.codexKeychainDelete = codexKeychainDelete ?? { service, account in
       try KeychainItemStore(account: account).delete(service: service)
+    }
+    self.activeCLIProcesses = activeCLIProcesses
+    credentialFileRead = fileRead ?? { url in
+      guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+      return try Data(contentsOf: url)
     }
     let setOwnerOnlyPermissions = setOwnerOnlyPermissions ?? { url in
       try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
@@ -110,7 +125,11 @@ public extension AccountSwitchService {
     now: Date,
     knownLiveTarget: KnownLiveClaudeTarget? = nil
   ) throws -> ProviderCredentialSource {
-    switch capturedAccounts.account(id: id)?.provider {
+    let provider = capturedAccounts.account(id: id)?.provider
+    if let provider {
+      try requireCLIInactive(provider)
+    }
+    switch provider {
     case .claude:
       return try switchClaude(
         registryID: id,
@@ -165,36 +184,12 @@ private extension AccountSwitchService {
       throw AccountSwitchError.writeFailed(underlying: error.localizedDescription)
     }
 
-    let preparedFile = try prepareCredentialFile(mergedFile, replacing: fileURL)
-    defer { secureFileWriter.discard(preparedFile) }
-
-    if let mergedKeychain {
-      do {
-        try keychainWrite(mergedKeychain, service)
-      } catch {
-        throw AccountSwitchError.writeFailed(underlying: error.localizedDescription)
-      }
-    }
-    if let preparedFile {
-      do {
-        try secureFileWriter.commit(preparedFile, replacing: fileURL)
-      } catch {
-        // The file content didn't change — roll the keychain back so the two
-        // stores don't disagree (which store the CLI reads is version-
-        // dependent). The keychain was only written when it already existed
-        // (both-stores case), so there's always a prior value to restore. A
-        // rollback that itself fails leaves the stores inconsistent — surface
-        // that distinctly (both logins are still backed up).
-        if mergedKeychain != nil, let keychainNow {
-          do {
-            try keychainWrite(keychainNow, service)
-          } catch let rollbackError {
-            throw AccountSwitchError.partialSwitch(underlying: rollbackError.localizedDescription)
-          }
-        }
-        throw AccountSwitchError.writeFailed(underlying: error.localizedDescription)
-      }
-    }
+    try installClaudeCredentials(ClaudeCredentialInstallation(
+      service: service,
+      fileURL: fileURL,
+      previous: ResolvedClaudeLivePayloads(keychain: keychainNow, file: fileNow),
+      replacement: ResolvedClaudeLivePayloads(keychain: mergedKeychain, file: mergedFile)
+    ))
     discardClaudeLivePendingGrantsAfterSuccessfulSwitch(current.pendingGrants)
     // The CLI reads the keychain first when both exist; that's the store the
     // switched-in account should be selected/refreshed under.

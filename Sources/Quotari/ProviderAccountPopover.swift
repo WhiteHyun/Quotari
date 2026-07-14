@@ -70,7 +70,8 @@ struct ProviderAccountPopover: View {
       Button("Cancel", role: .cancel) {}
     } message: { _ in
       Text(
-        "Quit Claude Code or Codex before switching. A running CLI can rotate credentials after Quotari's final check."
+        "Quit Claude Code or Codex before switching. Quotari checks for active processes and credential changes, "
+          + "but it cannot prevent a new CLI from launching after the final check."
       )
     }
   }

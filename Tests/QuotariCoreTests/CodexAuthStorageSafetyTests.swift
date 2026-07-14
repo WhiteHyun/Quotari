@@ -139,7 +139,7 @@ extension CodexAuthStorageTests {
     #expect(try CodexCredentialsStore.parse(#require(slot.value)).accountID == "acct-saved")
   }
 
-  @Test func fallbackBackupRefreshesTheTargetBeforeTheKeyringWrite() throws {
+  @Test func fallbackBackupRefreshesTheTargetBeforeQuarantineCleanup() throws {
     let registry = makeSwitchRegistry()
     let saved = try savedCodexAccount(registry: registry)
     let home = try codexHome(mode: "keyring")
