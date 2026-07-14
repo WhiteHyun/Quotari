@@ -15,7 +15,10 @@ extension ClaudeUsageStrategy {
       guard let installed = try? ClaudeCredentialsStore.load(
         source: stored.source,
         capturedAccounts: capturedAccounts
-      ), installed.accessToken == pending.grant.accessToken else {
+      ), pending.matchesInstalledGeneration(
+        accessToken: installed.accessToken,
+        refreshToken: installed.refreshToken
+      ) else {
         // `persisted` also returns the in-memory grant after a transient write
         // failure. Keep the original durable owner until the source proves it
         // accepted the rebased grant.
@@ -56,9 +59,24 @@ extension ClaudeUsageStrategy {
       } else if case .claudeCredentialsFile = resolved.source {
         acceptedGrant = pending
       }
+    } catch ClaudeCredentialPersistError.obsoleteRecoveryCleanupPending {
+      let authoritative = (try? reloadCredentials(resolved.source)).map {
+        ResolvedClaudeCredentials(credentials: $0, source: resolved.source)
+      }
+      return ClaudeRefreshResolution(resolved: authoritative ?? resolved)
+    } catch ClaudeCredentialPersistError.mirrorRecoveryOwnerChanged {
+      let authoritative = (try? reloadCredentials(resolved.source)).map {
+        ResolvedClaudeCredentials(credentials: $0, source: resolved.source)
+      }
+      return ClaudeRefreshResolution(resolved: authoritative ?? resolved)
     } catch ClaudeCredentialPersistError.staleSource {
       return nil
     } catch {
+      if let persistError = error as? ClaudeCredentialPersistError,
+         case .mirrorRecoveryPending = persistError,
+         !resolved.source.isCaptured {
+        acceptedGrant = pending
+      }
       // The refresh already happened server-side, so dropping the fetch
       // wouldn't undo the rotation — continue with the in-memory pair and
       // queue any grant whose consumed refresh token can no longer recover it.

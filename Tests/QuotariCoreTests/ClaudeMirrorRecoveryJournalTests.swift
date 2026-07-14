@@ -106,11 +106,7 @@ struct ClaudeMirrorRecoveryJournalTests {
       commitMirroredFile: { _, _ in throw MirrorJournalFixture.InjectedFailure() }
     )
 
-    try writer.persist(
-      grantC,
-      replacing: "b-token",
-      to: .claudeKeychain(service: ClaudeCredentialsStore.keychainService)
-    )
+    expectClaudeMirrorRecoveryFailure(writer, grantC, replacing: "b-token")
 
     let keychainC = try #require(box.keychain)
     #expect(try ClaudeCredentialsStore.parse(keychainC).accessToken == "c-token")
@@ -123,7 +119,11 @@ struct ClaudeMirrorRecoveryJournalTests {
     #expect(journal.supersedes(accessToken: "a-token", refreshToken: "a-refresh"))
     #expect(journal.supersedes(accessToken: "b-token", refreshToken: "b-refresh"))
     #expect(journal.liveSourceBackupRecorded == nil)
-    #expect(try fixture.pendingGrant(id: fixture.keychainPendingID) == nil)
+    let storedCanonicalJournal = try fixture.pendingGrant(id: fixture.keychainPendingID)
+    let canonicalJournal = try #require(storedCanonicalJournal)
+    #expect(canonicalJournal.grant == grantC)
+    #expect(canonicalJournal.previousAccessToken == "b-token")
+    #expect(canonicalJournal.consumedRefreshToken == "b-refresh")
 
     let service = AccountSwitchService(capturedAccounts: fixture.store)
     let resolved = try service.resolveClaudeLivePendingGrants(
@@ -210,10 +210,10 @@ struct ClaudeMirrorRecoveryJournalTests {
       commitMirroredFile: { _, _ in throw MirrorJournalFixture.InjectedFailure() }
     )
 
-    try writer.persist(
+    expectClaudeMirrorRecoveryFailure(
+      writer,
       ClaudeTokenGrant(accessToken: "c-token", refreshToken: "c-refresh"),
-      replacing: "b-token",
-      to: .claudeKeychain(service: ClaudeCredentialsStore.keychainService)
+      replacing: "b-token"
     )
 
     let files = try FileManager.default.contentsOfDirectory(
@@ -247,11 +247,7 @@ extension ClaudeMirrorRecoveryJournalTests {
       commitMirroredFile: { _, _ in throw MirrorJournalFixture.InjectedFailure() }
     )
 
-    try writer.persist(
-      grant,
-      replacing: "a-token",
-      to: .claudeKeychain(service: ClaudeCredentialsStore.keychainService)
-    )
+    expectClaudeMirrorRecoveryFailure(writer, grant, replacing: "a-token")
 
     #expect(try ClaudeCredentialsStore.parse(#require(box.keychain)).accessToken == "b-token")
     let storedJournal = try fixture.pendingGrant(id: fixture.pendingID)
@@ -285,11 +281,7 @@ extension ClaudeMirrorRecoveryJournalTests {
       commitMirroredFile: { _, _ in throw MirrorJournalFixture.InjectedFailure() }
     )
 
-    try writer.persist(
-      grantC,
-      replacing: "b-token",
-      to: .claudeKeychain(service: ClaudeCredentialsStore.keychainService)
-    )
+    expectClaudeMirrorRecoveryFailure(writer, grantC, replacing: "b-token")
 
     #expect(try ClaudeCredentialsStore.parse(#require(box.keychain)).accessToken == "c-token")
     let storedJournal = try fixture.pendingGrant(id: fixture.pendingID)

@@ -172,7 +172,7 @@ struct ClaudeTokenRefreshCoordinatorTests {
       try? await Task.sleep(for: .milliseconds(100))
       return ClaudeRefreshResolution(
         resolved: ResolvedClaudeCredentials(
-          credentials: ClaudeCredentials(accessToken: "token-b"),
+          credentials: ClaudeCredentials(accessToken: "token-b", refreshToken: "ref-b"),
           source: source
         ),
         acceptedGrant: olderPending
@@ -182,7 +182,7 @@ struct ClaudeTokenRefreshCoordinatorTests {
       try? await Task.sleep(for: .milliseconds(10))
       return ClaudeRefreshResolution(
         resolved: ResolvedClaudeCredentials(
-          credentials: ClaudeCredentials(accessToken: "token-c"),
+          credentials: ClaudeCredentials(accessToken: "token-c", refreshToken: "ref-c"),
           source: source
         ),
         acceptedGrant: newerPending
@@ -191,7 +191,47 @@ struct ClaudeTokenRefreshCoordinatorTests {
     _ = await [older, newer]
 
     #expect(
-      await coordinator.acceptedGrant(sourceID: source.stableID, accessToken: "token-c") == newerPending
+      await coordinator.acceptedGrant(
+        sourceID: source.stableID,
+        accessToken: "token-c",
+        refreshToken: "ref-c"
+      ) == newerPending
+    )
+    #expect(
+      await coordinator.acceptedGrant(
+        sourceID: source.stableID,
+        accessToken: "token-c",
+        refreshToken: "different-ref"
+      ) == nil
+    )
+  }
+
+  @Test func mismatchedAcceptedResolutionIsNotCached() async {
+    let coordinator = ClaudeTokenRefreshCoordinator()
+    let source = ProviderCredentialSource.claudeKeychain(service: "test")
+    let pending = ClaudePendingGrant(
+      grant: ClaudeTokenGrant(accessToken: "token-b", refreshToken: "ref-b"),
+      previousAccessToken: "token-a",
+      consumedRefreshToken: "ref-a"
+    )
+
+    let resolution = await coordinator.resolve(key: "mismatched") {
+      ClaudeRefreshResolution(
+        resolved: ResolvedClaudeCredentials(
+          credentials: ClaudeCredentials(accessToken: "token-b", refreshToken: "other-ref"),
+          source: source
+        ),
+        acceptedGrant: pending
+      )
+    }
+
+    #expect(resolution.acceptedGrant == nil)
+    #expect(
+      await coordinator.acceptedGrant(
+        sourceID: source.stableID,
+        accessToken: "token-b",
+        refreshToken: "other-ref"
+      ) == nil
     )
   }
 

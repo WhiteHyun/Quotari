@@ -18,6 +18,9 @@ public enum ClaudeCredentialPersistError: LocalizedError, Sendable {
   case staleSource
   case keychainWriteFailed(status: Int32)
   case recoveryJournalFailed(underlying: String)
+  case mirrorRecoveryPending(underlying: String)
+  case mirrorRecoveryOwnerChanged
+  case obsoleteRecoveryCleanupPending(underlying: String)
 
   public var errorDescription: String? {
     switch self {
@@ -27,6 +30,12 @@ public enum ClaudeCredentialPersistError: LocalizedError, Sendable {
     case let .keychainWriteFailed(status): "Writing the keychain item failed (security exited \(status))."
     case let .recoveryJournalFailed(underlying):
       "Saving Claude's mirror recovery journal failed: \(underlying)"
+    case let .mirrorRecoveryPending(underlying):
+      "Claude's canonical credential is installed, but mirror recovery is pending: \(underlying)"
+    case .mirrorRecoveryOwnerChanged:
+      "Claude's canonical credential changed while mirror recovery was in progress."
+    case let .obsoleteRecoveryCleanupPending(underlying):
+      "Claude's credential source changed, but obsolete recovery cleanup is pending: \(underlying)"
     }
   }
 }
@@ -110,6 +119,14 @@ public struct ClaudeCredentialsWriter: ClaudeCredentialPersisting {
     service: String
   ) throws {
     guard let data = keychainRead(service) else { throw ClaudeCredentialPersistError.sourceUnavailable }
+    if try repairInstalledMirrorIfNeeded(
+      grant,
+      replacing: previousAccessToken,
+      canonicalPayload: data,
+      keychainService: service
+    ) {
+      return
+    }
     let mergedKeychain = try merge(grant, replacing: previousAccessToken, into: data)
     let pending = mirrorPendingGrant(
       grant,
@@ -137,17 +154,29 @@ public struct ClaudeCredentialsWriter: ClaudeCredentialPersisting {
       try installRecoveryJournal(journal)
     }
     try keychainWrite(mergedKeychain, service)
-    if let canonicalJournal {
-      // The canonical source now owns the grant. Its short-lived journal is
-      // no longer needed; the file journal remains until the mirror lands.
-      removeRecoveryJournal(canonicalJournal)
-    }
     let mirrorResolved = commitMirrorIfUnchanged(
       recovery.preparation,
       pending: recovery.journal?.pending ?? pending
     )
-    if mirrorResolved, let journal = recovery.journal {
-      removeRecoveryJournal(journal)
+    if mirrorResolved {
+      try finishMirrorRecovery(recovery, canonicalJournal: canonicalJournal)
+      return
+    }
+    throw ClaudeCredentialPersistError.mirrorRecoveryPending(
+      underlying: "The canonical keychain grant is installed, but its credentials file mirror is still pending."
+    )
+  }
+
+  private func finishMirrorRecovery(
+    _ recovery: MirrorRecovery,
+    canonicalJournal: MirrorRecoveryJournal?
+  ) throws {
+    let mirrorJournalsResolved = removeResolvedMirrorJournals(recovery)
+    guard let canonicalJournal else { return }
+    guard mirrorJournalsResolved, removeRecoveryJournal(canonicalJournal) else {
+      throw ClaudeCredentialPersistError.mirrorRecoveryPending(
+        underlying: "The mirror is updated, but its recovery journal cleanup is still pending."
+      )
     }
   }
 

@@ -29,6 +29,7 @@ extension ClaudeCredentialsWriter {
   struct MirrorRecovery {
     var preparation: MirrorPreparation
     var journal: MirrorRecoveryJournal?
+    var cleanup: MirrorRecoveryJournal?
   }
 
   struct MirrorRecoveryJournal {
@@ -61,11 +62,10 @@ extension ClaudeCredentialsWriter {
     guard let pending,
           keychainService == ClaudeCredentialsStore.keychainService,
           let destination = mirroredCredentialsFileURL,
-          FileManager.default.fileExists(atPath: destination.path),
           let id = ProviderCredentialSource
           .claudeCredentialsFile(path: destination.standardizedFileURL.path)
           .claudeLivePendingGrantID
-    else { return MirrorRecovery(preparation: initial, journal: nil) }
+    else { return MirrorRecovery(preparation: initial, journal: nil, cleanup: nil) }
 
     let context = MirrorRecoveryContext(
       grant: grant,
@@ -75,7 +75,12 @@ extension ClaudeCredentialsWriter {
     )
     switch initial {
     case .none:
-      return try mirrorRecoveryReconcilingMissingPreparation(initial, context: context, id: id)
+      return try mirrorRecoveryReconcilingMissingPreparation(
+        initial,
+        context: context,
+        id: id,
+        destination: destination
+      )
     case .failed, .prepared:
       return try mirrorRecoveryReconcilingPreparedMirror(initial, context: context, id: id)
     }
@@ -84,13 +89,14 @@ extension ClaudeCredentialsWriter {
   private func mirrorRecoveryReconcilingMissingPreparation(
     _ initial: MirrorPreparation,
     context: MirrorRecoveryContext,
-    id: String
+    id: String,
+    destination: URL
   ) throws -> MirrorRecovery {
     // The file may be one rotation behind the canonical keychain. Only an
     // exact existing journal can bridge that lineage; an unrelated file is
     // intentionally left alone.
     guard let existing = try loadRecoveryJournal(id: id) else {
-      return MirrorRecovery(preparation: initial, journal: nil)
+      return MirrorRecovery(preparation: initial, journal: nil, cleanup: nil)
     }
     let effective: ClaudePendingGrant
     if let merged = context.pending.mergingLineage(with: existing) {
@@ -100,7 +106,7 @@ extension ClaudeCredentialsWriter {
       // backed up: it may still be the only bridge to a stale file.
       effective = chained
     } else {
-      return MirrorRecovery(preparation: initial, journal: nil)
+      return MirrorRecovery(preparation: initial, journal: nil, cleanup: nil)
     }
     let preparation = reprepareMirror(
       discarding: initial,
@@ -110,11 +116,23 @@ extension ClaudeCredentialsWriter {
       keychainService: context.keychainService
     )
     guard preparation.requiresJournal else {
-      return MirrorRecovery(preparation: preparation, journal: nil)
+      guard mirrorJournalIsResolved(effective, destination: destination) else {
+        return MirrorRecovery(
+          preparation: .failed(destination: destination),
+          journal: nil,
+          cleanup: nil
+        )
+      }
+      return MirrorRecovery(
+        preparation: preparation,
+        journal: nil,
+        cleanup: MirrorRecoveryJournal(id: id, pending: existing, previous: existing)
+      )
     }
     return MirrorRecovery(
       preparation: preparation,
-      journal: MirrorRecoveryJournal(id: id, pending: effective, previous: existing)
+      journal: MirrorRecoveryJournal(id: id, pending: effective, previous: existing),
+      cleanup: nil
     )
   }
 
@@ -137,11 +155,12 @@ extension ClaudeCredentialsWriter {
       keychainService: context.keychainService
     )
     guard preparation.requiresJournal else {
-      return MirrorRecovery(preparation: preparation, journal: nil)
+      return MirrorRecovery(preparation: preparation, journal: nil, cleanup: nil)
     }
     return MirrorRecovery(
       preparation: preparation,
-      journal: MirrorRecoveryJournal(id: id, pending: effective, previous: existing)
+      journal: MirrorRecoveryJournal(id: id, pending: effective, previous: existing),
+      cleanup: nil
     )
   }
 
@@ -196,13 +215,13 @@ extension ClaudeCredentialsWriter {
     keychainService: String
   ) -> MirrorPreparation {
     guard keychainService == ClaudeCredentialsStore.keychainService,
-          let destination = mirroredCredentialsFileURL,
-          FileManager.default.fileExists(atPath: destination.path)
+          let destination = mirroredCredentialsFileURL
     else { return .none }
     let original: Data
     do {
       original = try fileRead(destination)
     } catch {
+      guard !mirrorDestinationIsMissing(error) else { return .none }
       Self.logger
         .error("Reading the mirrored Claude credentials file failed: \(error.localizedDescription, privacy: .public)")
       return .failed(destination: destination)
@@ -285,21 +304,6 @@ extension ClaudeCredentialsWriter {
     return credentials.accessToken
   }
 
-  private func mirrorNeedsRecovery(
-    _ payload: Data,
-    pending: ClaudePendingGrant?
-  ) -> Bool {
-    guard let pending else { return false }
-    guard let credentials = try? ClaudeCredentialsStore.parse(payload) else { return true }
-    if credentials.accessToken == pending.grant.accessToken {
-      return pending.grant.refreshToken.map { credentials.refreshToken != $0 } ?? false
-    }
-    return pending.supersedes(
-      accessToken: credentials.accessToken,
-      refreshToken: credentials.refreshToken
-    )
-  }
-
   func mirrorPendingGrant(
     _ grant: ClaudeTokenGrant,
     previousAccessToken: String,
@@ -316,7 +320,7 @@ extension ClaudeCredentialsWriter {
     return pending.rotatedRefreshToken ? pending : nil
   }
 
-  private func loadRecoveryJournal(id: String) throws -> ClaudePendingGrant? {
+  func loadRecoveryJournal(id: String) throws -> ClaudePendingGrant? {
     do {
       guard let data = try capturedAccounts.loadPendingGrantData(id: id) else { return nil }
       guard let pending = try? JSONDecoder().decode(ClaudePendingGrant.self, from: data) else {
@@ -330,8 +334,7 @@ extension ClaudeCredentialsWriter {
     }
   }
 
-  /// The canonical journal exists only across the keychain write. The file
-  /// journal has a separate id and survives until its mirror commit succeeds.
+  /// Retained until the next fetch proves every matching mirror is resolved.
   func canonicalRecoveryJournal(
     pending: ClaudePendingGrant?,
     keychainService: String
@@ -377,18 +380,6 @@ extension ClaudeCredentialsWriter {
     } catch {
       throw ClaudeCredentialPersistError.recoveryJournalFailed(
         underlying: error.localizedDescription
-      )
-    }
-  }
-
-  func removeRecoveryJournal(_ journal: MirrorRecoveryJournal) {
-    do {
-      _ = try capturedAccounts.removePendingGrant(id: journal.id) { data in
-        try JSONDecoder().decode(ClaudePendingGrant.self, from: data) == journal.pending
-      }
-    } catch {
-      Self.logger.error(
-        "Cleaning up Claude's mirrored recovery journal failed: \(error.localizedDescription, privacy: .public)"
       )
     }
   }

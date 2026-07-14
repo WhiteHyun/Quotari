@@ -21,7 +21,8 @@ extension ClaudeUsageStrategy {
   ) async -> Bool {
     guard let acceptedGrant = await refreshCoordinator.acceptedGrant(
       sourceID: resolved.source.stableID,
-      accessToken: resolved.credentials.accessToken
+      accessToken: resolved.credentials.accessToken,
+      refreshToken: resolved.credentials.refreshToken
     ) else { return false }
     return mirrorAcceptedGrant(acceptedGrant, to: registryID) == .blocked
   }
@@ -41,7 +42,10 @@ extension ClaudeUsageStrategy {
       source: .quotariRegistry(id: id),
       capturedAccounts: capturedAccounts
     )
-    if stored.accessToken == pending.grant.accessToken {
+    if pending.matchesInstalledGeneration(
+      accessToken: stored.accessToken,
+      refreshToken: stored.refreshToken
+    ) {
       _ = try capturedAccounts.removePendingGrant(id: id, matching: data)
       return
     }
@@ -96,7 +100,10 @@ extension ClaudeUsageStrategy {
     ) else {
       return .blocked
     }
-    if stored.accessToken == pending.grant.accessToken {
+    if pending.matchesInstalledGeneration(
+      accessToken: stored.accessToken,
+      refreshToken: stored.refreshToken
+    ) {
       removeLinkedGrantIfMatching(pending, id: id)
       return .ready
     }

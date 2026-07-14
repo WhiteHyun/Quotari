@@ -17,6 +17,7 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
   private let transport: any ProviderHTTPTransport
   private let usageURL: URL
   private let resolveCredentials: @Sendable () throws -> ResolvedClaudeCredentials
+  let reloadCredentials: @Sendable (ProviderCredentialSource) throws -> ClaudeCredentials
   private let refresher: (any ClaudeTokenRefreshing)?
   let persister: any ClaudeCredentialPersisting
   let capturedAccounts: CapturedAccountStore
@@ -28,6 +29,7 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
     resolveCredentials: @escaping @Sendable () throws -> ResolvedClaudeCredentials = {
       try ClaudeCredentialsStore.loadResolved()
     },
+    reloadCredentials: (@Sendable (ProviderCredentialSource) throws -> ClaudeCredentials)? = nil,
     refresher: (any ClaudeTokenRefreshing)? = ClaudeTokenRefresher(),
     persister: (any ClaudeCredentialPersisting)? = nil,
     capturedAccounts: CapturedAccountStore = CapturedAccountStore(),
@@ -37,6 +39,9 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
     self.transport = transport
     self.usageURL = usageURL
     self.resolveCredentials = resolveCredentials
+    self.reloadCredentials = reloadCredentials ?? { source in
+      try ClaudeCredentialsStore.load(source: source, capturedAccounts: capturedAccounts)
+    }
     self.refresher = refresher
     self.persister = persister ?? ClaudeCredentialsWriter(
       capturedAccounts: capturedAccounts,
@@ -309,7 +314,10 @@ private extension ClaudeUsageStrategy {
       return .resolved(ClaudeRefreshResolution(resolved: inMemory(fallback, pending.grant)))
     }
     let stored = ResolvedClaudeCredentials(credentials: current, source: fallback.source)
-    if current.accessToken == pending.grant.accessToken {
+    if pending.matchesInstalledGeneration(
+      accessToken: current.accessToken,
+      refreshToken: current.refreshToken
+    ) {
       removeDurableGrantIfMatching(pending, source: fallback.source)
       return .resolved(ClaudeRefreshResolution(
         resolved: stored,

@@ -132,6 +132,11 @@ public struct ClaudePendingGrant: Codable, Equatable, Sendable {
     grant.refreshToken.map { $0 != consumedRefreshToken } ?? false
   }
 
+  func matchesInstalledGeneration(accessToken: String, refreshToken: String?) -> Bool {
+    accessToken == grant.accessToken
+      && refreshToken == (grant.refreshToken ?? consumedRefreshToken)
+  }
+
   /// Whether this grant supersedes the generation currently stored in a
   /// credential source. Refresh-token lineage is usable only when the final
   /// grant actually rotates away from that exact token.
@@ -255,6 +260,7 @@ public actor ClaudeTokenRefreshCoordinator {
 
   private struct AcceptedLiveGeneration: Sendable {
     var accessToken: String
+    var refreshToken: String?
     var pending: ClaudePendingGrant
   }
 
@@ -271,30 +277,52 @@ public actor ClaudeTokenRefreshCoordinator {
     if let task = inFlight[key] {
       return await task.value
     }
-    let task = Task { await operation() }
+    let task = Task { await Self.validated(operation()) }
     inFlight[key] = task
     defer { inFlight[key] = nil }
     let resolution = await task.value
     if let accepted = resolution.acceptedGrant {
       let sourceID = resolution.resolved.source.stableID
       let generation = AcceptedLiveGeneration(
-        accessToken: accepted.grant.accessToken,
+        accessToken: resolution.resolved.credentials.accessToken,
+        refreshToken: resolution.resolved.credentials.refreshToken,
         pending: accepted
       )
       var recent = acceptedBySource[sourceID, default: []]
-      recent.removeAll { $0.accessToken == generation.accessToken }
+      recent.removeAll {
+        $0.accessToken == generation.accessToken
+          && $0.refreshToken == generation.refreshToken
+      }
       recent.append(generation)
       acceptedBySource[sourceID] = Array(recent.suffix(4))
     }
     return resolution
   }
 
+  private static func validated(_ resolution: ClaudeRefreshResolution) -> ClaudeRefreshResolution {
+    guard let accepted = resolution.acceptedGrant,
+          !accepted.matchesInstalledGeneration(
+            accessToken: resolution.resolved.credentials.accessToken,
+            refreshToken: resolution.resolved.credentials.refreshToken
+          )
+    else { return resolution }
+    var sanitized = resolution
+    sanitized.acceptedGrant = nil
+    return sanitized
+  }
+
   /// Returns proof retained from a completed transaction. This covers a
   /// linked account fetch that starts just after an unlinked caller completed
   /// the shared refresh: its token is already fresh, so it would otherwise
   /// skip the coordinator and never mirror the accepted grant.
-  public func acceptedGrant(sourceID: String, accessToken: String) -> ClaudePendingGrant? {
-    acceptedBySource[sourceID]?.last { $0.accessToken == accessToken }?.pending
+  public func acceptedGrant(
+    sourceID: String,
+    accessToken: String,
+    refreshToken: String?
+  ) -> ClaudePendingGrant? {
+    acceptedBySource[sourceID]?.last {
+      $0.accessToken == accessToken && $0.refreshToken == refreshToken
+    }?.pending
   }
 
   public func rememberUnpersisted(_ pending: ClaudePendingGrant, sourceID: String) {
