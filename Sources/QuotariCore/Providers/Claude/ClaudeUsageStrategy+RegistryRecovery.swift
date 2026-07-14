@@ -21,7 +21,8 @@ extension ClaudeUsageStrategy {
   ) async -> Bool {
     guard let acceptedGrant = await refreshCoordinator.acceptedGrant(
       sourceID: resolved.source.stableID,
-      accessToken: resolved.credentials.accessToken
+      accessToken: resolved.credentials.accessToken,
+      refreshToken: resolved.credentials.refreshToken
     ) else { return false }
     return mirrorAcceptedGrant(acceptedGrant, to: registryID) == .blocked
   }

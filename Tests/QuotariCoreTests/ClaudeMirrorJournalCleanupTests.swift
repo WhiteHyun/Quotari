@@ -86,23 +86,25 @@ extension ClaudeMirrorRelaunchRepairTests {
         to: fixture.source
       )
     }
-    let canonical = fixture.payload(access: "other-tok", refresh: "other-ref")
+    let canonical = fixture.payload(access: "new-tok", refresh: "other-ref")
     fixture.slot.value = canonical
     fixture.failFileJournalDeletes()
-    let strategy = ClaudeUsageStrategy(
-      transport: RefreshStubTransport(json: usageJSON),
-      resolveCredentials: fixture.resolve,
-      reloadCredentials: { _ in try fixture.resolve().credentials },
-      refresher: nil,
-      persister: fixture.normalWriter,
-      capturedAccounts: fixture.store,
-      refreshCoordinator: ClaudeTokenRefreshCoordinator()
-    )
+    let coordinator = ClaudeTokenRefreshCoordinator()
+    let strategy = obsoleteCleanupStrategy(fixture: fixture, coordinator: coordinator)
     let pending = ClaudePendingGrant(
       grant: fixture.grant,
       previousAccessToken: "old-tok",
       consumedRefreshToken: "old-ref"
     )
+    _ = await coordinator.resolve(key: "accepted-c") {
+      ClaudeRefreshResolution(
+        resolved: ResolvedClaudeCredentials(
+          credentials: ClaudeCredentials(accessToken: "new-tok", refreshToken: "new-ref"),
+          source: fixture.source
+        ),
+        acceptedGrant: pending
+      )
+    }
 
     let resolution = try await strategy.persisted(
       pending,
@@ -112,8 +114,16 @@ extension ClaudeMirrorRelaunchRepairTests {
       )
     )
 
-    #expect(resolution?.resolved.credentials.accessToken == "other-tok")
+    #expect(resolution?.resolved.credentials.accessToken == "new-tok")
+    #expect(resolution?.resolved.credentials.refreshToken == "other-ref")
     #expect(resolution?.acceptedGrant == nil)
+    #expect(
+      await coordinator.acceptedGrant(
+        sourceID: fixture.source.stableID,
+        accessToken: "new-tok",
+        refreshToken: "other-ref"
+      ) == nil
+    )
     #expect(try fixture.pending(id: fixture.keychainPendingID) != nil)
     #expect(try fixture.pending(id: fixture.filePendingID) != nil)
   }
@@ -158,4 +168,19 @@ extension ClaudeMirrorRelaunchRepairTests {
     #expect(try fixture.pending(id: fixture.keychainPendingID) == nil)
     #expect(try fixture.pending(id: fixture.filePendingID) == nil)
   }
+}
+
+private func obsoleteCleanupStrategy(
+  fixture: MirrorRepairFixture,
+  coordinator: ClaudeTokenRefreshCoordinator
+) -> ClaudeUsageStrategy {
+  ClaudeUsageStrategy(
+    transport: RefreshStubTransport(json: usageJSON),
+    resolveCredentials: fixture.resolve,
+    reloadCredentials: { _ in try fixture.resolve().credentials },
+    refresher: nil,
+    persister: fixture.normalWriter,
+    capturedAccounts: fixture.store,
+    refreshCoordinator: coordinator
+  )
 }

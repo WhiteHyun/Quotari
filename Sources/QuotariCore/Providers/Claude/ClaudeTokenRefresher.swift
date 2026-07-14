@@ -255,6 +255,7 @@ public actor ClaudeTokenRefreshCoordinator {
 
   private struct AcceptedLiveGeneration: Sendable {
     var accessToken: String
+    var refreshToken: String?
     var pending: ClaudePendingGrant
   }
 
@@ -278,11 +279,15 @@ public actor ClaudeTokenRefreshCoordinator {
     if let accepted = resolution.acceptedGrant {
       let sourceID = resolution.resolved.source.stableID
       let generation = AcceptedLiveGeneration(
-        accessToken: accepted.grant.accessToken,
+        accessToken: resolution.resolved.credentials.accessToken,
+        refreshToken: resolution.resolved.credentials.refreshToken,
         pending: accepted
       )
       var recent = acceptedBySource[sourceID, default: []]
-      recent.removeAll { $0.accessToken == generation.accessToken }
+      recent.removeAll {
+        $0.accessToken == generation.accessToken
+          && $0.refreshToken == generation.refreshToken
+      }
       recent.append(generation)
       acceptedBySource[sourceID] = Array(recent.suffix(4))
     }
@@ -293,8 +298,14 @@ public actor ClaudeTokenRefreshCoordinator {
   /// linked account fetch that starts just after an unlinked caller completed
   /// the shared refresh: its token is already fresh, so it would otherwise
   /// skip the coordinator and never mirror the accepted grant.
-  public func acceptedGrant(sourceID: String, accessToken: String) -> ClaudePendingGrant? {
-    acceptedBySource[sourceID]?.last { $0.accessToken == accessToken }?.pending
+  public func acceptedGrant(
+    sourceID: String,
+    accessToken: String,
+    refreshToken: String?
+  ) -> ClaudePendingGrant? {
+    acceptedBySource[sourceID]?.last {
+      $0.accessToken == accessToken && $0.refreshToken == refreshToken
+    }?.pending
   }
 
   public func rememberUnpersisted(_ pending: ClaudePendingGrant, sourceID: String) {
