@@ -29,6 +29,13 @@ final class UsageStore {
   /// (an account switch) can await any in-flight refresh — which can rotate
   /// and persist a live token — before reading and overwriting the slot.
   private(set) var inFlightRefresh: Task<Void, Never>?
+  /// The shared account-discovery pass used by app activation, Settings, and
+  /// manual reloads. Joining this task prevents simultaneous lifecycle events
+  /// from repeating the same keychain and credential-file reads.
+  private(set) var inFlightAccountReload: Task<Void, Never>?
+  private(set) var accountRediscoveryRequest: UInt = 0
+  private(set) var completedAccountRediscoveryRequest: UInt = 0
+  private var accountRediscoveryWaiters: [AccountRediscoveryWaiter] = []
   /// True while an account switch is writing a credential slot. Refreshes are
   /// suppressed for the window so none rotates/persists a slot the switch is
   /// mid-way through reading and overwriting. This coordinates Quotari's own
@@ -155,7 +162,74 @@ final class UsageStore {
     }
   }
 
+  func beginAccountRediscovery() {
+    accountRediscoveryRequest &+= 1
+    startQueuedAccountRediscoveryIfNeeded()
+  }
+
+  func startQueuedAccountRediscoveryIfNeeded(allowWhileSwitching: Bool = false) {
+    guard allowWhileSwitching || !isSwitching,
+          inFlightAccountReload == nil,
+          completedAccountRediscoveryRequest != accountRediscoveryRequest
+    else { return }
+    let drainableRequest = accountRediscoveryRequest
+    inFlightAccountReload = Task { [weak self] in
+      await self?.performQueuedAccountRediscovery(startingWith: drainableRequest)
+    }
+  }
+
   func reloadAccounts() async {
+    accountRediscoveryRequest &+= 1
+    let request = accountRediscoveryRequest
+    startQueuedAccountRediscoveryIfNeeded()
+    await waitForAccountRediscovery(request)
+  }
+
+  func reloadAccountsDuringSwitch() async {
+    accountRediscoveryRequest &+= 1
+    let request = accountRediscoveryRequest
+    startQueuedAccountRediscoveryIfNeeded(allowWhileSwitching: true)
+    await waitForAccountRediscovery(request)
+  }
+
+  private func performQueuedAccountRediscovery(startingWith drainableRequest: UInt) async {
+    defer {
+      inFlightAccountReload = nil
+      startQueuedAccountRediscoveryIfNeeded()
+    }
+    var request = isSwitching ? drainableRequest : accountRediscoveryRequest
+    while completedAccountRediscoveryRequest != request {
+      await performAccountReload()
+      completedAccountRediscoveryRequest = request
+      resumeAccountRediscoveryWaiters(through: request)
+      // Once a switch closes the gate, finish only the pass that was already
+      // reading. Its newer requests stay queued for the mandatory post-write
+      // discovery (or for the reopened gate after that pass).
+      guard !isSwitching else { return }
+      request = accountRediscoveryRequest
+    }
+  }
+
+  private func waitForAccountRediscovery(_ request: UInt) async {
+    guard completedAccountRediscoveryRequest < request else { return }
+    await withCheckedContinuation { continuation in
+      accountRediscoveryWaiters.append(.init(request: request, continuation: continuation))
+    }
+  }
+
+  private func resumeAccountRediscoveryWaiters(through request: UInt) {
+    var pending: [AccountRediscoveryWaiter] = []
+    for waiter in accountRediscoveryWaiters {
+      if waiter.request <= request {
+        waiter.continuation.resume()
+      } else {
+        pending.append(waiter)
+      }
+    }
+    accountRediscoveryWaiters = pending
+  }
+
+  private func performAccountReload() async {
     var next: [UsageProvider: [ProviderAccount]] = [:]
     var nextProvidersWithDiscoveredCredentials = Set<UsageProvider>()
     var refreshedSelections: [(UsageProvider, SelectionUpdate)] = []
@@ -240,6 +314,11 @@ final class UsageStore {
   }
 }
 
+private struct AccountRediscoveryWaiter {
+  let request: UInt
+  let continuation: CheckedContinuation<Void, Never>
+}
+
 extension UsageStore {
   /// Spawns a tracked dashboard refresh. UI and the timer go through this so
   /// `inFlightRefresh` always reflects the actually-running refresh an account
@@ -283,11 +362,13 @@ extension UsageStore {
     // A live stand-in can silently start pointing at a different login when
     // its CLI slot is reused; rediscover first so the timer path reconciles
     // the selection just like a manual reload.
-    if !reconciledSelectionOrigins.isEmpty {
-      await reloadAccounts()
-    }
+    guard await prepareReconciledAccountsForRefresh() else { return }
     repeat {
       refreshRequested = false
+      // A switch can close the gate after the discovery await above, or while
+      // draining a previous pass. Never begin another provider fetch inside
+      // that protected write window.
+      guard !isSwitching else { return }
       await performRefresh()
     } while refreshRequested
     // Self-heal email labels after a usage refresh may have rotated a token:

@@ -359,12 +359,18 @@ extension UsageStoreSwitchTests {
     await store.reloadAccounts()
     store.isSwitching = true
 
+    store.beginAccountRediscovery()
     store.beginRefresh()
     await store.inFlightRefresh?.value
     await store.refreshAccountUsage(for: .codex, force: true)
 
     let fetches = await recorder.accounts.count
+    #expect(store.inFlightAccountReload == nil)
     #expect(fetches == 0)
+
+    store.isSwitching = false
+    store.startQueuedAccountRediscoveryIfNeeded()
+    await store.inFlightAccountReload?.value
   }
 }
 

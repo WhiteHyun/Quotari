@@ -62,6 +62,46 @@ final class MutableAccountDiscovery: ProviderAccountDiscovering, @unchecked Send
   }
 }
 
+actor GatedAccountRediscovery: ProviderAccountDiscovering {
+  private var discovery: StaticAccountDiscovery
+  private(set) var requestCount = 0
+  private var requestStarted = false
+  private var isReleased = false
+  private var startWaiters: [CheckedContinuation<Void, Never>] = []
+  private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+  init(account: ProviderAccount) {
+    discovery = StaticAccountDiscovery(accounts: [account.provider: [account]])
+  }
+
+  func accounts(for provider: UsageProvider) async -> [ProviderAccount] {
+    let result = await discovery.accounts(for: provider)
+    requestCount += 1
+    requestStarted = true
+    startWaiters.forEach { $0.resume() }
+    startWaiters.removeAll()
+    if !isReleased {
+      await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+    return result
+  }
+
+  func update(_ discovery: StaticAccountDiscovery) {
+    self.discovery = discovery
+  }
+
+  func waitUntilRequestStarts() async {
+    guard !requestStarted else { return }
+    await withCheckedContinuation { startWaiters.append($0) }
+  }
+
+  func resume() {
+    isReleased = true
+    releaseWaiters.forEach { $0.resume() }
+    releaseWaiters.removeAll()
+  }
+}
+
 /// Cost estimator stub for tests that don't exercise cost scanning; the
 /// production default (`LocalUsageCostEstimator`) would scan real usage logs.
 struct NullCostEstimator: UsageCostEstimating {
