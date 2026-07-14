@@ -27,8 +27,12 @@ public struct ProviderAccount: Codable, Equatable, Identifiable, Sendable {
     "\(provider.rawValue):\(source.stableID)"
   }
 
-  var costCacheScopeID: String {
+  public var credentialScopeID: String {
     credentialFingerprint.map { "\(id):\($0)" } ?? id
+  }
+
+  var costCacheScopeID: String {
+    credentialScopeID
   }
 
   private static func fingerprint(_ value: String) -> String {

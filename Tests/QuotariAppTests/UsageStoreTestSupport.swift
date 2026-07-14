@@ -181,11 +181,18 @@ extension UsageStore {
     accountSwitch: AccountSwitchService? = nil,
     profileFetcher: any ClaudeProfileFetching = NullProfileFetcher(),
     profileStore: ClaudeProfileStore = .temporaryForTesting(),
+    codexCredentialLoader: @escaping @Sendable (ProviderCredentialSource) -> CodexCredentials? = { _ in nil },
     claudeCredentialLoader: @escaping @Sendable (ProviderCredentialSource) -> ClaudeCredentials? = { _ in nil },
     defaults: UserDefaults? = nil,
+    quotaNotifications: QuotaNotificationController? = nil,
     startsAutomatically: Bool = true
   ) -> UsageStore {
-    UsageStore(
+    let isolatedDefaults = defaults ?? ephemeralDefaults()
+    let isolatedNotifications = quotaNotifications ?? QuotaNotificationController(
+      center: UnavailableQuotaNotificationCenter(),
+      defaults: isolatedDefaults
+    )
+    return UsageStore(
       providers: providers,
       costEstimator: costEstimator,
       accountDiscovery: accountDiscovery,
@@ -194,8 +201,10 @@ extension UsageStore {
       accountSwitch: accountSwitch ?? .isolatedForTesting(),
       profileFetcher: profileFetcher,
       profileStore: profileStore,
+      codexCredentialLoader: codexCredentialLoader,
       claudeCredentialLoader: claudeCredentialLoader,
-      defaults: defaults ?? ephemeralDefaults(),
+      defaults: isolatedDefaults,
+      quotaNotifications: isolatedNotifications,
       startsAutomatically: startsAutomatically
     )
   }
@@ -209,6 +218,29 @@ extension UsageStore {
     }
     return defaults
   }
+}
+
+@MainActor
+private final class UnavailableQuotaNotificationCenter: QuotaNotificationCenterTransport {
+  func authorizationStatus() async -> QuotaNotificationAuthorizationStatus {
+    .denied
+  }
+
+  func requestAuthorization() async throws -> Bool {
+    false
+  }
+
+  func pendingScheduledRequestIdentifiers() async -> Set<String> {
+    []
+  }
+
+  func add(_ request: QuotaNotificationRequest) async throws {}
+
+  func removePendingRequests(withIdentifiers identifiers: [String]) {}
+
+  func removeRequests(withIdentifiers identifiers: [String]) {}
+
+  func configureForegroundPresentation() {}
 }
 
 struct EmptyCostEstimator: UsageCostEstimating {

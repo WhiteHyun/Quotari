@@ -52,6 +52,8 @@ final class UsageStore {
   let accountSwitch: AccountSwitchService
   let profileFetcher: any ClaudeProfileFetching
   let profileStore: ClaudeProfileStore
+  let quotaNotifications: QuotaNotificationController
+  let codexCredentialLoader: @Sendable (ProviderCredentialSource) -> CodexCredentials?
   let claudeCredentialLoader: @Sendable (ProviderCredentialSource) -> ClaudeCredentials?
   private let defaults: UserDefaults
   var captureErrors: [UsageProvider: String] = [:]
@@ -64,6 +66,10 @@ final class UsageStore {
   /// changes the fingerprint and triggers exactly one fresh attempt, while a
   /// persistent failure for one credential isn't retried on every reload.
   var profileFetchAttempts: [String: String] = [:]
+  /// Successful empty profile responses keyed by account id and credential
+  /// fingerprint. They distinguish a completed identity lookup from one that
+  /// is still in flight, so deferred alerts can be drained as unattributed.
+  var emptyClaudeProfileFingerprints: [String: String] = [:]
 
   private(set) var timerTask: Task<Void, Never>?
   private var refreshRequested = false
@@ -77,6 +83,8 @@ final class UsageStore {
   /// The fetch `selectAccount` starts, tracked so an account switch can await
   /// it (it may rotate/persist the live token the switch is about to back up).
   var selectionRefreshTasks: [UsageProvider: Task<Void, Never>] = [:]
+  var quotaNotificationTask: Task<Void, Never>?
+  var deferredClaudeQuotaNotification: DeferredClaudeQuotaNotification?
 
   /// Tests inject mock descriptors so results don't depend on credentials
   /// present on the machine running them.
@@ -89,10 +97,14 @@ final class UsageStore {
     accountSwitch: AccountSwitchService = AccountSwitchService(),
     profileFetcher: any ClaudeProfileFetching = ClaudeProfileFetcher(),
     profileStore: ClaudeProfileStore = ClaudeProfileStore(),
+    codexCredentialLoader: @escaping @Sendable (ProviderCredentialSource) -> CodexCredentials? = {
+      try? CodexCredentialsStore.load(source: $0)
+    },
     claudeCredentialLoader: @escaping @Sendable (ProviderCredentialSource) -> ClaudeCredentials? = {
       try? ClaudeCredentialsStore.load(source: $0)
     },
     defaults: UserDefaults = .standard,
+    quotaNotifications: QuotaNotificationController? = nil,
     startsAutomatically: Bool = true
   ) {
     assert(ProviderRegistry.isComplete, "Every UsageProvider case needs a descriptor")
@@ -104,8 +116,10 @@ final class UsageStore {
     self.accountSwitch = accountSwitch
     self.profileFetcher = profileFetcher
     self.profileStore = profileStore
+    self.codexCredentialLoader = codexCredentialLoader
     self.claudeCredentialLoader = claudeCredentialLoader
     self.defaults = defaults
+    self.quotaNotifications = quotaNotifications ?? QuotaNotificationController(defaults: defaults)
     selectedAccounts = accountSelectionStore.load()
     claudeProfiles = profileStore.load()
     // refreshInterval has no inline default: its first assignment runs the
@@ -120,8 +134,11 @@ final class UsageStore {
     // every launch — only when its credential fingerprint changes.
     profileFetchAttempts = claudeProfiles.compactMapValues(\.fingerprint)
     if startsAutomatically {
-      startTimer()
-      Task { await reloadAccounts() }
+      Task {
+        _ = await self.quotaNotifications.refreshAuthorizationStatus()
+        await reloadAccounts()
+        startTimer()
+      }
     }
   }
 
@@ -216,6 +233,11 @@ final class UsageStore {
     var alreadyCaptured: [String: ProviderAccount] = [:]
     var syncCandidates: [ProviderAccount] = []
     for descriptor in providers {
+      synchronizeQuotaNotificationScope(
+        account: selectedAccounts[descriptor.id],
+        origin: reconciledSelectionOrigins[descriptor.id],
+        provider: descriptor.id
+      )
       let previousAccounts = accounts[descriptor.id] ?? []
       var providerAccounts = await accountDiscovery.accounts(for: descriptor.id)
       if let selected = selectedAccounts[descriptor.id],
@@ -256,6 +278,11 @@ final class UsageStore {
   ) {
     let originChanged = reconciledSelectionOrigins[provider] != origin
     reconciledSelectionOrigins[provider] = origin
+    synchronizeQuotaNotificationScope(
+      account: account,
+      origin: origin,
+      provider: provider
+    )
     guard selectedAccounts[provider] != account else {
       if originChanged {
         try? accountSelectionStore.save(persistableSelections())

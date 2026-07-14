@@ -137,8 +137,17 @@ extension UsageStore {
     guard canFinishClaudeProfileAttempt(id: id, attempt: attempt, revision: revision) else { return false }
     guard liveFingerprint == attempt.credential.fingerprint else { return true }
     if profile.isEmpty {
+      // A verified profile for this exact credential may have arrived through
+      // another accepted path while this request was suspended. A late empty
+      // response is not newer identity evidence and must not clear or replay
+      // notification scope over it.
+      if claudeProfiles[id]?.fingerprint == attempt.credential.fingerprint {
+        return false
+      }
       dropStaleProfile(id: id, cachedIsForOldToken: attempt.cachedIsForOldToken)
+      emptyClaudeProfileFingerprints[id] = attempt.credential.fingerprint
     } else {
+      emptyClaudeProfileFingerprints[id] = nil
       claudeProfiles[id] = ClaudeProfile(
         accountID: profile.accountID,
         email: profile.email,
@@ -147,6 +156,7 @@ extension UsageStore {
       )
       try? profileStore.save(claudeProfiles)
     }
+    enqueueClaudeQuotaNotificationScopeRestore()
     return false
   }
 

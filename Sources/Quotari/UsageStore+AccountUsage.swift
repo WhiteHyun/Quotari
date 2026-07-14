@@ -350,7 +350,7 @@ extension UsageStore {
 
   /// Results without a confident name match stay unattributed rather than
   /// being credited to an arbitrary account.
-  private func matchedAccount(for snapshot: UsageSnapshot, provider: UsageProvider) -> ProviderAccount? {
+  func matchedAccount(for snapshot: UsageSnapshot, provider: UsageProvider) -> ProviderAccount? {
     guard let name = snapshot.account else { return nil }
     return (accounts[provider] ?? []).first { accountMatchesSnapshot($0, name: name) }
   }
