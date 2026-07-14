@@ -34,6 +34,20 @@ struct UsageStoreAccountUsageTests {
     #expect(context.selectionStore.load()[.codex] == context.work)
   }
 
+  @Test func selectedAccountIDSubscriptRoutesWritesThroughSelection() async throws {
+    let context = try Self.makeContext()
+    defer { context.directory.remove() }
+    await context.store.reloadAccounts()
+
+    context.store[selectedAccountID: .codex] = context.work.id
+    #expect(context.store[selectedAccountID: .codex] == context.work.id)
+    #expect(context.selectionStore.load()[.codex] == context.work)
+
+    context.store[selectedAccountID: .codex] = ""
+    #expect(context.store[selectedAccountID: .codex].isEmpty)
+    #expect(context.selectionStore.load()[.codex] == nil)
+  }
+
   @Test func expiredCachedUsageIsHiddenFromPicker() throws {
     let context = try Self.makeContext()
     defer { context.directory.remove() }

@@ -7,6 +7,21 @@ import Testing
 struct QuotaNotificationControllerTests {
   let now = Date(timeIntervalSince1970: 1_800_000_000)
 
+  @Test func settablePreferenceSurfacesPersist() throws {
+    let defaults = try makeDefaults("settable-preferences")
+    let center = QuotaNotificationCenterStub(status: .authorized)
+    let controller = QuotaNotificationController(center: center, defaults: defaults)
+
+    controller.warningThreshold = 75
+    controller.criticalThreshold = 90
+    controller[providerEnabled: .claude] = false
+
+    let relaunched = QuotaNotificationController(center: center, defaults: defaults)
+    #expect(relaunched.warningThreshold == 75)
+    #expect(relaunched.criticalThreshold == 90)
+    #expect(!relaunched[providerEnabled: .claude])
+  }
+
   @Test func authorizationDenialStaysDisabledAndALaterGrantCanEnable() async throws {
     let defaults = try makeDefaults("authorization")
     let center = QuotaNotificationCenterStub(status: .notDetermined)

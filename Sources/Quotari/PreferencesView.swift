@@ -253,10 +253,3 @@ struct PreferencesView: View {
     return "\(name) (\(detail))"
   }
 }
-
-private extension UsageStore {
-  subscript(providerEnabled provider: UsageProvider) -> Bool {
-    get { isProviderEnabled(provider) }
-    set { setProviderEnabled(provider, enabled: newValue) }
-  }
-}
