@@ -26,6 +26,16 @@ rm -rf dist
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
 cp "$BIN/Quotari" "$APP/Contents/MacOS/Quotari"
 
+echo "▸ embedding SwiftPM resources"
+RESOURCE_BUNDLE="$BIN/Quotari_Quotari.bundle"
+if [[ ! -d "$RESOURCE_BUNDLE" ]]; then
+  echo "Quotari_Quotari.bundle not found at $RESOURCE_BUNDLE" >&2
+  exit 1
+fi
+# Keep distributable resources inside Contents so codesign seals them. The app
+# prefers this packaged bundle and falls back to Bundle.module for source runs.
+ditto "$RESOURCE_BUNDLE" "$APP/Contents/Resources/Quotari_Quotari.bundle"
+
 echo "▸ embedding Sparkle.framework"
 SPARKLE=$(find .build -type d -name "Sparkle.framework" | grep -v dSYM | head -1)
 if [[ -z "$SPARKLE" ]]; then
@@ -66,9 +76,33 @@ PLIST
 plutil -lint "$APP/Contents/Info.plist"
 
 echo "▸ codesigning (identity: ${IDENTITY})"
-codesign --force --sign "$IDENTITY" --options runtime "$APP/Contents/Frameworks/Sparkle.framework"
-codesign --force --sign "$IDENTITY" --options runtime "$APP"
-codesign --verify --deep "$APP"
+SIGN_OPTIONS=()
+if [[ "$IDENTITY" != "-" ]]; then
+  SIGN_OPTIONS=(--options runtime)
+fi
+SPARKLE_FRAMEWORK="$APP/Contents/Frameworks/Sparkle.framework"
+SPARKLE_VERSION="$SPARKLE_FRAMEWORK/Versions/B"
+# Sparkle's manual-distribution guidance requires bottom-up signing. In
+# particular, preserve the Downloader service's entitlement metadata.
+codesign --force --sign "$IDENTITY" "${SIGN_OPTIONS[@]}" \
+  "$SPARKLE_VERSION/XPCServices/Installer.xpc"
+codesign --force --sign "$IDENTITY" "${SIGN_OPTIONS[@]}" --preserve-metadata=entitlements \
+  "$SPARKLE_VERSION/XPCServices/Downloader.xpc"
+codesign --force --sign "$IDENTITY" "${SIGN_OPTIONS[@]}" "$SPARKLE_VERSION/Autoupdate"
+codesign --force --sign "$IDENTITY" "${SIGN_OPTIONS[@]}" "$SPARKLE_VERSION/Updater.app"
+codesign --force --sign "$IDENTITY" "${SIGN_OPTIONS[@]}" "$SPARKLE_FRAMEWORK"
+codesign --force --sign "$IDENTITY" "${SIGN_OPTIONS[@]}" "$APP"
+codesign --verify --deep --strict "$APP"
+
+echo "▸ verifying isolated packaged resources"
+VERIFY_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/quotari-package.XXXXXX")
+trap 'rm -rf "$VERIFY_ROOT"' EXIT
+VERIFY_APP="$VERIFY_ROOT/Quotari.app"
+ditto "$APP" "$VERIFY_APP"
+codesign --verify --deep --strict "$VERIFY_APP"
+"$VERIFY_APP/Contents/MacOS/Quotari" --verify-packaged-resources
+rm -rf "$VERIFY_ROOT"
+trap - EXIT
 
 echo "▸ zipping"
 ditto -c -k --keepParent "$APP" "dist/Quotari-${VERSION}.zip"
