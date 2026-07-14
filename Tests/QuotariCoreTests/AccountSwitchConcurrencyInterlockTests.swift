@@ -4,37 +4,53 @@ import Testing
 
 struct CLIActivityDetectorTests {
   @Test func matchesProviderExecutablesAndInterpreterScripts() throws {
-    let detector = CLIActivityDetector(processList: {
-      """
-        10 /opt/homebrew/bin/codex
-        11 /Applications/CodexBar.app/Contents/MacOS/CodexBar
-        12 /Users/test/.local/bin/claude
-        13 /Applications/Codex (Service).app/Contents/MacOS/Codex (Service)
-        14 /opt/homebrew/bin/node /Users/test/.npm/bin/codex --quiet
-        15 /bin/bash /Users/test/.local/bin/claude --continue
-        16 /opt/homebrew/bin/node /Users/test/tool.js codex
-        17 /usr/bin/rg claude
-        18 /Applications/Codex.app/Contents/MacOS/Codex
-        19 /Applications/claude.app/Contents/MacOS/claude
-        20 /Users/test/bin/Codex
-        21 /opt/homebrew/bin/node /Applications/codex.app/Contents/Resources/codex
-        22 /opt/homebrew/bin/codex "(retry the last prompt)"
-        23 /Users/test/.local/bin/claude '(continue the session)'
-      """
+    let detector = CLIActivityDetector(processes: {
+      [
+        (10, ["/opt/homebrew/bin/codex"]),
+        (11, ["/Applications/CodexBar.app/Contents/MacOS/CodexBar"]),
+        (12, ["/Users/test/.local/bin/claude"]),
+        (13, ["/Applications/Codex (Service).app/Contents/MacOS/Codex (Service)"]),
+        (14, ["/opt/homebrew/bin/node", "/Users/test/.npm/bin/codex", "--quiet"]),
+        (15, ["/bin/bash", "/Users/test/.local/bin/claude", "--continue"]),
+        (16, ["/opt/homebrew/bin/node", "/Users/test/tool.js", "codex"]),
+        (17, ["/usr/bin/rg", "claude"]),
+        (18, ["/Applications/Codex.app/Contents/MacOS/Codex"]),
+        (19, ["/Applications/claude.app/Contents/MacOS/claude"]),
+        (20, ["/Users/test/bin/Codex"]),
+        (21, ["/opt/homebrew/bin/node", "/Applications/codex.app/Contents/Resources/codex"]),
+        (22, ["/opt/homebrew/bin/codex", "(retry the last prompt)"]),
+        (23, ["/Users/test/.local/bin/claude", "(continue the session)"]),
+        (24, ["/opt/homebrew/bin/node", "/Users/Jane Doe/.npm/bin/codex", "--quiet"]),
+        (25, ["/bin/bash", "/Users/Jane Doe/.local/bin/claude", "--continue"]),
+      ]
     })
 
     #expect(
       try detector.activeProcesses(for: .codex) ==
-        ["codex (PID 10)", "codex (PID 14)", "codex (PID 22)"]
+        ["codex (PID 10)", "codex (PID 14)", "codex (PID 22)", "codex (PID 24)"]
     )
     #expect(
       try detector.activeProcesses(for: .claude) ==
-        ["claude (PID 12)", "claude (PID 15)", "claude (PID 23)"]
+        ["claude (PID 12)", "claude (PID 15)", "claude (PID 23)", "claude (PID 25)"]
     )
   }
 
   @Test func processListingIsLimitedToTheCurrentUser() {
-    #expect(CLIActivityDetector.processArguments == ["-ww", "-x", "-o", "pid=,args="])
+    #expect(CLIActivityDetector.processArguments == ["-x", "-o", "pid="])
+  }
+
+  @Test func decodesKernelArgumentsWithoutLosingWhitespaceBoundaries() throws {
+    let arguments = ["/opt/homebrew/bin/node", "/Users/Jane Doe/.npm/bin/codex", "--quiet"]
+    var count = Int32(arguments.count)
+    var bytes = withUnsafeBytes(of: &count) { Array($0) }
+    bytes.append(contentsOf: "/opt/homebrew/bin/node".utf8)
+    bytes.append(contentsOf: [0, 0])
+    for argument in arguments {
+      bytes.append(contentsOf: argument.utf8)
+      bytes.append(0)
+    }
+
+    #expect(try CLIActivityDetector.decodeProcessArguments(bytes) == arguments)
   }
 }
 

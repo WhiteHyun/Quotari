@@ -1,30 +1,34 @@
+import Darwin
 import Foundation
 
 public struct CLIActivityDetector: Sendable {
-  static let processArguments = ["-ww", "-x", "-o", "pid=,args="]
+  static let processArguments = ["-x", "-o", "pid="]
 
   enum DetectionError: LocalizedError {
     case commandFailed(status: Int32)
+    case argumentReadFailed(pid: Int32, code: Int32)
     case malformedOutput
 
     var errorDescription: String? {
       switch self {
       case let .commandFailed(status):
         "Inspecting running CLI processes failed (ps exited \(status))."
+      case let .argumentReadFailed(pid, code):
+        "Inspecting CLI process \(pid) failed (errno \(code))."
       case .malformedOutput:
         "The running process list could not be decoded."
       }
     }
   }
 
-  private let processList: @Sendable () throws -> String
+  private let processes: @Sendable () throws -> [(pid: Int32, arguments: [String])]
 
   public init() {
-    processList = Self.loadProcessList
+    processes = Self.loadProcesses
   }
 
-  init(processList: @escaping @Sendable () throws -> String) {
-    self.processList = processList
+  init(processes: @escaping @Sendable () throws -> [(pid: Int32, arguments: [String])]) {
+    self.processes = processes
   }
 
   /// Returns exact executable or interpreter-script name matches. Inspecting
@@ -35,24 +39,13 @@ public struct CLIActivityDetector: Sendable {
     case .claude: "claude"
     case .codex: "codex"
     }
-    return try processList()
-      .split(separator: "\n")
-      .compactMap { line -> (pid: Int, command: String)? in
-        let fields = line.split(
-          maxSplits: 1,
-          whereSeparator: { $0 == " " || $0 == "\t" }
-        )
-        guard fields.count == 2, let pid = Int(fields[0]) else { return nil }
-        return (pid, String(fields[1]).trimmingCharacters(in: .whitespaces))
-      }
-      .filter { Self.matches(command: $0.command, expectedName: expectedName) }
+    return try processes()
+      .filter { Self.matches(arguments: $0.arguments, expectedName: expectedName) }
       .map { "\(expectedName) (PID \($0.pid))" }
   }
 
-  private static func matches(command: String, expectedName: String) -> Bool {
-    var arguments = command
-      .split(whereSeparator: { $0 == " " || $0 == "\t" })
-      .map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: "\"'")) }
+  private static func matches(arguments originalArguments: [String], expectedName: String) -> Bool {
+    var arguments = originalArguments
     guard let executable = arguments.first else { return false }
     let executableName = URL(fileURLWithPath: executable).lastPathComponent
     if executableName == expectedName {
@@ -73,7 +66,7 @@ public struct CLIActivityDetector: Sendable {
     path.range(of: ".app/Contents/", options: .caseInsensitive) != nil
   }
 
-  private static func loadProcessList() throws -> String {
+  private static func loadProcesses() throws -> [(pid: Int32, arguments: [String])] {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/ps")
     process.arguments = processArguments
@@ -89,6 +82,71 @@ public struct CLIActivityDetector: Sendable {
     guard let text = String(data: output, encoding: .utf8) else {
       throw DetectionError.malformedOutput
     }
-    return text
+    let pids = try text.split(separator: "\n").map { line -> Int32 in
+      guard let pid = Int32(line.trimmingCharacters(in: .whitespaces)) else {
+        throw DetectionError.malformedOutput
+      }
+      return pid
+    }
+    return try pids.compactMap { pid in
+      guard let arguments = try loadProcessArguments(pid: pid) else { return nil }
+      return (pid, arguments)
+    }
+  }
+
+  private static func loadProcessArguments(pid: Int32) throws -> [String]? {
+    var mib = [CTL_KERN, KERN_PROCARGS2, pid]
+    var size = 0
+    guard sysctl(&mib, u_int(mib.count), nil, &size, nil, 0) == 0 else {
+      if errno == ESRCH || errno == EINVAL {
+        return nil
+      }
+      throw DetectionError.argumentReadFailed(pid: pid, code: errno)
+    }
+    var bytes = [UInt8](repeating: 0, count: size)
+    let status = bytes.withUnsafeMutableBytes { buffer in
+      sysctl(&mib, u_int(mib.count), buffer.baseAddress, &size, nil, 0)
+    }
+    guard status == 0 else {
+      if errno == ESRCH || errno == EINVAL {
+        return nil
+      }
+      throw DetectionError.argumentReadFailed(pid: pid, code: errno)
+    }
+    return try decodeProcessArguments(Array(bytes.prefix(size)))
+  }
+
+  static func decodeProcessArguments(_ bytes: [UInt8]) throws -> [String] {
+    guard bytes.count >= MemoryLayout<Int32>.size else {
+      throw DetectionError.malformedOutput
+    }
+    var argumentCount: Int32 = 0
+    withUnsafeMutableBytes(of: &argumentCount) { destination in
+      destination.copyBytes(from: bytes.prefix(MemoryLayout<Int32>.size))
+    }
+    guard argumentCount >= 0 else { throw DetectionError.malformedOutput }
+    var index = MemoryLayout<Int32>.size
+    while index < bytes.count, bytes[index] != 0 {
+      index += 1
+    }
+    guard index < bytes.count else { throw DetectionError.malformedOutput }
+    while index < bytes.count, bytes[index] == 0 {
+      index += 1
+    }
+
+    var arguments: [String] = []
+    for _ in 0 ..< Int(argumentCount) {
+      let start = index
+      while index < bytes.count, bytes[index] != 0 {
+        index += 1
+      }
+      guard index < bytes.count else { throw DetectionError.malformedOutput }
+      guard let argument = String(bytes: bytes[start ..< index], encoding: .utf8) else {
+        throw DetectionError.malformedOutput
+      }
+      arguments.append(argument)
+      index += 1
+    }
+    return arguments
   }
 }
