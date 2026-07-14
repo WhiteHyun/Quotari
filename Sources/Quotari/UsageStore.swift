@@ -229,7 +229,7 @@ final class UsageStore {
     accountRevisions[provider, default: 0] &+= 1
     try? accountSelectionStore.save(persistableSelections())
     applyCachedAccountUsage(cachedUsage, account: account, provider: provider)
-    costTasks[provider]?.task.cancel()
+    cancelCostRefresh(for: provider)
     lastCostScans[provider] = nil
     lastEmptyCostScans[provider] = nil
     latestReportedCostFallbacks[provider] = nil

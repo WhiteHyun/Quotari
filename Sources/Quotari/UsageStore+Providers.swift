@@ -48,7 +48,7 @@ extension UsageStore {
     // The estimator internally uses detached work, so cancellation alone does
     // not mean the scan has stopped. Keep the handle until it drains; a rapid
     // re-enable waits for it before starting the replacement generation.
-    costTasks[provider]?.task.cancel()
+    cancelCostRefresh(for: provider)
     lastCostScans[provider] = nil
     lastEmptyCostScans[provider] = nil
     latestReportedCostFallbacks[provider] = nil

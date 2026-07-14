@@ -118,7 +118,7 @@ extension UsageStore {
     } else {
       lastEmptyCostScans[provider] = nil
       latestReportedCostFallbacks[provider] = nil
-      costTasks[provider]?.task.cancel()
+      cancelCostRefresh(for: provider)
     }
   }
 
@@ -130,15 +130,21 @@ extension UsageStore {
     cacheHit: Bool
   ) {
     latestReportedCostFallbacks[provider] = ReportedCostFallback(cost: reportedCostFallback)
-    guard costTasks[provider] == nil else { return }
-    if let lastEmptyCostScan = lastEmptyCostScans[provider],
-       now.timeIntervalSince(lastEmptyCostScan) < Self.localCostScanThrottle {
-      return
-    }
-    if cacheHit,
-       let lastCostScan = lastCostScans[provider],
-       now.timeIntervalSince(lastCostScan) < Self.localCostScanThrottle {
-      return
+    let previousTask: Task<Void, Never>?
+    if let existingTask = costTasks[provider] {
+      guard existingTask.cancellationRequested else { return }
+      previousTask = existingTask.task
+    } else {
+      if let lastEmptyCostScan = lastEmptyCostScans[provider],
+         now.timeIntervalSince(lastEmptyCostScan) < Self.localCostScanThrottle {
+        return
+      }
+      if cacheHit,
+         let lastCostScan = lastCostScans[provider],
+         now.timeIntervalSince(lastCostScan) < Self.localCostScanThrottle {
+        return
+      }
+      previousTask = nil
     }
     lastCostScans[provider] = now
     let revision = accountRevisions[provider] ?? 0
@@ -151,12 +157,17 @@ extension UsageStore {
       generation: generation
     )
     let task = Task { [weak self] in
-      let cost = await costEstimator.costSummary(
-        provider: provider,
-        account: account,
-        now: now,
-        historyDays: 30
-      )
+      await previousTask?.value
+      let cost: CostSummary? = if Task.isCancelled {
+        nil
+      } else {
+        await costEstimator.costSummary(
+          provider: provider,
+          account: account,
+          now: now,
+          historyDays: 30
+        )
+      }
       let wasCancelled = Task.isCancelled
       await MainActor.run {
         self?.finishCostRefresh(
@@ -167,6 +178,13 @@ extension UsageStore {
       }
     }
     costTasks[provider] = CostRefreshTask(generation: generation, task: task)
+  }
+
+  func cancelCostRefresh(for provider: UsageProvider) {
+    guard var costTask = costTasks[provider] else { return }
+    costTask.task.cancel()
+    costTask.cancellationRequested = true
+    costTasks[provider] = costTask
   }
 
   private func finishCostRefresh(
@@ -247,4 +265,5 @@ extension UsageStore {
 struct CostRefreshTask {
   let generation: UUID
   let task: Task<Void, Never>
+  var cancellationRequested = false
 }
