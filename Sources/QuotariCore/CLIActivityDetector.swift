@@ -25,10 +25,9 @@ public struct CLIActivityDetector: Sendable {
     self.processList = processList
   }
 
-  /// Returns exact executable-name matches only. This intentionally avoids
-  /// substring matching (`CodexBar`, paths containing "claude", and similar
-  /// false positives), while still finding script-launched Claude processes
-  /// because macOS reports their process name as `claude`.
+  /// Returns exact executable or interpreter-script name matches. Inspecting
+  /// the command arguments is required for npm/shebang installations, whose
+  /// executable image is an interpreter such as `node` or `bash`.
   public func activeProcesses(for provider: UsageProvider) throws -> [String] {
     let expectedName = switch provider {
     case .claude: "claude"
@@ -36,7 +35,7 @@ public struct CLIActivityDetector: Sendable {
     }
     return try processList()
       .split(separator: "\n")
-      .compactMap { line -> (pid: Int, executable: String)? in
+      .compactMap { line -> (pid: Int, command: String)? in
         let fields = line.split(
           maxSplits: 1,
           whereSeparator: { $0 == " " || $0 == "\t" }
@@ -44,14 +43,35 @@ public struct CLIActivityDetector: Sendable {
         guard fields.count == 2, let pid = Int(fields[0]) else { return nil }
         return (pid, String(fields[1]).trimmingCharacters(in: .whitespaces))
       }
-      .filter { URL(fileURLWithPath: $0.executable).lastPathComponent.lowercased() == expectedName }
+      .filter { Self.matches(command: $0.command, expectedName: expectedName) }
       .map { "\(expectedName) (PID \($0.pid))" }
+  }
+
+  private static func matches(command: String, expectedName: String) -> Bool {
+    var arguments = command
+      .split(whereSeparator: { $0 == " " || $0 == "\t" })
+      .map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: "\"'")) }
+    guard let executable = arguments.first else { return false }
+    let executableName = URL(fileURLWithPath: executable).lastPathComponent.lowercased()
+    if executableName == expectedName {
+      // Unquoted app helper paths such as `Codex (Service)` are split by `ps`
+      // at the space and must not be mistaken for the standalone CLI.
+      return arguments.dropFirst().first?.hasPrefix("(") != true
+    }
+    let interpreters = ["bash", "dash", "fish", "node", "nodejs", "python", "python3", "ruby", "sh", "zsh"]
+    guard interpreters.contains(executableName) else { return false }
+    arguments.removeFirst()
+    while arguments.first?.hasPrefix("-") == true {
+      arguments.removeFirst()
+    }
+    guard let script = arguments.first else { return false }
+    return URL(fileURLWithPath: script).lastPathComponent.lowercased() == expectedName
   }
 
   private static func loadProcessList() throws -> String {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/ps")
-    process.arguments = ["-ww", "-axo", "pid=,comm="]
+    process.arguments = ["-ww", "-axo", "pid=,args="]
     let stdout = Pipe()
     process.standardOutput = stdout
     process.standardError = Pipe()

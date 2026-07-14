@@ -3,18 +3,22 @@ import Foundation
 import Testing
 
 struct CLIActivityDetectorTests {
-  @Test func matchesOnlyTheProviderExecutableName() throws {
+  @Test func matchesProviderExecutablesAndInterpreterScripts() throws {
     let detector = CLIActivityDetector(processList: {
       """
         10 /opt/homebrew/bin/codex
         11 /Applications/CodexBar.app/Contents/MacOS/CodexBar
         12 /Users/test/.local/bin/claude
         13 /Applications/Codex (Service).app/Contents/MacOS/Codex (Service)
+        14 /opt/homebrew/bin/node /Users/test/.npm/bin/codex --quiet
+        15 /bin/bash /Users/test/.local/bin/claude --continue
+        16 /opt/homebrew/bin/node /Users/test/tool.js codex
+        17 /usr/bin/rg claude
       """
     })
 
-    #expect(try detector.activeProcesses(for: .codex) == ["codex (PID 10)"])
-    #expect(try detector.activeProcesses(for: .claude) == ["claude (PID 12)"])
+    #expect(try detector.activeProcesses(for: .codex) == ["codex (PID 10)", "codex (PID 14)"])
+    #expect(try detector.activeProcesses(for: .claude) == ["claude (PID 12)", "claude (PID 15)"])
   }
 }
 
