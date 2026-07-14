@@ -277,7 +277,7 @@ public actor ClaudeTokenRefreshCoordinator {
     if let task = inFlight[key] {
       return await task.value
     }
-    let task = Task { Self.validated(await operation()) }
+    let task = Task { await Self.validated(operation()) }
     inFlight[key] = task
     defer { inFlight[key] = nil }
     let resolution = await task.value
