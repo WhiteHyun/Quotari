@@ -132,6 +132,11 @@ public struct ClaudePendingGrant: Codable, Equatable, Sendable {
     grant.refreshToken.map { $0 != consumedRefreshToken } ?? false
   }
 
+  func matchesInstalledGeneration(accessToken: String, refreshToken: String?) -> Bool {
+    accessToken == grant.accessToken
+      && refreshToken == (grant.refreshToken ?? consumedRefreshToken)
+  }
+
   /// Whether this grant supersedes the generation currently stored in a
   /// credential source. Refresh-token lineage is usable only when the final
   /// grant actually rotates away from that exact token.
@@ -272,7 +277,7 @@ public actor ClaudeTokenRefreshCoordinator {
     if let task = inFlight[key] {
       return await task.value
     }
-    let task = Task { await operation() }
+    let task = Task { Self.validated(await operation()) }
     inFlight[key] = task
     defer { inFlight[key] = nil }
     let resolution = await task.value
@@ -292,6 +297,18 @@ public actor ClaudeTokenRefreshCoordinator {
       acceptedBySource[sourceID] = Array(recent.suffix(4))
     }
     return resolution
+  }
+
+  private static func validated(_ resolution: ClaudeRefreshResolution) -> ClaudeRefreshResolution {
+    guard let accepted = resolution.acceptedGrant,
+          !accepted.matchesInstalledGeneration(
+            accessToken: resolution.resolved.credentials.accessToken,
+            refreshToken: resolution.resolved.credentials.refreshToken
+          )
+    else { return resolution }
+    var sanitized = resolution
+    sanitized.acceptedGrant = nil
+    return sanitized
   }
 
   /// Returns proof retained from a completed transaction. This covers a

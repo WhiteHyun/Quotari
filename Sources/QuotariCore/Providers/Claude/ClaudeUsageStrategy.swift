@@ -314,7 +314,10 @@ private extension ClaudeUsageStrategy {
       return .resolved(ClaudeRefreshResolution(resolved: inMemory(fallback, pending.grant)))
     }
     let stored = ResolvedClaudeCredentials(credentials: current, source: fallback.source)
-    if current.accessToken == pending.grant.accessToken {
+    if pending.matchesInstalledGeneration(
+      accessToken: current.accessToken,
+      refreshToken: current.refreshToken
+    ) {
       removeDurableGrantIfMatching(pending, source: fallback.source)
       return .resolved(ClaudeRefreshResolution(
         resolved: stored,

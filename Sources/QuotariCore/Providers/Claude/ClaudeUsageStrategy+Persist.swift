@@ -15,7 +15,10 @@ extension ClaudeUsageStrategy {
       guard let installed = try? ClaudeCredentialsStore.load(
         source: stored.source,
         capturedAccounts: capturedAccounts
-      ), installed.accessToken == pending.grant.accessToken else {
+      ), pending.matchesInstalledGeneration(
+        accessToken: installed.accessToken,
+        refreshToken: installed.refreshToken
+      ) else {
         // `persisted` also returns the in-memory grant after a transient write
         // failure. Keep the original durable owner until the source proves it
         // accepted the rebased grant.

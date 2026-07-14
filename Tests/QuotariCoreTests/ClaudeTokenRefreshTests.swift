@@ -206,6 +206,35 @@ struct ClaudeTokenRefreshCoordinatorTests {
     )
   }
 
+  @Test func mismatchedAcceptedResolutionIsNotCached() async {
+    let coordinator = ClaudeTokenRefreshCoordinator()
+    let source = ProviderCredentialSource.claudeKeychain(service: "test")
+    let pending = ClaudePendingGrant(
+      grant: ClaudeTokenGrant(accessToken: "token-b", refreshToken: "ref-b"),
+      previousAccessToken: "token-a",
+      consumedRefreshToken: "ref-a"
+    )
+
+    let resolution = await coordinator.resolve(key: "mismatched") {
+      ClaudeRefreshResolution(
+        resolved: ResolvedClaudeCredentials(
+          credentials: ClaudeCredentials(accessToken: "token-b", refreshToken: "other-ref"),
+          source: source
+        ),
+        acceptedGrant: pending
+      )
+    }
+
+    #expect(resolution.acceptedGrant == nil)
+    #expect(
+      await coordinator.acceptedGrant(
+        sourceID: source.stableID,
+        accessToken: "token-b",
+        refreshToken: "other-ref"
+      ) == nil
+    )
+  }
+
   private actor CallCounter {
     private(set) var count = 0
     func increment() {

@@ -112,8 +112,10 @@ extension ClaudeCredentialsWriter {
     guard let payload = keychainRead(keychainService),
           let credentials = try? ClaudeCredentialsStore.parse(payload)
     else { return .unavailable }
-    return credentials.accessToken == pending.grant.accessToken
-      && credentials.refreshToken == pending.grant.refreshToken ? .owns : .changed
+    return pending.matchesInstalledGeneration(
+      accessToken: credentials.accessToken,
+      refreshToken: credentials.refreshToken
+    ) ? .owns : .changed
   }
 
   func removeResolvedMirrorJournals(_ recovery: MirrorRecovery) -> Bool {
@@ -154,7 +156,10 @@ extension ClaudeCredentialsWriter {
     guard let pending else { return false }
     guard let credentials = try? ClaudeCredentialsStore.parse(payload) else { return true }
     if credentials.accessToken == pending.grant.accessToken {
-      return pending.grant.refreshToken.map { credentials.refreshToken != $0 } ?? false
+      return !pending.matchesInstalledGeneration(
+        accessToken: credentials.accessToken,
+        refreshToken: credentials.refreshToken
+      )
     }
     return pending.supersedes(
       accessToken: credentials.accessToken,
