@@ -93,7 +93,9 @@ extension ClaudeCredentialsWriter {
       let removed = try capturedAccounts.removePendingGrant(id: journal.id) { data in
         try JSONDecoder().decode(ClaudePendingGrant.self, from: data) == journal.pending
       }
-      if removed { return true }
+      if removed {
+        return true
+      }
       return try loadRecoveryJournal(id: journal.id) != journal.pending
     } catch {
       Self.logger.error(

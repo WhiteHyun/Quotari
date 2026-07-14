@@ -385,5 +385,4 @@ extension ClaudeCredentialsWriter {
       )
     }
   }
-
 }
