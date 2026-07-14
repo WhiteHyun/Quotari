@@ -1,6 +1,8 @@
 import Foundation
 
 public struct CLIActivityDetector: Sendable {
+  static let processArguments = ["-ww", "-x", "-o", "pid=,args="]
+
   enum DetectionError: LocalizedError {
     case commandFailed(status: Int32)
     case malformedOutput
@@ -52,26 +54,31 @@ public struct CLIActivityDetector: Sendable {
       .split(whereSeparator: { $0 == " " || $0 == "\t" })
       .map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: "\"'")) }
     guard let executable = arguments.first else { return false }
-    let executableName = URL(fileURLWithPath: executable).lastPathComponent.lowercased()
-    if executableName == expectedName {
+    let executableName = URL(fileURLWithPath: executable).lastPathComponent
+    if executableName == expectedName, !isAppBundlePath(executable) {
       // Unquoted app helper paths such as `Codex (Service)` are split by `ps`
       // at the space and must not be mistaken for the standalone CLI.
       return arguments.dropFirst().first?.hasPrefix("(") != true
     }
     let interpreters = ["bash", "dash", "fish", "node", "nodejs", "python", "python3", "ruby", "sh", "zsh"]
-    guard interpreters.contains(executableName) else { return false }
+    guard interpreters.contains(executableName.lowercased()) else { return false }
     arguments.removeFirst()
     while arguments.first?.hasPrefix("-") == true {
       arguments.removeFirst()
     }
     guard let script = arguments.first else { return false }
-    return URL(fileURLWithPath: script).lastPathComponent.lowercased() == expectedName
+    return !isAppBundlePath(script)
+      && URL(fileURLWithPath: script).lastPathComponent == expectedName
+  }
+
+  private static func isAppBundlePath(_ path: String) -> Bool {
+    path.range(of: ".app/Contents/", options: .caseInsensitive) != nil
   }
 
   private static func loadProcessList() throws -> String {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/ps")
-    process.arguments = ["-ww", "-axo", "pid=,args="]
+    process.arguments = processArguments
     let stdout = Pipe()
     process.standardOutput = stdout
     process.standardError = Pipe()

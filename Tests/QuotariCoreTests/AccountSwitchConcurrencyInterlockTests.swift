@@ -14,11 +14,19 @@ struct CLIActivityDetectorTests {
         15 /bin/bash /Users/test/.local/bin/claude --continue
         16 /opt/homebrew/bin/node /Users/test/tool.js codex
         17 /usr/bin/rg claude
+        18 /Applications/Codex.app/Contents/MacOS/Codex
+        19 /Applications/claude.app/Contents/MacOS/claude
+        20 /Users/test/bin/Codex
+        21 /opt/homebrew/bin/node /Applications/codex.app/Contents/Resources/codex
       """
     })
 
     #expect(try detector.activeProcesses(for: .codex) == ["codex (PID 10)", "codex (PID 14)"])
     #expect(try detector.activeProcesses(for: .claude) == ["claude (PID 12)", "claude (PID 15)"])
+  }
+
+  @Test func processListingIsLimitedToTheCurrentUser() {
+    #expect(CLIActivityDetector.processArguments == ["-ww", "-x", "-o", "pid=,args="])
   }
 }
 
