@@ -194,6 +194,41 @@ struct AccountSwitchConcurrencyReviewTests {
     }
     #expect(try ClaudeCredentialsStore.parse(#require(keychain.value)).accessToken == "key")
   }
+
+  @Test func claudeFinalFileReplacementRollsBackTheInstalledKeychain() throws {
+    let registry = makeSwitchRegistry()
+    let saved = try savedClaudeAccount(registry: registry)
+    let home = try switchTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let fileURL = home.appendingPathComponent(".claude/.credentials.json")
+    try writeReviewCredential(reviewClaudePayload(access: "file", refresh: "file-ref"), to: fileURL)
+    let rotatedFile = reviewClaudePayload(access: "file-new", refresh: "file-new-ref")
+    let keychain = FinalClaudeFileRotator(
+      reviewClaudePayload(access: "key", refresh: "key-ref"),
+      fileURL: fileURL,
+      replacement: rotatedFile
+    )
+    let service = AccountSwitchService(
+      capturedAccounts: registry,
+      capture: AccountCaptureService(
+        capturedAccounts: registry,
+        claudeKeychainRead: { service in try? keychain.read(service) }
+      ),
+      environment: [:],
+      home: home,
+      keychainRead: keychain.read,
+      keychainWrite: keychain.write
+    )
+
+    let thrown = captureReviewSwitchError(service, accountID: saved.id)
+
+    guard case .concurrentCredentialChange = thrown else {
+      Issue.record("expected .concurrentCredentialChange, got \(String(describing: thrown))")
+      return
+    }
+    #expect(try ClaudeCredentialsStore.parse(#require(keychain.value)).accessToken == "key")
+    #expect(try Data(contentsOf: fileURL) == rotatedFile)
+  }
 }
 
 private func captureReviewSwitchError(
@@ -266,6 +301,44 @@ private final class FailingClaudeKeychainSlot: @unchecked Sendable {
 
   var value: Data? {
     lock.withLock { storage }
+  }
+}
+
+private final class FinalClaudeFileRotator: @unchecked Sendable {
+  private let lock = NSLock()
+  private let fileURL: URL
+  private let replacement: Data
+  private var storage: Data?
+  private var readsAfterWrite = 0
+  private var didWrite = false
+
+  var value: Data? {
+    lock.withLock { storage }
+  }
+
+  init(_ value: Data?, fileURL: URL, replacement: Data) {
+    storage = value
+    self.fileURL = fileURL
+    self.replacement = replacement
+  }
+
+  func read(_: String) throws -> Data? {
+    try lock.withLock {
+      if didWrite {
+        readsAfterWrite += 1
+        if readsAfterWrite == 3 {
+          try writeReviewCredential(replacement, to: fileURL)
+        }
+      }
+      return storage
+    }
+  }
+
+  func write(_ data: Data, _: String) {
+    lock.withLock {
+      storage = data
+      didWrite = true
+    }
   }
 }
 

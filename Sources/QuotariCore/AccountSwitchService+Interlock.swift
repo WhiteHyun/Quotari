@@ -43,12 +43,7 @@ extension AccountSwitchService {
     if let preparedFile {
       try commitClaudeFile(preparedFile, installation: installation)
     }
-    try verifyAppliedClaudeSlots(
-      service: installation.service,
-      fileURL: installation.fileURL,
-      expectedKeychain: installation.replacement.keychain,
-      expectedFile: installation.replacement.file
-    )
+    try verifyAppliedClaudeSlots(installation)
   }
 
   private func commitClaudeFile(
@@ -201,27 +196,37 @@ extension AccountSwitchService {
     }
   }
 
-  private func verifyAppliedClaudeSlots(
-    service: String,
-    fileURL: URL,
-    expectedKeychain: Data?,
-    expectedFile: Data?
-  ) throws {
+  private func verifyAppliedClaudeSlots(_ installation: ClaudeCredentialInstallation) throws {
     if try readClaudeKeychainAfterMutation(
-      service,
+      installation.service,
       context: "Claude's final keychain state couldn't be verified."
-    ) != expectedKeychain {
+    ) != installation.replacement.keychain {
       throw AccountSwitchError.partialSwitch(
         underlying: "Claude's keychain changed after the switch; the newer value was left untouched."
       )
     }
-    if try readClaudeFileAfterMutation(
-      fileURL,
-      context: "Claude's final credentials-file state couldn't be verified."
-    ) != expectedFile {
-      throw AccountSwitchError.partialSwitch(
-        underlying: "Claude's credentials file changed after the switch; the newer value was left untouched."
+    let observedFile: Data?
+    do {
+      observedFile = try readFile(installation.fileURL)
+    } catch {
+      let readError = error
+      try restoreClaudeKeychainIfNeeded(
+        installation.previous.keychain,
+        replacing: installation.replacement.keychain,
+        service: installation.service
       )
+      throw AccountSwitchError.writeFailed(
+        underlying: "Claude's final credentials-file state couldn't be verified; "
+          + "the keychain update was rolled back: \(readError.localizedDescription)"
+      )
+    }
+    guard observedFile == installation.replacement.file else {
+      try restoreClaudeKeychainIfNeeded(
+        installation.previous.keychain,
+        replacing: installation.replacement.keychain,
+        service: installation.service
+      )
+      throw AccountSwitchError.concurrentCredentialChange
     }
   }
 
@@ -231,17 +236,6 @@ extension AccountSwitchService {
   ) throws -> Data? {
     do {
       return try readKeychain(service)
-    } catch {
-      throw AccountSwitchError.partialSwitch(underlying: "\(context) \(error.localizedDescription)")
-    }
-  }
-
-  private func readClaudeFileAfterMutation(
-    _ url: URL,
-    context: String
-  ) throws -> Data? {
-    do {
-      return try readFile(url)
     } catch {
       throw AccountSwitchError.partialSwitch(underlying: "\(context) \(error.localizedDescription)")
     }

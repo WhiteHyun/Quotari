@@ -35,8 +35,9 @@ public struct KnownLiveClaudeTarget: Equatable, Sendable {
 /// Production callers pair repeated generation reads with an active-process
 /// check. The CLI remains a separate process and these stores do not offer an
 /// interprocess CAS, so users must still stop active sessions. Post-write
-/// verification reports a partial switch and preserves any newer generation
-/// it can observe instead of rolling it back or deleting it.
+/// verification preserves any newer generation it observes. If only Claude's
+/// lower-precedence file changes, Quotari rolls back its matching keychain
+/// write so a retry can back up both physical stores safely.
 public struct AccountSwitchService: Sendable {
   let capturedAccounts: CapturedAccountStore
   let capture: AccountCaptureService
