@@ -42,7 +42,7 @@ extension ClaudeCredentialsWriter {
     }
     guard commitMirrorWhileCanonicalUnchanged(
       recovery.preparation,
-      pending: canonical.pending,
+      pending: recovery.journal?.pending ?? canonical.pending,
       canonicalPayload: canonicalPayload,
       keychainService: keychainService
     ) else {

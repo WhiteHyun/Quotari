@@ -43,6 +43,49 @@ extension ClaudeMirrorRelaunchRepairTests {
     #expect(try fixture.pending(id: fixture.filePendingID) != nil)
   }
 
+  @Test func changedMirrorUsesReconciledRecoveryLineage() throws {
+    let fixture = try MirrorRepairFixture()
+    defer { fixture.remove() }
+    let fileA = fixture.payload(access: "a-token", refresh: "a-refresh")
+    let fileB = fixture.payload(access: "b-token", refresh: "b-refresh")
+    let keychainC = fixture.payload(access: "new-tok", refresh: "new-ref")
+    try fileB.write(to: fixture.fileURL)
+    fixture.slot.value = keychainC
+    let canonical = ClaudePendingGrant(
+      grant: fixture.grant,
+      previousAccessToken: "b-token",
+      consumedRefreshToken: "b-refresh"
+    )
+    let mirrored = ClaudePendingGrant(
+      grant: fixture.grant,
+      previousAccessToken: "b-token",
+      consumedRefreshToken: "b-refresh",
+      priorAccessTokens: ["a-token"],
+      priorConsumedRefreshTokens: ["a-refresh"]
+    )
+    #expect(try fixture.store.saveLivePendingGrantIfAbsent(
+      JSONEncoder().encode(canonical),
+      id: fixture.keychainPendingID
+    ))
+    #expect(try fixture.store.saveLivePendingGrantIfAbsent(
+      JSONEncoder().encode(mirrored),
+      id: fixture.filePendingID
+    ))
+    let reads = RaceReadCounter()
+    let writer = fixture.writer(fileRead: { destination in
+      if reads.next() == 3 {
+        try fileA.write(to: destination)
+      }
+      return try Data(contentsOf: destination)
+    })
+
+    expectClaudeMirrorRecoveryFailure(writer, fixture.grant, replacing: "b-token")
+
+    #expect(try Data(contentsOf: fixture.fileURL) == fileA)
+    #expect(try fixture.pending(id: fixture.keychainPendingID) == canonical)
+    #expect(try fixture.pending(id: fixture.filePendingID) == mirrored)
+  }
+
   private func queueMirrorRepair(in fixture: MirrorRepairFixture) throws -> Data {
     let original = fixture.payload(access: "old-tok", refresh: "old-ref")
     try original.write(to: fixture.fileURL)
