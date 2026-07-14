@@ -17,6 +17,7 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
 
   private let transport: any ProviderHTTPTransport
   private let loadCredentials: @Sendable () throws -> CodexCredentials
+  private let automaticCredentialSource: ProviderCredentialSource
   private let usageURL: URL
   private let refresher: (any CodexTokenRefreshing)?
   private let persister: any CodexCredentialPersisting
@@ -26,15 +27,22 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
   public init(
     transport: any ProviderHTTPTransport = URLSession.shared,
     usageURL: URL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!,
-    loadCredentials: @escaping @Sendable () throws -> CodexCredentials = { try CodexCredentialsStore.load() },
+    loadCredentials: (@Sendable () throws -> CodexCredentials)? = nil,
+    environment: [String: String] = ProcessInfo.processInfo.environment,
+    home: URL = FileManager.default.homeDirectoryForCurrentUser,
     refresher: (any CodexTokenRefreshing)? = CodexTokenRefresher(),
     persister: (any CodexCredentialPersisting)? = nil,
     capturedAccounts: CapturedAccountStore = CapturedAccountStore(),
     refreshCoordinator: CodexTokenRefreshCoordinator = .shared
   ) {
+    let automaticURL = CodexCredentialsStore.effectiveURL(
+      environment: environment,
+      home: home
+    ).standardizedFileURL
     self.transport = transport
     self.usageURL = usageURL
-    self.loadCredentials = loadCredentials
+    self.loadCredentials = loadCredentials ?? { try CodexCredentialsStore.load(url: automaticURL) }
+    automaticCredentialSource = .codexAuthFile(path: automaticURL.path)
     self.refresher = refresher
     self.persister = persister ?? CodexCredentialsWriter(capturedAccounts: capturedAccounts)
     self.capturedAccounts = capturedAccounts
@@ -86,8 +94,7 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
     if usage.account == nil {
       usage.account = credentials.email
     }
-    let source = context.account?.credentialSource
-      ?? .codexAuthFile(path: CodexCredentialsStore.defaultURL().standardizedFileURL.path)
+    let source = context.account?.credentialSource ?? automaticCredentialSource
     let account = ProviderAccount(
       provider: context.provider,
       displayName: credentials.email ?? credentials.accountID ?? "Codex account",

@@ -109,12 +109,8 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
   /// The `auth.json` path the Codex CLI actually reads: `CODEX_HOME` over the
   /// default. Nil when neither is resolvable.
   private var effectiveCodexSlotPath: String? {
-    let url: URL = if let codexHome = environment["CODEX_HOME"], !codexHome.isEmpty {
-      URL(fileURLWithPath: codexHome).appendingPathComponent("auth.json")
-    } else {
-      CodexCredentialsStore.defaultURL(home: home)
-    }
-    return url.standardizedFileURL.path
+    CodexCredentialsStore.effectiveURL(environment: environment, home: home)
+      .standardizedFileURL.path
   }
 
   public func capturedCopies(among accounts: [ProviderAccount]) async -> [String: ProviderAccount] {

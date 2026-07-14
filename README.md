@@ -12,8 +12,8 @@ remaining quota, reset times, and estimated local API cost at a glance.
   Codex `auth.json` remains the Codex CLI's responsibility.
 - Discovers CLI accounts from the Claude keychain and credentials file, the
   Claude OAuth environment variable, and Codex `auth.json` locations including
-  `CODEX_HOME`. Automatic Codex usage reads the default `~/.codex/auth.json`;
-  select a discovered `CODEX_HOME` account explicitly to use it.
+  `CODEX_HOME`. Automatic Codex usage follows the CLI's effective location,
+  preferring `$CODEX_HOME/auth.json` when configured.
 - Saves renewable account copies in Quotari-owned Keychain items and switches
   the credential slot used by each CLI after preserving the current login.
   Close active Claude Code or Codex sessions before switching so their separate

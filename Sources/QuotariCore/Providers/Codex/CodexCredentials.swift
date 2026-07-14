@@ -50,6 +50,18 @@ public enum CodexCredentialsStore {
     home.appendingPathComponent(".codex/auth.json")
   }
 
+  /// The credential file read by the Codex CLI: `CODEX_HOME` takes precedence
+  /// over the default location when it is configured.
+  public static func effectiveURL(
+    environment: [String: String] = ProcessInfo.processInfo.environment,
+    home: URL = FileManager.default.homeDirectoryForCurrentUser
+  ) -> URL {
+    guard let codexHome = environment["CODEX_HOME"], !codexHome.isEmpty else {
+      return defaultURL(home: home)
+    }
+    return URL(fileURLWithPath: codexHome).appendingPathComponent("auth.json")
+  }
+
   /// Reads and validates the credential file. Rejects world/group-readable
   /// files defensively (the file holds a bearer token).
   public static func load(
