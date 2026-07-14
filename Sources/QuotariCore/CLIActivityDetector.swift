@@ -55,10 +55,8 @@ public struct CLIActivityDetector: Sendable {
       .map { String($0).trimmingCharacters(in: CharacterSet(charactersIn: "\"'")) }
     guard let executable = arguments.first else { return false }
     let executableName = URL(fileURLWithPath: executable).lastPathComponent
-    if executableName == expectedName, !isAppBundlePath(executable) {
-      // Unquoted app helper paths such as `Codex (Service)` are split by `ps`
-      // at the space and must not be mistaken for the standalone CLI.
-      return arguments.dropFirst().first?.hasPrefix("(") != true
+    if executableName == expectedName {
+      return !isAppBundlePath(executable)
     }
     let interpreters = ["bash", "dash", "fish", "node", "nodejs", "python", "python3", "ruby", "sh", "zsh"]
     guard interpreters.contains(executableName.lowercased()) else { return false }

@@ -18,11 +18,19 @@ struct CLIActivityDetectorTests {
         19 /Applications/claude.app/Contents/MacOS/claude
         20 /Users/test/bin/Codex
         21 /opt/homebrew/bin/node /Applications/codex.app/Contents/Resources/codex
+        22 /opt/homebrew/bin/codex "(retry the last prompt)"
+        23 /Users/test/.local/bin/claude '(continue the session)'
       """
     })
 
-    #expect(try detector.activeProcesses(for: .codex) == ["codex (PID 10)", "codex (PID 14)"])
-    #expect(try detector.activeProcesses(for: .claude) == ["claude (PID 12)", "claude (PID 15)"])
+    #expect(
+      try detector.activeProcesses(for: .codex) ==
+        ["codex (PID 10)", "codex (PID 14)", "codex (PID 22)"]
+    )
+    #expect(
+      try detector.activeProcesses(for: .claude) ==
+        ["claude (PID 12)", "claude (PID 15)", "claude (PID 23)"]
+    )
   }
 
   @Test func processListingIsLimitedToTheCurrentUser() {
