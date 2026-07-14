@@ -7,6 +7,12 @@ extension ClaudeCredentialsWriter {
     case staleCanonical
   }
 
+  private enum CanonicalSourceOwnership {
+    case owns
+    case changed
+    case unavailable
+  }
+
   /// A previous launch may have installed the rotated keychain pair and then
   /// failed to update Claude's matching credentials file. The canonical
   /// journal proves which exact generation owns that repair; unrelated
@@ -31,7 +37,11 @@ extension ClaudeCredentialsWriter {
         accessToken: current.accessToken,
         refreshToken: current.refreshToken
       ) {
-        removeObsoleteRecovery(canonical, keychainService: keychainService)
+        guard removeObsoleteRecovery(canonical, keychainService: keychainService) else {
+          throw ClaudeCredentialPersistError.mirrorRecoveryPending(
+            underlying: "The canonical source changed, but obsolete mirror cleanup is still pending."
+          )
+        }
       }
       return false
     }
@@ -73,27 +83,41 @@ extension ClaudeCredentialsWriter {
     pending: ClaudePendingGrant,
     keychainService: String
   ) -> CanonicalMirrorCommitResult {
-    guard canonicalSourceOwns(pending, keychainService: keychainService) else {
+    switch canonicalSourceOwnership(pending, keychainService: keychainService) {
+    case .owns:
+      break
+    case .changed:
       Self.logger.notice("Claude's canonical keychain changed before mirror repair; leaving recovery queued.")
       return .staleCanonical
+    case .unavailable:
+      Self.logger
+        .notice("Claude's canonical keychain couldn't be verified before mirror repair; leaving recovery queued.")
+      return .pending
     }
     let resolved = commitMirrorIfUnchanged(preparation, pending: pending)
-    guard canonicalSourceOwns(pending, keychainService: keychainService) else {
+    switch canonicalSourceOwnership(pending, keychainService: keychainService) {
+    case .owns:
+      break
+    case .changed:
       Self.logger.notice("Claude's canonical keychain changed during mirror repair; leaving recovery queued.")
       return .staleCanonical
+    case .unavailable:
+      Self.logger
+        .notice("Claude's canonical keychain couldn't be verified after mirror repair; leaving recovery queued.")
+      return .pending
     }
     return resolved ? .resolved : .pending
   }
 
-  private func canonicalSourceOwns(
+  private func canonicalSourceOwnership(
     _ pending: ClaudePendingGrant,
     keychainService: String
-  ) -> Bool {
+  ) -> CanonicalSourceOwnership {
     guard let payload = keychainRead(keychainService),
           let credentials = try? ClaudeCredentialsStore.parse(payload)
-    else { return false }
+    else { return .unavailable }
     return credentials.accessToken == pending.grant.accessToken
-      && credentials.refreshToken == pending.grant.refreshToken
+      && credentials.refreshToken == pending.grant.refreshToken ? .owns : .changed
   }
 
   func removeResolvedMirrorJournals(_ recovery: MirrorRecovery) -> Bool {
@@ -178,31 +202,29 @@ extension ClaudeCredentialsWriter {
   private func removeObsoleteRecovery(
     _ canonical: MirrorRecoveryJournal,
     keychainService: String
-  ) {
+  ) -> Bool {
     guard keychainService == ClaudeCredentialsStore.keychainService,
           let destination = mirroredCredentialsFileURL,
           let id = ProviderCredentialSource
           .claudeCredentialsFile(path: destination.standardizedFileURL.path)
           .claudeLivePendingGrantID
     else {
-      removeRecoveryJournal(canonical)
-      return
+      return removeRecoveryJournal(canonical)
     }
     do {
       guard let pending = try loadRecoveryJournal(id: id),
             canonical.pending.mergingLineage(with: pending) != nil
+            || canonical.pending.chaining(after: pending) != nil
       else {
-        removeRecoveryJournal(canonical)
-        return
+        return removeRecoveryJournal(canonical)
       }
       let mirror = MirrorRecoveryJournal(id: id, pending: pending, previous: pending)
-      if removeRecoveryJournal(mirror) {
-        removeRecoveryJournal(canonical)
-      }
+      return removeRecoveryJournal(mirror) && removeRecoveryJournal(canonical)
     } catch {
       Self.logger.error(
         "Inspecting Claude's obsolete mirror recovery failed: \(error.localizedDescription, privacy: .public)"
       )
+      return false
     }
   }
 }

@@ -49,7 +49,7 @@ extension ClaudeMirrorRelaunchRepairTests {
     fixture.slot.value = fixture.payload(access: "other-tok", refresh: "other-ref")
     fixture.failFileJournalDeletes()
 
-    #expect(throws: ClaudeCredentialPersistError.self) {
+    expectClaudeMirrorRecoveryFailure {
       try fixture.normalWriter.persist(
         fixture.grant,
         replacing: "old-tok",
@@ -65,6 +65,47 @@ extension ClaudeMirrorRelaunchRepairTests {
       try fixture.normalWriter.persist(
         fixture.grant,
         replacing: "old-tok",
+        to: fixture.source
+      )
+    }
+
+    #expect(try fixture.pending(id: fixture.keychainPendingID) == nil)
+    #expect(try fixture.pending(id: fixture.filePendingID) == nil)
+  }
+
+  @Test func obsoleteCanonicalCleanupRemovesItsChainedMirrorPredecessor() throws {
+    let fixture = try MirrorRepairFixture()
+    defer { fixture.remove() }
+    let grantB = ClaudeTokenGrant(
+      accessToken: "b-token",
+      refreshToken: "b-refresh",
+      expiresAt: Date(timeIntervalSince1970: 50000),
+      scopes: ["user:inference"]
+    )
+    let mirror = ClaudePendingGrant(
+      grant: grantB,
+      previousAccessToken: "a-token",
+      consumedRefreshToken: "a-refresh"
+    )
+    let canonical = ClaudePendingGrant(
+      grant: fixture.grant,
+      previousAccessToken: "b-token",
+      consumedRefreshToken: "b-refresh"
+    )
+    #expect(try fixture.store.saveLivePendingGrantIfAbsent(
+      JSONEncoder().encode(mirror),
+      id: fixture.filePendingID
+    ))
+    #expect(try fixture.store.saveLivePendingGrantIfAbsent(
+      JSONEncoder().encode(canonical),
+      id: fixture.keychainPendingID
+    ))
+    fixture.slot.value = fixture.payload(access: "other-tok", refresh: "other-ref")
+
+    #expect(throws: ClaudeCredentialPersistError.self) {
+      try fixture.normalWriter.persist(
+        fixture.grant,
+        replacing: "b-token",
         to: fixture.source
       )
     }

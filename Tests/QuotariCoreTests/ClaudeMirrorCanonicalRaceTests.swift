@@ -127,6 +127,22 @@ extension ClaudeMirrorRelaunchRepairTests {
     #expect(try fixture.pending(id: fixture.filePendingID) != nil)
   }
 
+  @Test func unavailableCanonicalStateRetainsRecoveryOwnership() throws {
+    let fixture = try MirrorRepairFixture()
+    defer { fixture.remove() }
+    let original = try queueMirrorRepair(in: fixture)
+    let reads = RaceReadCounter()
+    let writer = fixture.writer(keychainRead: { _ in
+      reads.next() == 2 ? nil : fixture.slot.value
+    })
+
+    expectClaudeMirrorRecoveryFailure(writer, fixture.grant, replacing: "old-tok")
+
+    #expect(try Data(contentsOf: fixture.fileURL) == original)
+    #expect(try fixture.pending(id: fixture.keychainPendingID) != nil)
+    #expect(try fixture.pending(id: fixture.filePendingID) != nil)
+  }
+
   private func queueMirrorRepair(in fixture: MirrorRepairFixture) throws -> Data {
     let original = fixture.payload(access: "old-tok", refresh: "old-ref")
     try original.write(to: fixture.fileURL)
