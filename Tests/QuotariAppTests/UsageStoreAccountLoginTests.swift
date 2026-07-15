@@ -151,6 +151,33 @@ struct UsageStoreAccountLoginTests {
     #expect(Set(registry.load().map(\.id)) == ["codex:current-account", "codex:added-account"])
   }
 
+  @Test func disabledProviderStillPreservesCurrentCLIAccountBeforeLoginStarts() async throws {
+    let context = try makeContext(accountID: "current-account", email: "current@example.com")
+    let registry = context.registry
+    let login = AccountLoginService { provider in
+      #expect(registry.load().map(\.id) == ["codex:current-account"])
+      return AccountLoginResult(
+        provider: provider,
+        origin: .codexAuthFile(path: "/isolated/auth.json"),
+        payload: codexLoginPayload(accountID: "added-account")
+      )
+    }
+    let store = UsageStore.isolatedForTesting(
+      providers: [codexDescriptor()],
+      accountDiscovery: context.discovery,
+      accountSelectionStore: context.selectionStore,
+      accountCapture: context.capture,
+      accountLogin: login,
+      automaticallyCapturesDiscoveredAccounts: true,
+      startsAutomatically: false
+    )
+    store.setProviderEnabled(.codex, enabled: false)
+
+    await store.addAccount(for: .codex)
+
+    #expect(Set(registry.load().map(\.id)) == ["codex:current-account", "codex:added-account"])
+  }
+
   @Test func preservationFailureBlocksLogin() async throws {
     let context = try makeContext(accountID: "current-account", email: "current@example.com")
     try Data(#"{"tokens":{"access_token":"access","account_id":"current-account"}}"#.utf8)

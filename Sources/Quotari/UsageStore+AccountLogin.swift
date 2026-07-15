@@ -23,7 +23,7 @@ extension UsageStore {
 
     // The scan is the preservation boundary: every renewable login already in
     // a live CLI slot must be managed before a second login is allowed to open.
-    await reloadAccounts()
+    await reloadAccounts(preserving: provider)
     guard captureErrors[provider] == nil else {
       accountLoginErrors[provider] =
         "Quotari couldn’t preserve the current CLI account. Resolve the account scan error, then try again."

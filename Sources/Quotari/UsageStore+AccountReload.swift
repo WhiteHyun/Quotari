@@ -1,7 +1,26 @@
 import QuotariCore
 
 extension UsageStore {
-  func reloadProviderState(for descriptor: ProviderDescriptor) async -> ProviderAccountReloadState {
+  func accountPreservationProviders(through request: UInt) -> Set<UsageProvider> {
+    Set(accountPreservationRequests.compactMap { provider, requiredRequest in
+      requiredRequest <= request ? provider : nil
+    })
+  }
+
+  func completeAccountPreservationRequests(
+    _ providers: Set<UsageProvider>,
+    through request: UInt
+  ) {
+    for provider in providers
+      where accountPreservationRequests[provider].map({ $0 <= request }) == true {
+      accountPreservationRequests[provider] = nil
+    }
+  }
+
+  func reloadProviderState(
+    for descriptor: ProviderDescriptor,
+    preserving providersForLogin: Set<UsageProvider> = []
+  ) async -> ProviderAccountReloadState {
     let provider = descriptor.id
     synchronizeQuotaNotificationScope(
       account: selectedAccounts[provider],
@@ -9,7 +28,10 @@ extension UsageStore {
       provider: provider
     )
     let previousAccounts = accounts[provider] ?? []
-    let reload = await reloadProviderAccounts(for: provider)
+    let reload = await reloadProviderAccounts(
+      for: provider,
+      capturesWhileDisabled: providersForLogin.contains(provider)
+    )
     var providerAccounts = reload.accounts
     let update = await reloadedSelectionUpdate(
       provider: provider,
@@ -30,7 +52,10 @@ extension UsageStore {
     )
   }
 
-  private func reloadProviderAccounts(for provider: UsageProvider) async -> ProviderAccountReload {
+  private func reloadProviderAccounts(
+    for provider: UsageProvider,
+    capturesWhileDisabled: Bool
+  ) async -> ProviderAccountReload {
     var accounts = await accountDiscovery.accounts(for: provider)
     var capturedCopies = await accountDiscovery.capturedCopies(among: accounts)
     var selectionOrigins: [String: ProviderAccount] = [:]
@@ -42,7 +67,9 @@ extension UsageStore {
     // A source can be replaced between capture and the verification read. Two
     // bounded passes manage both observations without letting a continuously
     // mutating external slot keep one UI reload alive forever.
-    for _ in 0 ..< 2 where automaticallyCapturesDiscoveredAccounts && isProviderEnabled(provider) {
+    for _ in 0 ..< 2
+      where automaticallyCapturesDiscoveredAccounts
+      && (capturesWhileDisabled || isProviderEnabled(provider)) {
       let capture = await automaticallyCaptureDiscoveredAccounts(
         accounts,
         excluding: capturedCopies,
