@@ -13,6 +13,9 @@ final class UsageStore {
   private(set) var providersWithDiscoveredCredentials = Set<UsageProvider>()
   private(set) var credentialDiscoveryCompleted = Set<UsageProvider>()
   private(set) var selectedAccounts: [UsageProvider: ProviderAccount] = [:]
+  /// The live account each CLI resolves without an explicit Quotari override.
+  /// This is discovered from provider configuration rather than row order.
+  private(set) var activeCLIAccounts: [UsageProvider: ProviderAccount] = [:]
   /// Visible accounts whose quota and usage are refreshed in the background.
   /// This is independent from the single account shown on the dashboard.
   var monitoredAccounts: [UsageProvider: [ProviderAccount]] = [:]
@@ -287,7 +290,7 @@ extension UsageStore {
     var next: [UsageProvider: [ProviderAccount]] = [:]
     var nextProvidersWithDiscoveredCredentials = Set<UsageProvider>()
     var refreshedSelections: [(UsageProvider, SelectionUpdate)] = []
-    var nextMonitoredAccounts: [UsageProvider: [ProviderAccount]] = [:]
+    var nextActiveCLIAccounts: [UsageProvider: ProviderAccount] = [:]
     var alreadyCaptured: [String: ProviderAccount] = [:]
     var syncCandidates: [ProviderAccount] = []
     for descriptor in providers {
@@ -301,15 +304,30 @@ extension UsageStore {
       if let selectionUpdate = state.selectionUpdate {
         refreshedSelections.append((state.provider, selectionUpdate))
       }
-      nextMonitoredAccounts[state.provider] = state.monitoredAccounts
+      if let activeCLIAccount = state.activeCLIAccount {
+        nextActiveCLIAccounts[state.provider] = activeCLIAccount
+      }
       alreadyCaptured.merge(state.capturedCopies) { current, _ in current }
       syncCandidates += state.accounts.filter { state.capturedCopies.keys.contains($0.id) }
       next[state.provider] = state.accounts
+    }
+    // Reconcile monitoring only after every provider await has completed. A
+    // Settings toggle can run while this main-actor reload is suspended; using
+    // the latest persisted choices here prevents an earlier provider snapshot
+    // from overwriting that user action when a later provider finishes.
+    var nextMonitoredAccounts: [UsageProvider: [ProviderAccount]] = [:]
+    for descriptor in providers {
+      nextMonitoredAccounts[descriptor.id] = reloadedMonitoredAccounts(
+        provider: descriptor.id,
+        accounts: next[descriptor.id] ?? [],
+        capturedCopies: alreadyCaptured
+      )
     }
     accounts = next
     providersWithDiscoveredCredentials = nextProvidersWithDiscoveredCredentials
     credentialDiscoveryCompleted = Set(providers.map(\.id))
     capturedEquivalents = alreadyCaptured
+    activeCLIAccounts = nextActiveCLIAccounts
     monitoredAccounts = nextMonitoredAccounts
     for (provider, update) in refreshedSelections {
       selectAccount(update.account, for: provider, standingInFor: update.origin)

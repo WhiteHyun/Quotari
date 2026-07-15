@@ -54,6 +54,26 @@ struct CodexAutomaticCredentialTests {
     #expect(result.credentialScopeID == discovered.credentialScopeID)
   }
 
+  @Test func activeCLIAccountUsesCodexHomeInsteadOfTheFirstDiscoveredRow() async throws {
+    let home = try CodexAutomaticTemporaryDirectory()
+    let defaultURL = CodexCredentialsStore.defaultURL(home: home.url)
+    try writeAuth(to: defaultURL, token: "default-token", accountID: "default-account")
+    let codexHome = home.url.appendingPathComponent("custom-codex", isDirectory: true)
+    let codexHomeURL = codexHome.appendingPathComponent("auth.json")
+    try writeAuth(to: codexHomeURL, token: "home-token", accountID: "home-account")
+    let discovery = ProviderAccountDiscovery(
+      environment: ["CODEX_HOME": codexHome.path],
+      home: home.url,
+      keychainData: { nil }
+    )
+
+    let accounts = await discovery.accounts(for: .codex)
+    let active = await discovery.activeCLIAccount(for: .codex, among: accounts)
+
+    #expect(accounts.first?.credentialSource == .codexAuthFile(path: defaultURL.standardizedFileURL.path))
+    #expect(active?.credentialSource == .codexAuthFile(path: codexHomeURL.standardizedFileURL.path))
+  }
+
   @Test func automaticFetchUsesTheConfiguredKeyringAndMatchesDiscoveryScope() async throws {
     let home = try CodexAutomaticTemporaryDirectory()
     let codexHome = home.url.appendingPathComponent(".codex", isDirectory: true)

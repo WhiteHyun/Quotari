@@ -38,10 +38,9 @@ extension UsageStore {
       reload: reload,
       accounts: &providerAccounts
     )
-    let monitoredAccounts = reloadedMonitoredAccounts(
-      provider: provider,
-      accounts: providerAccounts,
-      capturedCopies: reload.capturedCopies
+    let activeCLIAccount = await accountDiscovery.activeCLIAccount(
+      for: provider,
+      among: providerAccounts
     )
     reconcileAccountUsage(
       provider: provider,
@@ -53,30 +52,46 @@ extension UsageStore {
       accounts: providerAccounts,
       capturedCopies: reload.capturedCopies,
       selectionUpdate: update,
-      monitoredAccounts: monitoredAccounts,
+      activeCLIAccount: activeCLIAccount,
       keepsCaptureGate: reload.keepsCaptureGate
     )
   }
 
-  private func reloadedMonitoredAccounts(
+  func reloadedMonitoredAccounts(
     provider: UsageProvider,
     accounts: [ProviderAccount],
     capturedCopies: [String: ProviderAccount]
   ) -> [ProviderAccount] {
     guard let persisted = persistedMonitoredAccounts[provider] else {
+      // Missing means "not configured yet" while an explicit empty array means
+      // the user chose none. Do not collapse those states before an account is
+      // available, or a later first login would never become monitored.
+      guard !accounts.isEmpty else { return [] }
       let logicalAccounts = accounts.map { capturedCopies[$0.id] ?? $0 }
       persistedMonitoredAccounts[provider] = logicalAccounts.uniquedByID()
       return accounts
     }
 
-    return persisted.compactMap { logicalAccount in
+    var migrated = persisted
+    let visible = persisted.enumerated().compactMap { index, logicalAccount in
       if let visible = accounts.first(where: {
         $0.id == logicalAccount.id && $0.credentialScopeID == logicalAccount.credentialScopeID
       }) {
+        // A capture may have succeeded after this live row was first persisted.
+        // Move the durable choice to its immutable registry identity before the
+        // mutable slot can be reused by another login.
+        if let captured = capturedCopies[visible.id] {
+          migrated[index] = captured
+        }
         return visible
       }
       return accounts.first { capturedCopies[$0.id]?.id == logicalAccount.id }
     }.uniquedByID()
+    let migratedUnique = migrated.uniquedByID()
+    if migratedUnique != persisted {
+      persistedMonitoredAccounts[provider] = migratedUnique
+    }
+    return visible
   }
 
   private func reloadProviderAccounts(
@@ -187,7 +202,7 @@ struct ProviderAccountReloadState {
   var accounts: [ProviderAccount]
   var capturedCopies: [String: ProviderAccount]
   var selectionUpdate: SelectionUpdate?
-  var monitoredAccounts: [ProviderAccount]
+  var activeCLIAccount: ProviderAccount?
   var keepsCaptureGate: Bool
 }
 

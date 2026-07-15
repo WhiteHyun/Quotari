@@ -24,10 +24,7 @@ extension UsageStore {
     try? accountMonitoringStore.save(persistedMonitoredAccounts)
   }
 
-  /// Discovery order mirrors each provider's implicit credential resolution.
-  /// The first non-registry row is therefore the single account the CLI uses
-  /// without an explicit Quotari account override.
   func activeCLIAccount(for provider: UsageProvider) -> ProviderAccount? {
-    (accounts[provider] ?? []).first { !$0.credentialSource.isCaptured }
+    activeCLIAccounts[provider]
   }
 }
