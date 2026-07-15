@@ -133,7 +133,10 @@ enum IsolatedAccountLogin {
       return AccountLoginConfiguration(
         executableName: "codex",
         executableOverrideEnvironmentKey: "QUOTARI_CODEX_PATH",
-        arguments: ["login"],
+        // Quotari imports and then destroys this isolated auth.json. Force the
+        // CLI's file backend so a user or future default cannot put the
+        // temporary credential in the macOS Keychain instead.
+        arguments: ["login", "--config", #"cli_auth_credentials_store="file""#],
         authDirectory: directory,
         credentialURL: credentialURL,
         isolatedEnvironment: ["CODEX_HOME": directory.path],

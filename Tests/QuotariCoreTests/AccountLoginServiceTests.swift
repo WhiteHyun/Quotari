@@ -17,7 +17,7 @@ struct AccountLoginServiceTests {
     let configuration = try IsolatedAccountLogin.configuration(provider: .codex, root: root)
 
     #expect(configuration.executableName == "codex")
-    #expect(configuration.arguments == ["login"])
+    #expect(configuration.arguments == ["login", "--config", #"cli_auth_credentials_store="file""#])
     #expect(configuration.isolatedEnvironment == ["CODEX_HOME": "/tmp/quotari-login/codex"])
     #expect(configuration.credentialURL.path == "/tmp/quotari-login/codex/auth.json")
     #expect(configuration.origin == .codexAuthFile(path: configuration.credentialURL.path))
@@ -77,6 +77,9 @@ struct AccountLoginServiceTests {
     let executable = directory.appendingPathComponent("fake-codex")
     let script = """
     #!/bin/sh
+    [ "$1" = "login" ] || exit 10
+    [ "$2" = "--config" ] || exit 11
+    [ "$3" = 'cli_auth_credentials_store="file"' ] || exit 12
     mkdir -p "$CODEX_HOME"
     printf '%s' '{"tokens":{"access_token":"added","account_id":"account","refresh_token":"refresh"}}' \
       > "$CODEX_HOME/auth.json"
