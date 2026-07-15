@@ -4,17 +4,13 @@ import QuotariCore
 extension UsageStore {
   func joinsAccountUsageRefresh(
     _ provider: UsageProvider,
-    force: Bool,
-    includingLogicalAccountIDs: Set<String>?,
-    excludingCredentialScopeIDs: Set<String>
+    request: AccountUsageRefreshRequest
   ) async -> Bool {
     guard let current = accountUsageRefreshTasks[provider] else { return false }
     await awaitAccountUsageRefresh(
       current,
       provider: provider,
-      force: force,
-      includingLogicalAccountIDs: includingLogicalAccountIDs,
-      excludingCredentialScopeIDs: excludingCredentialScopeIDs
+      request: request
     )
     return true
   }
@@ -56,50 +52,75 @@ extension UsageStore {
             let snapshot = accountUsage[provider]?[account.id]?.snapshot
       else { return true }
       return now.timeIntervalSince(snapshot.updatedAt) >= refreshInterval
+        || hasElapsedNotificationWindow(snapshot, at: now)
     }
+  }
+
+  func hasElapsedNotificationWindow(_ snapshot: UsageSnapshot, at now: Date) -> Bool {
+    [snapshot.primary, snapshot.secondary]
+      .compactMap { $0?.resetsAt }
+      .contains { $0 <= now }
   }
 
   private func awaitAccountUsageRefresh(
     _ current: AccountUsageRefreshTask,
     provider: UsageProvider,
-    force: Bool,
-    includingLogicalAccountIDs: Set<String>?,
-    excludingCredentialScopeIDs: Set<String>
+    request: AccountUsageRefreshRequest
   ) async {
-    _ = await current.task.value
+    let outcome = await current.task.value
     guard isProviderEnabled(provider) else { return }
+    let hasStaleRevision = current.revision.map {
+      $0 != (accountRevisions[provider] ?? 0)
+    } == true
+    if current.task.isCancelled || hasStaleRevision {
+      // A joined caller must not replay the stale generation's cache or treat
+      // its credential scopes as covered. Start a current-generation request.
+      await refreshAccountUsage(
+        for: provider,
+        force: request.force,
+        notifiesQuota: request.notifiesQuota,
+        includingLogicalAccountIDs: request.includingLogicalAccountIDs,
+        excludingCredentialScopeIDs: request.excludingCredentialScopeIDs
+      )
+      return
+    }
+    if request.notifiesQuota,
+       !current.notifiesQuota,
+       current.revision == (accountRevisions[provider] ?? 0) {
+      enqueueAccountUsageNotifications(
+        outcome.notificationCandidates,
+        includingLogicalAccountIDs: request.includingLogicalAccountIDs,
+        excludingCredentialScopeIDs: request.excludingCredentialScopeIDs
+      )
+    }
+    enqueueCachedNotificationsAfterJoining(current, provider: provider, request: request)
     // Disabling cancels but intentionally retains the old handle until its
     // closure finishes. If the provider was re-enabled while that fetch was
     // draining, replace the cancelled generation instead of treating it as
     // a successful coalesced request and leaving the cleared cache empty.
-    if current.task.isCancelled {
-      await refreshAccountUsage(
-        for: provider,
-        force: force,
-        includingLogicalAccountIDs: includingLogicalAccountIDs,
-        excludingCredentialScopeIDs: excludingCredentialScopeIDs
-      )
-    } else if force, !current.force {
+    if request.force, !current.force {
       await refreshAccountUsage(
         for: provider,
         force: true,
-        includingLogicalAccountIDs: includingLogicalAccountIDs,
-        excludingCredentialScopeIDs: excludingCredentialScopeIDs
+        notifiesQuota: request.notifiesQuota,
+        includingLogicalAccountIDs: request.includingLogicalAccountIDs,
+        excludingCredentialScopeIDs: request.excludingCredentialScopeIDs
       )
     } else {
       let requestedScopeIDs = Set(accountsNeedingRefresh(
         provider,
         at: Date(),
-        forced: force,
-        including: includingLogicalAccountIDs,
-        excluding: excludingCredentialScopeIDs
+        forced: request.force,
+        including: request.includingLogicalAccountIDs,
+        excluding: request.excludingCredentialScopeIDs
       ).map(\.credentialScopeID))
       guard !requestedScopeIDs.isSubset(of: current.credentialScopeIDs) else { return }
       await refreshAccountUsage(
         for: provider,
-        force: force,
-        includingLogicalAccountIDs: includingLogicalAccountIDs,
-        excludingCredentialScopeIDs: excludingCredentialScopeIDs.union(current.credentialScopeIDs)
+        force: request.force,
+        notifiesQuota: request.notifiesQuota,
+        includingLogicalAccountIDs: request.includingLogicalAccountIDs,
+        excludingCredentialScopeIDs: request.excludingCredentialScopeIDs.union(current.credentialScopeIDs)
       )
     }
   }

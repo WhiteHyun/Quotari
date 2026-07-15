@@ -20,7 +20,8 @@ struct UsageStoreAutomaticCaptureMigrationTests {
     await reload.value
     await fixture.store.selectionRefreshTasks[.claude]?.value
 
-    #expect(await fixture.strategy.requestCount == 1)
+    // Unattributed OAuth must not suppress the explicit monitored-row refresh.
+    #expect(await fixture.strategy.requestCount == 2)
     #expect(fixture.registry.load().count == 1)
   }
 

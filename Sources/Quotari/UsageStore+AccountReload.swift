@@ -45,15 +45,15 @@ extension UsageStore {
       for: provider,
       capturesWhileDisabled: providersForLogin.contains(provider)
     )
+    let activeCLIAccount = await accountDiscovery.activeCLIAccount(
+      for: provider,
+      among: reload.accounts
+    )
     var providerAccounts = reload.accounts
     let update = await reloadedSelectionUpdate(
       provider: provider,
       reload: reload,
       accounts: &providerAccounts
-    )
-    let activeCLIAccount = await accountDiscovery.activeCLIAccount(
-      for: provider,
-      among: providerAccounts
     )
     reconcileAccountUsage(
       provider: provider,

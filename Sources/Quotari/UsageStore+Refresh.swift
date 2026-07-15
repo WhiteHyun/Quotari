@@ -172,6 +172,7 @@ extension UsageStore {
         group.addTask {
           await self.refreshAccountUsage(
             for: descriptor.id,
+            notifiesQuota: true,
             excludingCredentialScopeIDs: credentialScopeIDs[descriptor.id] ?? []
           )
         }
@@ -193,26 +194,29 @@ extension UsageStore {
     guard case let .success(value) = completion.result, value.sourceKind != .mock else {
       return scopeIDs
     }
-    if let fetchedAccount = completion.account,
-       !fetchResult(value, belongsTo: fetchedAccount) {
-      // The mutable slot was replaced by an unrelated login after discovery.
-      // Do not let its reported scope suppress that account's real monitored
-      // refresh, and do not claim the stale requested row was covered.
-      return scopeIDs
+    let attributedAccount: ProviderAccount?
+    if let fetchedAccount = completion.account {
+      guard fetchResult(value, belongsTo: fetchedAccount) else {
+        // The mutable slot was replaced by an unrelated login after discovery.
+        // Do not let its reported scope suppress that account's real monitored
+        // refresh, and do not claim the stale requested row was covered.
+        return scopeIDs
+      }
+      attributedAccount = fetchedAccount
+    } else {
+      attributedAccount = accountIdentified(by: value, provider: provider)
+        ?? matchedAccount(for: value.usage, provider: provider)
     }
-    // Prefer explicit fetch evidence. Older/custom strategies may omit it, so
-    // fall back to the account captured for this fetch, or automatic mode's
-    // effective CLI account. Row order is unrelated to credential resolution.
+    // Exclude only a result that the same success path can actually store
+    // under an account. An unattributed automatic result must leave the active
+    // CLI row eligible for its explicit monitored-account fetch.
+    guard let attributedAccount else { return scopeIDs }
     if let credentialScopeID = value.credentialScopeID {
       scopeIDs.insert(credentialScopeID)
-    } else if let fetchedAccount = completion.account ?? activeCLIAccounts[provider] {
-      scopeIDs.insert(fetchedAccount.credentialScopeID)
     }
-    if let selectedAccount = completion.account {
-      // A successful refresh may rotate the credential generation. Keep the
-      // pre-rotation scope excluded as the same logical account.
-      scopeIDs.insert(selectedAccount.credentialScopeID)
-    }
+    // A successful refresh may rotate the credential generation. Keep the
+    // pre-rotation scope excluded as the same logical account.
+    scopeIDs.insert(attributedAccount.credentialScopeID)
     return scopeIDs
   }
 
@@ -251,6 +255,7 @@ extension UsageStore {
       await refreshAccountUsage(
         for: provider,
         force: false,
+        notifiesQuota: true,
         excludingCredentialScopeIDs: coveredCredentialScopeIDs
       )
     }
