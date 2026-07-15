@@ -84,10 +84,7 @@ public struct CapturedAccountStore: Sendable {
   }
 
   public func account(id: String) -> CapturedAccount? {
-    guard let data = keychain.readOptional(service: itemService(id)),
-          let account = try? JSONDecoder().decode(CapturedAccount.self, from: data)
-    else { return nil }
-    return account
+    try? loadAccount(id: id)
   }
 
   /// Capture (or re-capture): registers the id in the index first, then writes
@@ -96,13 +93,31 @@ public struct CapturedAccountStore: Sendable {
   /// secret with no index entry. The index read fails closed, so a transient
   /// read failure throws instead of writing a truncated index.
   public func save(_ account: CapturedAccount) throws {
+    _ = try upsert(account) { _, candidate in candidate }
+  }
+
+  /// Atomically inserts `candidate`, or lets the caller merge it with the
+  /// current row when the identity is already registered. Keeping the read,
+  /// conflict decision, and write under one mutation lock prevents a stale CLI
+  /// snapshot from winning a check-then-save race with a token refresh.
+  @discardableResult
+  public func upsert(
+    _ candidate: CapturedAccount,
+    mergingExisting merge: (CapturedAccount, CapturedAccount) throws -> CapturedAccount
+  ) throws -> CapturedAccount {
     try Self.mutationLock.withLock {
+      // The public best-effort lookup intentionally hides keychain failures
+      // for UI reads, but doing that here could let a stale candidate overwrite
+      // a fresher stored refresh-token pair without invoking `merge`.
+      let existing = try loadAccount(id: candidate.id)
+      let resolved = try existing.map { try merge($0, candidate) } ?? candidate
       var ids = try indexIDs() ?? []
-      if !ids.contains(account.id) {
-        ids.append(account.id)
+      if !ids.contains(resolved.id) {
+        ids.append(resolved.id)
         try writeIndex(ids)
       }
-      try keychain.write(encode(account), service: itemService(account.id))
+      try keychain.write(encode(resolved), service: itemService(resolved.id))
+      return resolved
     }
   }
 
@@ -257,6 +272,14 @@ public struct CapturedAccountStore: Sendable {
   private func indexIDs() throws -> [String]? {
     guard let data = try keychain.read(service: indexService) else { return nil }
     return try JSONDecoder().decode(Index.self, from: data).ids
+  }
+
+  private func loadAccount(id: String) throws -> CapturedAccount? {
+    guard let data = try keychain.read(service: itemService(id)) else { return nil }
+    // A successfully read but corrupt entry remains recoverable by a later
+    // valid capture, matching the registry's best-effort listing contract.
+    // Only the keychain read itself must fail closed.
+    return try? JSONDecoder().decode(CapturedAccount.self, from: data)
   }
 
   private func writeIndex(_ ids: [String]) throws {

@@ -2,6 +2,75 @@ import Foundation
 import QuotariCore
 
 extension UsageStore {
+  /// Spawns a tracked dashboard refresh. UI and the timer go through this so
+  /// `inFlightRefresh` always reflects the actually-running refresh an account
+  /// switch may need to await. A second call while one is in flight coalesces
+  /// through `refreshRequested` instead of replacing the handle with a task
+  /// that would return immediately via the `isRefreshing` guard — otherwise a
+  /// switch could await a no-op and race the real refresh's slot write.
+  func beginRefresh() {
+    // Don't start a fetch while a switch is rewriting a credential slot.
+    guard !isSwitching else { return }
+    guard inFlightRefresh == nil else {
+      refreshRequested = true
+      return
+    }
+    inFlightRefresh = Task { [weak self] in
+      await self?.refresh(clearsInFlightRefresh: true)
+    }
+  }
+
+  func refresh() async {
+    await refresh(clearsInFlightRefresh: false)
+  }
+
+  private func refresh(clearsInFlightRefresh: Bool) async {
+    // Clear the tracked handle before this actor-isolated operation returns.
+    // Doing it in the spawning task leaves an executor hop where a new request
+    // can observe the completed task, set `refreshRequested`, and be stranded
+    // when that task subsequently clears its handle and exits.
+    defer {
+      if clearsInFlightRefresh {
+        inFlightRefresh = nil
+      }
+    }
+    guard !isRefreshing else {
+      refreshRequested = true
+      return
+    }
+    isRefreshing = true
+    defer { isRefreshing = false }
+
+    // A live stand-in can silently start pointing at a different login when
+    // its CLI slot is reused; rediscover first so the timer path reconciles
+    // the selection just like a manual reload.
+    guard await prepareReconciledAccountsForRefresh() else { return }
+    repeat {
+      refreshRequested = false
+      // A switch can close the gate after the discovery await above, or while
+      // draining a previous pass. Never begin another provider fetch inside
+      // that protected write window.
+      guard !isSwitching else { return }
+      await performRefresh()
+    } while refreshRequested
+    // Self-heal email labels after a usage refresh may have rotated a token:
+    // the access-token fingerprint changes, so this re-fetches exactly once.
+    refreshClaudeProfiles()
+  }
+
+  func startTimer() {
+    timerTask?.cancel()
+    timerTask = Task { [weak self] in
+      while !Task.isCancelled {
+        guard let self else { break }
+        beginRefresh()
+        await inFlightRefresh?.value
+        let interval = refreshInterval
+        try? await Task.sleep(for: .seconds(interval))
+      }
+    }
+  }
+
   func prepareReconciledAccountsForRefresh() async -> Bool {
     guard !reconciledSelectionOrigins.isEmpty else { return true }
     guard !isSwitching else {
@@ -24,35 +93,24 @@ extension UsageStore {
   func performRefresh() async {
     let now = Date()
     await withTaskGroup(
-      of: (UsageProvider, ProviderAccount?, UInt, Result<ProviderFetchResult, Error>).self
+      of: (UsageProvider, ProviderFetchCompletion).self
     ) { group in
       for descriptor in enabledProviderDescriptors {
-        let account = selectedAccounts[descriptor.id]
-        let capturedRegistryID = capturedRegistryIDForFetch(
-          provider: descriptor.id,
-          selectedAccount: account
-        )
-        let revision = accountRevisions[descriptor.id] ?? 0
         group.addTask {
           await (
             descriptor.id,
-            account,
-            revision,
-            self.serializedProviderFetch(
+            self.coordinatedProviderFetch(
               descriptor: descriptor,
-              now: now,
-              account: account,
-              capturedRegistryID: capturedRegistryID,
-              expectedRevision: revision
+              now: now
             )
           )
         }
       }
-      for await (provider, account, revision, result) in group {
+      for await (provider, completion) in group {
         guard isProviderEnabled(provider),
-              (accountRevisions[provider] ?? 0) == revision
+              (accountRevisions[provider] ?? 0) == completion.revision
         else { continue }
-        apply(provider: provider, account: account, result: result)
+        apply(provider: provider, account: completion.account, result: completion.result)
       }
     }
     lastRefresh = Date()
@@ -72,33 +130,20 @@ extension UsageStore {
     guard !Task.isCancelled, !isSwitching, isProviderEnabled(provider),
           let descriptor = providers.first(where: { $0.id == provider })
     else { return }
-    let account = selectedAccounts[provider]
-    let capturedRegistryID = capturedRegistryIDForFetch(
-      provider: provider,
-      selectedAccount: account
-    )
-    let revision = accountRevisions[provider] ?? 0
     let now = Date()
-    let result: Result<ProviderFetchResult, Error> = if serializesProviderFetch {
-      await serializedProviderFetch(
+    let completion: ProviderFetchCompletion = if serializesProviderFetch {
+      await coordinatedSerializedProviderFetch(
         descriptor: descriptor,
-        now: now,
-        account: account,
-        capturedRegistryID: capturedRegistryID,
-        expectedRevision: revision
+        now: now
       )
     } else {
-      await descriptor.fetch(
-        now: now,
-        account: account,
-        capturedRegistryID: capturedRegistryID
-      )
+      await selectionProviderFetch(descriptor: descriptor, now: now)
     }
     guard !Task.isCancelled,
           isProviderEnabled(provider),
-          (accountRevisions[provider] ?? 0) == revision
+          (accountRevisions[provider] ?? 0) == completion.revision
     else { return }
-    apply(provider: provider, account: account, result: result)
+    apply(provider: provider, account: completion.account, result: completion.result)
     lastRefresh = Date()
     await syncCapturedCopies(of: capturedCopyCandidates.filter { $0.provider == provider })
     // The fetch may have rotated a Claude token; the email label's retry key

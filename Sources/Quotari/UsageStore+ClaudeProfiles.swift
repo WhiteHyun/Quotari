@@ -17,6 +17,43 @@ extension UsageStore {
     claudeProfiles[account.id]?.organizationName
   }
 
+  /// Older releases cached a live Claude profile before creating its managed
+  /// registry row. Discovery proves the live and saved payloads are the same
+  /// renewable identity; re-read both before copying so a reused slot cannot
+  /// donate its profile to the previous account. The saved copy gets its own
+  /// access-token fingerprint because the two stores may be on different
+  /// access generations while sharing the same refresh identity.
+  func migrateCachedClaudeProfilesToCapturedAccounts() async {
+    let loader = claudeCredentialLoader
+    var changed = false
+    for (liveID, saved) in capturedEquivalents where saved.provider == .claude {
+      guard let live = accounts[.claude]?.first(where: { $0.id == liveID }),
+            let cached = claudeProfiles[liveID],
+            !cached.isEmpty
+      else { continue }
+      let evidence = await Task.detached {
+        CachedClaudeProfileMigrationEvidence(
+          live: loader(live.credentialSource),
+          saved: loader(saved.credentialSource)
+        )
+      }.value
+      guard cached.fingerprint == evidence.liveFingerprint,
+            evidence.liveIdentity != nil,
+            evidence.liveIdentity == evidence.savedIdentity,
+            let savedFingerprint = evidence.savedFingerprint
+      else { continue }
+      let migrated = cached.verified(for: savedFingerprint)
+      guard claudeProfiles[saved.id] != migrated else { continue }
+      claudeProfiles[saved.id] = migrated
+      profileFetchAttempts[saved.id] = savedFingerprint
+      emptyClaudeProfileFingerprints[saved.id] = nil
+      changed = true
+    }
+    guard changed else { return }
+    try? profileStore.save(claudeProfiles)
+    enqueueClaudeQuotaNotificationScopeRestore()
+  }
+
   /// Resolves email labels for Claude accounts. The retry key is a fingerprint
   /// of the *access token* (not the durable identity), so any token rotation —
   /// including an access-token-only refresh — triggers exactly one fresh
@@ -147,17 +184,113 @@ extension UsageStore {
       dropStaleProfile(id: id, cachedIsForOldToken: attempt.cachedIsForOldToken)
       emptyClaudeProfileFingerprints[id] = attempt.credential.fingerprint
     } else {
-      emptyClaudeProfileFingerprints[id] = nil
-      claudeProfiles[id] = ClaudeProfile(
+      let verified = ClaudeProfile(
         accountID: profile.accountID,
         email: profile.email,
         organizationName: profile.organizationName,
         fingerprint: attempt.credential.fingerprint
       )
+      // A live row hides its captured copy, so the saved row is not otherwise
+      // visited by this profile pass. Persist the same verified identity under
+      // the registry id; a later external token rotation can then prove that
+      // the newly fingerprinted live credential is still this saved account.
+      var savedProfileCopy: (id: String, fingerprint: String)?
+      if let saved = capturedEquivalents[id] {
+        let savedFingerprint = await savedFingerprintForClaudeProfileCopy(
+          verified,
+          from: source,
+          to: saved
+        )
+        let currentLiveFingerprint = await Task.detached(operation: { () -> String? in
+          loader(source).map { ProviderCredentialIdentity.fingerprint(of: $0.accessToken) }
+        }).value
+        guard canFinishClaudeProfileAttempt(id: id, attempt: attempt, revision: revision) else { return false }
+        guard currentLiveFingerprint == attempt.credential.fingerprint else { return true }
+        if let savedFingerprint {
+          savedProfileCopy = (saved.id, savedFingerprint)
+        }
+      }
+      emptyClaudeProfileFingerprints[id] = nil
+      claudeProfiles[id] = verified
+      if let savedProfileCopy {
+        claudeProfiles[savedProfileCopy.id] = verified.verified(for: savedProfileCopy.fingerprint)
+        profileFetchAttempts[savedProfileCopy.id] = savedProfileCopy.fingerprint
+        emptyClaudeProfileFingerprints[savedProfileCopy.id] = nil
+      }
       try? profileStore.save(claudeProfiles)
     }
     enqueueClaudeQuotaNotificationScopeRestore()
     return false
+  }
+
+  private func savedFingerprintForClaudeProfileCopy(
+    _ profile: ClaudeProfile,
+    from liveSource: ProviderCredentialSource,
+    to saved: ProviderAccount
+  ) async -> String? {
+    let loader = claudeCredentialLoader
+    let evidence = await Task.detached { () -> ClaudeProfileCopyEvidence in
+      let live = loader(liveSource)
+      let stored = loader(saved.credentialSource)
+      return ClaudeProfileCopyEvidence(
+        liveIdentity: live.flatMap {
+          ProviderCredentialIdentity.claudeIdentity(
+            refreshToken: $0.refreshToken,
+            accessToken: $0.accessToken
+          )
+        },
+        savedIdentity: stored.flatMap {
+          ProviderCredentialIdentity.claudeIdentity(
+            refreshToken: $0.refreshToken,
+            accessToken: $0.accessToken
+          )
+        },
+        savedAccessTokenFingerprint: stored.map {
+          ProviderCredentialIdentity.fingerprint(of: $0.accessToken)
+        }
+      )
+    }.value
+    if evidence.liveIdentity == evidence.savedIdentity,
+       evidence.liveIdentity != nil,
+       let savedFingerprint = evidence.savedAccessTokenFingerprint {
+      return savedFingerprint
+    }
+    guard let savedProfile = claudeProfiles[saved.id],
+          let savedFingerprint = evidence.savedAccessTokenFingerprint,
+          savedProfile.fingerprint == savedFingerprint,
+          profile.identifiesSameAccount(as: savedProfile)
+    else { return nil }
+    return savedFingerprint
+  }
+
+  private struct ClaudeProfileCopyEvidence: Sendable {
+    let liveIdentity: String?
+    let savedIdentity: String?
+    let savedAccessTokenFingerprint: String?
+  }
+
+  private struct CachedClaudeProfileMigrationEvidence: Sendable {
+    let liveIdentity: String?
+    let savedIdentity: String?
+    let liveFingerprint: String?
+    let savedFingerprint: String?
+
+    init(live: ClaudeCredentials?, saved: ClaudeCredentials?) {
+      liveIdentity = live.flatMap {
+        ProviderCredentialIdentity.claudeIdentity(
+          refreshToken: $0.refreshToken,
+          accessToken: $0.accessToken
+        )
+      }
+      savedIdentity = saved.flatMap {
+        ProviderCredentialIdentity.claudeIdentity(
+          refreshToken: $0.refreshToken,
+          accessToken: $0.accessToken
+        )
+      }
+      liveFingerprint = live.map { ProviderCredentialIdentity.fingerprint(of: $0.accessToken) }
+      savedFingerprint = saved.map { ProviderCredentialIdentity.fingerprint(of: $0.accessToken) }
+    }
   }
 
   private func canFinishClaudeProfileAttempt(

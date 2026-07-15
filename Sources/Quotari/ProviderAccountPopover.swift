@@ -33,10 +33,6 @@ struct ProviderAccountPopover: View {
     store.accounts[descriptor.id] ?? []
   }
 
-  private var activeAccount: ProviderAccount? {
-    store.activeAccount(for: descriptor.id)
-  }
-
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       header
@@ -110,17 +106,10 @@ struct ProviderAccountPopover: View {
 
   @ViewBuilder
   private func accountMenu(_ account: ProviderAccount) -> some View {
-    if store.isCapturable(account) {
-      Button("Save to Quotari") {
-        Task { await store.captureAccount(account) }
-      }
-    }
     if store.capturedEquivalents.keys.contains(account.id) {
-      // The saved copy's own row is hidden while this login is live, so the
-      // live row is the only place its removal can be offered.
-      Button("Remove Saved Copy", role: .destructive) {
-        Task { await store.removeCapturedCopy(of: account) }
-      }
+      Button("Remove Account (Still in CLI)", role: .destructive) {}
+        .disabled(true)
+        .help(UsageStore.activeAccountRemovalMessage)
     }
     if account.credentialSource.isCaptured {
       // Rewrites the CLI's credential slot after a warning about the one
@@ -128,7 +117,7 @@ struct ProviderAccountPopover: View {
       Button("Use in CLI (Switch)") {
         pendingCLISwitch = account
       }
-      Button("Remove Saved Account", role: .destructive) {
+      Button("Remove Account", role: .destructive) {
         Task { await store.removeCapturedAccount(account) }
       }
     }
@@ -136,17 +125,8 @@ struct ProviderAccountPopover: View {
 
   private var footer: some View {
     VStack(spacing: 2) {
-      if let active = activeAccount, store.isCapturable(active) {
-        PopoverActionButton(
-          title: "Save “\(active.displayName)” to Quotari",
-          systemImage: "square.and.arrow.down",
-          busy: false
-        ) {
-          Task { await store.captureAccount(active) }
-        }
-      }
       PopoverActionButton(
-        title: "Reload Accounts",
+        title: "Scan Accounts",
         systemImage: "arrow.clockwise",
         busy: isReloadingAccounts || store.refreshingAccountUsageProviders.contains(descriptor.id)
       ) {

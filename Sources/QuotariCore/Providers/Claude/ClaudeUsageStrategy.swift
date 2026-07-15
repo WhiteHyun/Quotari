@@ -63,13 +63,22 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
       try recoverLinkedRegistryGrant(id: capturedRegistryID)
     }
     var resolved = try credentials(for: context)
-    resolved = await refreshIfExpired(
+    let refresh = await refreshResolutionIfExpired(
       resolved,
       now: context.now,
       capturedRegistryID: context.capturedRegistryID
     )
+    resolved = refresh.resolved
+    let transitionSources = credentialTransitionSourceScopeIDs(
+      refresh.acceptedGrant,
+      source: resolved.source
+    )
     guard case .quotariRegistry = resolved.source else {
-      return try await usageResult(with: resolved, context: context)
+      return try await liveUsageResult(
+        with: resolved,
+        context: context,
+        credentialTransitionSourceScopeIDs: transitionSources
+      )
     }
     do {
       return try await usageResult(with: resolved, context: context)
@@ -77,22 +86,51 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
       // A saved account can be denied before its stored expiry says so (token
       // revoked early). The registry still holds a refresh token, so force
       // one refresh and retry once.
-      let retried = await refreshIfExpired(
+      let retried = await refreshResolutionIfExpired(
         resolved,
         now: context.now,
         deniedAccessToken: resolved.credentials.accessToken,
         capturedRegistryID: context.capturedRegistryID
       )
-      guard retried.credentials.accessToken != resolved.credentials.accessToken else {
+      guard retried.resolved.credentials.accessToken != resolved.credentials.accessToken else {
         throw ProviderHTTPError.unauthorized
       }
-      return try await usageResult(with: retried, context: context)
+      return try await usageResult(with: retried.resolved, context: context)
+    }
+  }
+
+  private func liveUsageResult(
+    with resolved: ResolvedClaudeCredentials,
+    context: ProviderFetchContext,
+    credentialTransitionSourceScopeIDs: Set<String>
+  ) async throws -> ProviderFetchResult {
+    do {
+      return try await usageResult(
+        with: resolved,
+        context: context,
+        credentialTransitionSourceScopeIDs: credentialTransitionSourceScopeIDs
+      )
+    } catch {
+      guard !credentialTransitionSourceScopeIDs.isEmpty else { throw error }
+      let target = ProviderAccount(
+        provider: context.provider,
+        displayName: "Claude Code",
+        detail: nil,
+        credentialSource: resolved.source,
+        credentialIdentity: resolved.credentials.accessToken
+      )
+      throw ProviderFetchTransitionError(
+        underlying: error,
+        credentialTransitionTargetScopeID: target.credentialScopeID,
+        credentialTransitionSourceScopeIDs: credentialTransitionSourceScopeIDs
+      )
     }
   }
 
   private func usageResult(
     with resolved: ResolvedClaudeCredentials,
-    context: ProviderFetchContext
+    context: ProviderFetchContext,
+    credentialTransitionSourceScopeIDs: Set<String> = []
   ) async throws -> ProviderFetchResult {
     let credentials = resolved.credentials
     let data = try await transport.getJSON(
@@ -117,7 +155,8 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
     return ProviderFetchResult(
       usage: usage,
       sourceLabel: "Claude",
-      credentialScopeID: account.credentialScopeID
+      credentialScopeID: account.credentialScopeID,
+      credentialTransitionSourceScopeIDs: credentialTransitionSourceScopeIDs
     )
   }
 
@@ -156,16 +195,16 @@ private extension ClaudeUsageStrategy {
   /// coordinator, keyed by source *and* refresh-token generation, so
   /// concurrent Quotari fetches can't burn the rotating token twice and a
   /// caller holding a newer pair never joins an older generation's run.
-  private func refreshIfExpired(
+  private func refreshResolutionIfExpired(
     _ resolved: ResolvedClaudeCredentials,
     now: Date,
     deniedAccessToken: String? = nil,
     capturedRegistryID: String? = nil
-  ) async -> ResolvedClaudeCredentials {
+  ) async -> ClaudeRefreshResolution {
     let credentials = resolved.credentials
     if let capturedRegistryID,
        await cachedMirrorBlocksRefresh(resolved, registryID: capturedRegistryID) {
-      return resolved
+      return ClaudeRefreshResolution(resolved: resolved)
     }
     let refreshNeeded = deniedAccessToken != nil || credentials.isExpired(now: now)
     let durablePending: ClaudePendingGrant?
@@ -177,9 +216,11 @@ private extension ClaudeUsageStrategy {
       // temporarily unreadable, so fail closed and let the API report the
       // old credential as unusable.
       Self.logger.error("Reading a pending Claude grant failed: \(error.localizedDescription, privacy: .public)")
-      return resolved
+      return ClaudeRefreshResolution(resolved: resolved)
     }
-    guard refreshNeeded || durablePending != nil else { return resolved }
+    guard refreshNeeded || durablePending != nil else {
+      return ClaudeRefreshResolution(resolved: resolved)
+    }
     let generation = credentials.refreshToken
       ?? durablePending?.consumedRefreshToken
       ?? credentials.accessToken
@@ -195,7 +236,7 @@ private extension ClaudeUsageStrategy {
     if let capturedRegistryID, let acceptedGrant = resolution.acceptedGrant {
       _ = mirrorAcceptedGrant(acceptedGrant, to: capturedRegistryID)
     }
-    return resolution.resolved
+    return resolution
   }
 
   private func resolveRefreshTransaction(
@@ -337,9 +378,7 @@ private extension ClaudeUsageStrategy {
       return .resolved(ClaudeRefreshResolution(resolved: stored))
     }
     if current.refreshToken != refreshToken {
-      return await .resolved(ClaudeRefreshResolution(
-        resolved: refreshIfExpired(stored, now: now)
-      ))
+      return await .resolved(refreshResolutionIfExpired(stored, now: now))
     }
     return .exchange(stored)
   }

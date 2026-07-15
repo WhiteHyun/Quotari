@@ -128,8 +128,25 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
       }
     var copies: [String: ProviderAccount] = [:]
     for account in accounts where !account.credentialSource.isCaptured {
-      guard let key = renewableIdentity(of: account.credentialSource, provider: account.provider),
+      guard let payload = rawPayload(of: account.credentialSource),
+            ProviderCredentialMinimizer.minimize(provider: account.provider, payload: payload) != nil,
+            let key = ProviderCredentialIdentity.key(provider: account.provider, payload: payload),
+            let discoveredIdentity = ProviderCredentialIdentity.discoveredAccountIdentity(
+              provider: account.provider,
+              payload: payload
+            ),
             let item = byIdentity[account.provider]?[key] else { continue }
+      let currentAccount = ProviderAccount(
+        provider: account.provider,
+        displayName: account.displayName,
+        detail: account.detail,
+        credentialSource: account.credentialSource,
+        credentialIdentity: discoveredIdentity
+      )
+      // `accounts` is a discovery snapshot, while the source read above is
+      // current. A reused source id must not make stale account A claim the
+      // saved copy belonging to the newly installed account B.
+      guard currentAccount.credentialScopeID == account.credentialScopeID else { continue }
       copies[account.id] = ProviderAccount(
         provider: item.provider,
         displayName: item.displayName,

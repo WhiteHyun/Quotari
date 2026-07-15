@@ -4,40 +4,26 @@ import QuotariCore
 // MARK: - Saving accounts into the Quotari registry
 
 extension UsageStore {
-  /// Snapshots the account's live credentials into Quotari's own registry so
-  /// it survives the CLI credential slot being reused by another login. The
-  /// keychain/file I/O runs off the main actor so a slow (or prompting)
-  /// `security` call can't freeze the popover.
-  func captureAccount(_ account: ProviderAccount) async {
-    let capture = accountCapture
-    let now = Date()
-    do {
-      let captured = try await Task.detached { try capture.capture(account, now: now) }.value
-      captureErrors[account.provider] = nil
-      // The saved copy's email label is resolved by its own profile fetch on
-      // the reload below — not seeded from the live row, whose stable id can
-      // carry a stale profile if the CLI login changed between discovery and
-      // Save (which would mislabel the saved account).
-      // Saving the selected live login makes the selection logically the
-      // saved account, with the live login as its stand-in — so a later slot
-      // reuse falls back to the saved copy instead of following the slot.
-      if selectedAccounts[account.provider]?.id == account.id {
-        let origin = ProviderAccount(
-          provider: captured.provider,
-          displayName: captured.displayName,
-          detail: captured.detail ?? "Saved in Quotari",
-          credentialSource: .quotariRegistry(id: captured.id)
-        )
-        selectAccount(account, for: account.provider, standingInFor: origin)
-      }
-      await reloadAccounts()
-    } catch {
-      captureErrors[account.provider] = error.localizedDescription
-    }
-  }
+  static let activeAccountRemovalMessage =
+    "This account is still present in a CLI credential slot. Switch to another account or sign out before removing it."
 
   func removeCapturedAccount(_ account: ProviderAccount) async {
     guard case let .quotariRegistry(id) = account.credentialSource else { return }
+    // Removal is a policy decision about the live CLI state, not the last
+    // picker snapshot. Join a fresh coordinated discovery first so an account
+    // switched into a CLI slot while Quotari stayed active cannot be deleted.
+    await reloadAccounts()
+    let liveEquivalent = await accountDiscovery.liveAccount(
+      equivalentTo: account,
+      among: accounts[account.provider] ?? []
+    )
+    let isKnownLive = capturedEquivalents.values.contains(where: { $0.id == account.id })
+      || liveEquivalent != nil
+    let unresolvedClaudeLiveMayMatch = isKnownLive ? false : await claudeLiveIdentityBlocksRemoval(of: account)
+    if isKnownLive || unresolvedClaudeLiveMayMatch {
+      captureErrors[account.provider] = Self.activeAccountRemovalMessage
+      return
+    }
     let capture = accountCapture
     do {
       try await Task.detached { try capture.remove(id: id) }.value
@@ -56,20 +42,52 @@ extension UsageStore {
   }
 
   /// Removes the hidden saved copy of a live login — its registry row is
-  /// suppressed while the identity is live, so the live row hosts the action.
+  /// suppressed while the identity is live. Product policy keeps every scanned
+  /// live login managed, so removal is blocked until its CLI slot is switched
+  /// to another account or logged out.
   func removeCapturedCopy(of account: ProviderAccount) async {
-    let capture = accountCapture
-    do {
-      let removedID = try await Task.detached { try capture.removeCapturedCopy(of: account) }.value
-      captureErrors[account.provider] = nil
-      if let origin = reconciledSelectionOrigins[account.provider],
-         case let .quotariRegistry(originID) = origin.credentialSource, originID == removedID {
-        selectAccount(selectedAccounts[account.provider], for: account.provider, standingInFor: nil)
+    captureErrors[account.provider] = Self.activeAccountRemovalMessage
+  }
+
+  /// Claude refresh-token fingerprints cannot identify an unrenewable live
+  /// slot: the saved row hashes its refresh token while the live row falls back
+  /// to its access token. Only verified current profiles can prove such a row
+  /// belongs to another account; unresolved identity therefore fails closed so
+  /// removal never deletes the only renewable copy of a login still in a CLI.
+  private func claudeLiveIdentityBlocksRemoval(of saved: ProviderAccount) async -> Bool {
+    guard saved.provider == .claude else { return false }
+    let liveAccounts = (accounts[.claude] ?? []).filter { account in
+      switch account.credentialSource {
+      case .claudeKeychain, .claudeCredentialsFile:
+        true
+      case .codexAuthFile, .codexKeychain, .claudeEnvironment, .quotariRegistry:
+        false
       }
-      await reloadAccounts()
-    } catch {
-      captureErrors[account.provider] = error.localizedDescription
     }
+    guard !liveAccounts.isEmpty else { return false }
+    guard let savedProfile = await currentVerifiedClaudeProfile(for: saved) else { return true }
+    for live in liveAccounts {
+      guard let liveProfile = await currentVerifiedClaudeProfile(for: live) else { return true }
+      if savedProfile.identifiesSameAccount(as: liveProfile) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private func currentVerifiedClaudeProfile(for account: ProviderAccount) async -> ClaudeProfile? {
+    guard let profile = claudeProfiles[account.id],
+          !profile.isEmpty,
+          let expectedFingerprint = profile.fingerprint
+    else { return nil }
+    let loader = claudeCredentialLoader
+    let credentials = await Task.detached {
+      loader(account.credentialSource)
+    }.value
+    guard let credentials,
+          ProviderCredentialIdentity.fingerprint(of: credentials.accessToken) == expectedFingerprint
+    else { return nil }
+    return profile
   }
 
   /// Makes the saved account the CLI's actual login: its credentials are
@@ -104,7 +122,7 @@ extension UsageStore {
     // Drain whatever was already running when the gate closed.
     await inFlightRefresh?.value
     await inFlightAccountReload?.value
-    await accountUsageRefreshTasks[provider]?.task.value
+    _ = await accountUsageRefreshTasks[provider]?.task.value
     await selectionRefreshTasks[provider]?.value
     let switcher = accountSwitch
     let knownLiveTarget = knownLiveTarget(for: account)

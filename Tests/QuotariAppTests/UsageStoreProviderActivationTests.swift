@@ -140,6 +140,75 @@ struct UsageStoreProviderActivationTests {
     #expect(await strategy.maximumConcurrentRequests == 1)
   }
 
+  @Test func reactivationSerializesWithADashboardFetchRegisteredWhileItWaits() async throws {
+    let strategy = SerializedActivationStrategy()
+    let descriptor = descriptor(for: .codex, strategy: strategy)
+    let store = UsageStore.isolatedForTesting(
+      providers: [descriptor],
+      startsAutomatically: false
+    )
+    let drain = ProviderActivityDrainGate()
+    let drainingTask = Task { await drain.waitForRelease() }
+    store.accountUsageRefreshTasks[.codex] = AccountUsageRefreshTask(
+      task: drainingTask,
+      force: false
+    )
+    await drain.waitUntilStarted()
+
+    store.setProviderEnabled(.codex, enabled: false)
+    store.setProviderEnabled(.codex, enabled: true)
+    let reactivationRefresh = store.selectionRefreshTasks[.codex]
+    let dashboardRefresh = Task { await store.refresh() }
+    await strategy.waitUntilFirstRequestStarts()
+    await drain.release()
+    try await Task.sleep(for: .milliseconds(20))
+
+    #expect(await strategy.requestCount == 1)
+    await strategy.resumeFirstRequest()
+    await dashboardRefresh.value
+    await reactivationRefresh?.value
+
+    #expect(await strategy.requestCount == 2)
+    #expect(await strategy.maximumConcurrentRequests == 1)
+  }
+
+  @Test func queuedSelectionSerializesWithADashboardFetchRegisteredWhileItWaits() async throws {
+    let strategy = SerializedActivationStrategy()
+    let descriptor = descriptor(for: .codex, strategy: strategy)
+    let account = ProviderAccount(
+      provider: .codex,
+      displayName: "Selected Codex",
+      detail: nil,
+      credentialSource: .quotariRegistry(id: "codex:selected")
+    )
+    let store = UsageStore.isolatedForTesting(
+      providers: [descriptor],
+      startsAutomatically: false
+    )
+    let drain = ProviderActivityDrainGate()
+    let drainingTask = Task { await drain.waitForRelease() }
+    store.costTasks[.codex] = CostRefreshTask(
+      generation: UUID(),
+      task: drainingTask
+    )
+    await drain.waitUntilStarted()
+
+    store.selectAccount(account, for: .codex)
+    let selectionRefresh = store.selectionRefreshTasks[.codex]
+    let dashboardRefresh = Task { await store.refresh() }
+    await drain.release()
+    await strategy.waitUntilFirstRequestStarts()
+    try await Task.sleep(for: .milliseconds(20))
+
+    #expect(await strategy.requestCount == 1)
+    await strategy.resumeFirstRequest()
+    await dashboardRefresh.value
+    await selectionRefresh?.value
+
+    #expect(await strategy.requestCount == 2)
+    #expect(await strategy.maximumConcurrentRequests == 1)
+  }
+
   @Test func reenablingImmediatelyRefreshesOnlyThatProvider() async throws {
     let suiteName = "UsageStoreProviderActivationTests.\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suiteName))
@@ -263,5 +332,28 @@ private actor SerializedActivationStrategy: ProviderFetchStrategy {
   func resumeFirstRequest() {
     firstRequestContinuation?.resume()
     firstRequestContinuation = nil
+  }
+}
+
+private actor ProviderActivityDrainGate {
+  private var started = false
+  private var startWaiters: [CheckedContinuation<Void, Never>] = []
+  private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+  func waitForRelease() async {
+    started = true
+    startWaiters.forEach { $0.resume() }
+    startWaiters.removeAll()
+    await withCheckedContinuation { releaseWaiters.append($0) }
+  }
+
+  func waitUntilStarted() async {
+    guard !started else { return }
+    await withCheckedContinuation { startWaiters.append($0) }
+  }
+
+  func release() {
+    releaseWaiters.forEach { $0.resume() }
+    releaseWaiters.removeAll()
   }
 }

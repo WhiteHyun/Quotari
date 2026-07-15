@@ -131,68 +131,28 @@ struct UsageStoreSelectionReconcileTests {
     #expect(selectionStore.load()[.codex] == savedAccount)
   }
 
-  @Test func liveAccountWithASavedCopyIsNotCapturable() async {
-    // Once the current login is saved, its registry row is hidden — the live
-    // row must stop offering Save instead of re-capturing forever.
+  @Test func reloadFlagsTheSavedCopyBehindALiveAccount() async {
     let liveAccount = liveCodexAccount(identity: "acct-1")
+    let savedCopy = ProviderAccount(
+      provider: .codex,
+      displayName: "Codex",
+      detail: "Saved in Quotari",
+      credentialSource: .quotariRegistry(id: "codex:acct-1")
+    )
     let descriptor = codexDescriptor()
     let store = UsageStore.isolatedForTesting(
       providers: [descriptor],
       costEstimator: EmptyCostEstimator(),
       accountDiscovery: StaticAccountDiscovery(
         accounts: [.codex: [liveAccount]],
-        capturedCopies: [liveAccount.id: ProviderAccount(
-          provider: .codex,
-          displayName: "Codex",
-          detail: "Saved in Quotari",
-          credentialSource: .quotariRegistry(id: "codex:acct-1")
-        )]
+        capturedCopies: [liveAccount.id: savedCopy]
       ),
       startsAutomatically: false
     )
-    #expect(store.isCapturable(liveAccount))
 
     await store.reloadAccounts()
 
-    #expect(!store.isCapturable(liveAccount))
-  }
-
-  @Test func capturingTheSelectedLiveAccountAnchorsTheSelectionToTheSavedCopy() async throws {
-    let directory = try TemporaryDirectory()
-    let authURL = directory.url.appendingPathComponent("auth.json")
-    try Data(#"{"tokens":{"access_token":"tok","account_id":"acct-1","refresh_token":"ref"}}"#.utf8)
-      .write(to: authURL)
-    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: authURL.path)
-    let live = ProviderAccount(
-      provider: .codex,
-      displayName: "Live",
-      detail: "Default",
-      credentialSource: .codexAuthFile(path: authURL.path),
-      credentialIdentity: "acct-1"
-    )
-    let originID = ProviderAccount.id(provider: .codex, source: .quotariRegistry(id: "codex:acct-1"))
-    let selectionStore = ProviderAccountSelectionStore(
-      url: directory.url.appendingPathComponent("ProviderAccounts.json")
-    )
-    let descriptor = codexDescriptor()
-    let store = UsageStore.isolatedForTesting(
-      providers: [descriptor],
-      costEstimator: EmptyCostEstimator(),
-      accountDiscovery: StaticAccountDiscovery(
-        accounts: [.codex: [live]],
-        liveEquivalents: [originID: live]
-      ),
-      accountSelectionStore: selectionStore,
-      startsAutomatically: false
-    )
-    store.selectAccount(live, for: .codex)
-
-    await store.captureAccount(live)
-
-    // Runtime selection stays on the live login; the persisted selection is
-    // anchored to the saved copy so a slot reuse falls back to it.
-    #expect(store.selectedAccounts[.codex] == live)
-    #expect(selectionStore.load()[.codex]?.credentialSource == .quotariRegistry(id: "codex:acct-1"))
+    #expect(store.capturedEquivalents[liveAccount.id] == savedCopy)
   }
 
   @Test func periodicRefreshSyncsHiddenSavedCopies() async throws {

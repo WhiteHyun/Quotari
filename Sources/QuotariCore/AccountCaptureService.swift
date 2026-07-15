@@ -5,6 +5,7 @@ public enum AccountCaptureError: LocalizedError, Sendable {
   case sourceNotCapturable
   case payloadUnavailable
   case noRefreshToken
+  case credentialChanged
 
   public var errorDescription: String? {
     switch self {
@@ -14,6 +15,8 @@ public enum AccountCaptureError: LocalizedError, Sendable {
       "Couldn't read the account's credentials to save them."
     case .noRefreshToken:
       "This login has no refresh token, so a saved copy couldn't renew itself once it expires."
+    case .credentialChanged:
+      "The CLI account changed while Quotari was identifying it. Scan accounts again."
     }
   }
 }
@@ -61,6 +64,22 @@ public struct AccountCaptureService: Sendable {
       throw AccountCaptureError.payloadUnavailable
     }
     let identity = ProviderCredentialIdentity.key(provider: account.provider, payload: payload)
+    if account.provider == .codex, account.credentialScopeID != account.id {
+      guard let discoveredIdentity = ProviderCredentialIdentity.discoveredAccountIdentity(
+        provider: account.provider,
+        payload: payload
+      ) else { throw AccountCaptureError.credentialChanged }
+      let currentAccount = ProviderAccount(
+        provider: account.provider,
+        displayName: account.displayName,
+        detail: account.detail,
+        credentialSource: account.credentialSource,
+        credentialIdentity: discoveredIdentity
+      )
+      guard currentAccount.credentialScopeID == account.credentialScopeID else {
+        throw AccountCaptureError.credentialChanged
+      }
+    }
     let id = registryID(provider: account.provider, identity: identity)
     let captured = CapturedAccount(
       id: id,
@@ -75,8 +94,9 @@ public struct AccountCaptureService: Sendable {
       origin: account.credentialSource,
       payload: payload
     )
-    try capturedAccounts.save(captured)
-    return captured
+    return try capturedAccounts.upsert(captured) { existing, candidate in
+      Self.preferredCredentialSnapshot(existing: existing, candidate: candidate)
+    }
   }
 
   public func remove(id: String) throws {
@@ -102,21 +122,6 @@ public struct AccountCaptureService: Sendable {
     }
     let identity = ProviderCredentialIdentity.key(provider: provider, payload: minimized)
     let id = registryID(provider: provider, identity: identity)
-    // Refreshing an existing copy must never downgrade a fresher stored pair
-    // (a duplicate stale slot, or a rotation another path already synced).
-    // The freshness check runs inside the mutation lock so it's atomic.
-    if capturedAccounts.account(id: id) != nil {
-      let provider = provider
-      try capturedAccounts.updatePayload(id: id) { current in
-        if let stored = Self.expiry(provider: provider, payload: current),
-           let candidate = Self.expiry(provider: provider, payload: minimized),
-           candidate < stored {
-          return current
-        }
-        return minimized
-      }
-      return capturedAccounts.account(id: id)
-    }
     let captured = CapturedAccount(
       id: id,
       provider: provider,
@@ -127,8 +132,9 @@ public struct AccountCaptureService: Sendable {
       origin: origin,
       payload: minimized
     )
-    try capturedAccounts.save(captured)
-    return captured
+    return try capturedAccounts.upsert(captured) { existing, candidate in
+      Self.preferredCredentialSnapshot(existing: existing, candidate: candidate)
+    }
   }
 
   /// Refreshes a known saved account from the exact live source that still
@@ -139,15 +145,24 @@ public struct AccountCaptureService: Sendable {
   public func refreshCapturedAccount(
     id: String,
     provider: UsageProvider,
-    payload: Data
+    payload: Data,
+    requiresNewerGenerationEvidence: Bool = false
   ) throws -> CapturedAccount {
     guard let existing = capturedAccounts.account(id: id), existing.provider == provider,
           let minimized = ProviderCredentialMinimizer.minimize(provider: provider, payload: payload)
     else { throw AccountCaptureError.payloadUnavailable }
-    // The caller must supply independent identity/generation proof before
-    // choosing this explicit id. Once proven, the current rotated pair wins
-    // even if the provider shortened or omitted its expiry.
-    try capturedAccounts.updatePayload(id: id) { _ in minimized }
+    // Automatic profile matching supplies stable-account proof but does not
+    // order two token generations. That path requests a freshness guard; the
+    // explicit switch backup path has stronger transaction evidence and keeps
+    // its existing replacement behavior. The guarded decision runs inside the
+    // mutation lock so a concurrent refresh cannot be overwritten afterward.
+    try capturedAccounts.updatePayload(id: id) { current in
+      guard provider == .claude, requiresNewerGenerationEvidence else { return minimized }
+      return ProviderCredentialIdentity.claudeCandidateCanReplace(
+        storedPayload: current,
+        candidatePayload: minimized
+      ) ? minimized : current
+    }
     guard let refreshed = capturedAccounts.account(id: id) else {
       throw AccountCaptureError.payloadUnavailable
     }
@@ -205,20 +220,11 @@ public struct AccountCaptureService: Sendable {
     }
   }
 
-  /// The access-token expiry a payload reports, used to order competing
-  /// snapshots of the same identity.
-  private static func expiry(provider: UsageProvider, payload: Data) -> Date? {
-    switch provider {
-    case .codex: (try? CodexCredentialsStore.parse(payload))?.expiresAt
-    case .claude: (try? ClaudeCredentialsStore.parse(payload))?.expiresAt
-    }
-  }
-
   public func captured() -> [CapturedAccount] {
     capturedAccounts.load()
   }
 
-  private func rawPayload(for source: ProviderCredentialSource) -> Data? {
+  func rawPayload(for source: ProviderCredentialSource) -> Data? {
     switch source {
     case let .codexAuthFile(path):
       // Validate through the Codex loader first so its insecure-permissions

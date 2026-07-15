@@ -60,6 +60,7 @@ extension UsageStore {
 
     selectionRefreshTasks[provider]?.cancel()
     providerFetchTasks[provider]?.task.cancel()
+    selectionProviderFetchTasks[provider]?.task.cancel()
     accountUsageRefreshTasks[provider]?.task.cancel()
     quotaNotifications.setActiveLogicalAccountID(nil, for: provider)
     reconcileMenuBarUsageSource()

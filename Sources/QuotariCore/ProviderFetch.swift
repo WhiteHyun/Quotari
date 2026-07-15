@@ -37,17 +37,32 @@ public struct ProviderFetchResult: Sendable {
   /// Accountless consumers can compare it with a later discovery before
   /// attributing the result to a mutable CLI slot.
   public let credentialScopeID: String?
+  /// The credential generation installed by an OAuth transaction in this
+  /// fetch. This remains separate from `credentialScopeID`: a later fallback
+  /// can produce usage without using that credential, while the already-
+  /// persisted transition still has to be reconciled by account discovery.
+  public let credentialTransitionTargetScopeID: String?
+  /// Credential generations that an OAuth transaction in this fetch
+  /// explicitly advanced to `credentialTransitionTargetScopeID`. Merely
+  /// observing that a mutable CLI slot changed is not transition proof: an
+  /// external login can replace the slot while the request is in flight.
+  public let credentialTransitionSourceScopeIDs: Set<String>
 
   public init(
     usage: UsageSnapshot,
     sourceLabel: String,
     sourceKind: ProviderFetchKind? = nil,
-    credentialScopeID: String? = nil
+    credentialScopeID: String? = nil,
+    credentialTransitionTargetScopeID: String? = nil,
+    credentialTransitionSourceScopeIDs: Set<String> = []
   ) {
     self.usage = usage
     self.sourceLabel = sourceLabel
     self.sourceKind = sourceKind
     self.credentialScopeID = credentialScopeID
+    self.credentialTransitionTargetScopeID = credentialTransitionTargetScopeID
+      ?? (credentialTransitionSourceScopeIDs.isEmpty ? nil : credentialScopeID)
+    self.credentialTransitionSourceScopeIDs = credentialTransitionSourceScopeIDs
   }
 
   func withSourceKind(_ kind: ProviderFetchKind) -> ProviderFetchResult {
@@ -55,8 +70,77 @@ public struct ProviderFetchResult: Sendable {
       usage: usage,
       sourceLabel: sourceLabel,
       sourceKind: sourceKind ?? kind,
-      credentialScopeID: credentialScopeID
+      credentialScopeID: credentialScopeID,
+      credentialTransitionTargetScopeID: credentialTransitionTargetScopeID,
+      credentialTransitionSourceScopeIDs: credentialTransitionSourceScopeIDs
     )
+  }
+
+  func mergingCredentialTransition(
+    targetScopeID: String?,
+    sourceScopeIDs: Set<String>
+  ) -> ProviderFetchResult {
+    guard let targetScopeID, !sourceScopeIDs.isEmpty else { return self }
+    if let currentTarget = credentialTransitionTargetScopeID {
+      if currentTarget == targetScopeID {
+        return ProviderFetchResult(
+          usage: usage,
+          sourceLabel: sourceLabel,
+          sourceKind: sourceKind,
+          credentialScopeID: credentialScopeID,
+          credentialTransitionTargetScopeID: currentTarget,
+          credentialTransitionSourceScopeIDs: credentialTransitionSourceScopeIDs.union(sourceScopeIDs)
+        )
+      }
+      guard credentialTransitionSourceScopeIDs.contains(targetScopeID) else {
+        // Conflicting transition chains are not safe identity evidence. Keep
+        // only the result's own proof; dropping an earlier link can lose an
+        // anchor, but can never transfer it to an unrelated login.
+        return self
+      }
+      // The result is the later B -> C leg and the accumulated evidence is
+      // A -> B. Preserve the transitive A -> C lineage.
+      return ProviderFetchResult(
+        usage: usage,
+        sourceLabel: sourceLabel,
+        sourceKind: sourceKind,
+        credentialScopeID: credentialScopeID,
+        credentialTransitionTargetScopeID: currentTarget,
+        credentialTransitionSourceScopeIDs: credentialTransitionSourceScopeIDs.union(sourceScopeIDs)
+      )
+    }
+    return ProviderFetchResult(
+      usage: usage,
+      sourceLabel: sourceLabel,
+      sourceKind: sourceKind,
+      credentialScopeID: credentialScopeID,
+      credentialTransitionTargetScopeID: targetScopeID,
+      credentialTransitionSourceScopeIDs: credentialTransitionSourceScopeIDs.union(sourceScopeIDs)
+    )
+  }
+}
+
+/// Carries a credential transition that completed before a later part of the
+/// provider request failed. The underlying failure remains authoritative for
+/// fallback and UI error behavior; the transition is side-effect evidence for
+/// account reconciliation only.
+public struct ProviderFetchTransitionError: LocalizedError, @unchecked Sendable {
+  public let underlying: any Error
+  public let credentialTransitionTargetScopeID: String
+  public let credentialTransitionSourceScopeIDs: Set<String>
+
+  public init(
+    underlying: any Error,
+    credentialTransitionTargetScopeID: String,
+    credentialTransitionSourceScopeIDs: Set<String>
+  ) {
+    self.underlying = underlying
+    self.credentialTransitionTargetScopeID = credentialTransitionTargetScopeID
+    self.credentialTransitionSourceScopeIDs = credentialTransitionSourceScopeIDs
+  }
+
+  public var errorDescription: String? {
+    underlying.localizedDescription
   }
 }
 
@@ -106,25 +190,74 @@ public struct ProviderFetchPipeline: Sendable {
 
   public func fetch(_ context: ProviderFetchContext) async -> Result<ProviderFetchResult, Error> {
     var lastError: Error?
+    var transitions = ProviderCredentialTransitionAccumulator()
     for strategy in resolveStrategies(context) {
       if Task.isCancelled {
-        return .failure(CancellationError())
+        return .failure(transitions.wrapping(CancellationError()))
       }
       guard await strategy.isAvailable(context) else { continue }
       do {
         let result = try await strategy.fetch(context)
-        return .success(result.withSourceKind(strategy.kind))
+          .withSourceKind(strategy.kind)
+          .mergingCredentialTransition(
+            targetScopeID: transitions.targetScopeID,
+            sourceScopeIDs: transitions.sourceScopeIDs
+          )
+        return .success(result)
       } catch {
         if error is CancellationError {
-          return .failure(error)
+          return .failure(transitions.wrapping(error))
         }
-        lastError = error
-        if strategy.shouldFallback(on: error) {
+        let underlying = transitions.record(error)
+        if underlying is CancellationError {
+          return .failure(transitions.wrapping(underlying))
+        }
+        lastError = underlying
+        if strategy.shouldFallback(on: underlying) {
           continue
         }
-        return .failure(error)
+        return .failure(transitions.wrapping(underlying))
       }
     }
-    return .failure(lastError ?? ProviderFetchError.noStrategyAvailable(context.provider))
+    return .failure(transitions.wrapping(
+      lastError ?? ProviderFetchError.noStrategyAvailable(context.provider)
+    ))
+  }
+}
+
+private struct ProviderCredentialTransitionAccumulator {
+  private(set) var targetScopeID: String?
+  private(set) var sourceScopeIDs = Set<String>()
+  private var isConflicting = false
+
+  mutating func record(_ error: any Error) -> any Error {
+    guard let transition = error as? ProviderFetchTransitionError else { return error }
+    defer { merge(transition) }
+    return transition.underlying
+  }
+
+  func wrapping(_ error: any Error) -> any Error {
+    guard let targetScopeID, !sourceScopeIDs.isEmpty else { return error }
+    return ProviderFetchTransitionError(
+      underlying: error,
+      credentialTransitionTargetScopeID: targetScopeID,
+      credentialTransitionSourceScopeIDs: sourceScopeIDs
+    )
+  }
+
+  private mutating func merge(_ transition: ProviderFetchTransitionError) {
+    guard !isConflicting else { return }
+    if targetScopeID == nil || targetScopeID == transition.credentialTransitionTargetScopeID {
+      targetScopeID = transition.credentialTransitionTargetScopeID
+      sourceScopeIDs.formUnion(transition.credentialTransitionSourceScopeIDs)
+    } else if let targetScopeID,
+              transition.credentialTransitionSourceScopeIDs.contains(targetScopeID) {
+      self.targetScopeID = transition.credentialTransitionTargetScopeID
+      sourceScopeIDs.formUnion(transition.credentialTransitionSourceScopeIDs)
+    } else {
+      isConflicting = true
+      targetScopeID = nil
+      sourceScopeIDs.removeAll()
+    }
   }
 }
