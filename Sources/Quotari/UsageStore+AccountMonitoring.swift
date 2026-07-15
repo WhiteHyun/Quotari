@@ -21,7 +21,23 @@ extension UsageStore {
       visible.append(account)
     }
     monitoredAccounts[provider] = visible
-    try? accountMonitoringStore.save(persistedMonitoredAccounts)
+    // A direct user action is authoritative enough to repair a malformed file
+    // or retry a previous write failure. Automatic reconciliation continues
+    // to fail closed through the default persistence path.
+    persistMonitoringSelections(allowsRecovery: true)
+  }
+
+  func persistMonitoringSelections(allowsRecovery: Bool = false) {
+    guard isMonitoringConfigurationLoaded || allowsRecovery else { return }
+    do {
+      try accountMonitoringStore.save(persistedMonitoredAccounts)
+      isMonitoringConfigurationLoaded = true
+    } catch {
+      // An atomic write failure should not be followed by later writes based
+      // on a state that was never durably established. A later direct user
+      // action may retry this same recovery path.
+      isMonitoringConfigurationLoaded = false
+    }
   }
 
   func activeCLIAccount(for provider: UsageProvider) -> ProviderAccount? {

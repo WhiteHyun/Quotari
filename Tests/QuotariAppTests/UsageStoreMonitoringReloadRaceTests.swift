@@ -90,7 +90,7 @@ struct UsageStoreMonitoringReloadRaceTests {
     await reload.value
 
     #expect(store.monitoredAccounts[.codex] == [])
-    #expect(monitoringStore.load()[.codex] == [])
+    #expect(try monitoringStore.load()[.codex] == [])
   }
 
   private func descriptor(for provider: UsageProvider) -> ProviderDescriptor {

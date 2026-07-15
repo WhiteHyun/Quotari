@@ -118,7 +118,30 @@ struct ProviderAccountMonitoringStoreTests {
 
     try store.save([.codex: [personal, work], .claude: []])
 
-    #expect(store.load() == [.codex: [personal, work], .claude: []])
+    #expect(try store.load() == [.codex: [personal, work], .claude: []])
+  }
+
+  @Test func malformedConfigurationDoesNotLookLikeFirstLaunch() throws {
+    let directory = try TemporaryDirectory()
+    let url = directory.url.appendingPathComponent("MonitoredProviderAccounts.json")
+    try Data("not-json".utf8).write(to: url)
+    let store = ProviderAccountMonitoringStore(url: url)
+
+    #expect(throws: (any Error).self) {
+      try store.load()
+    }
+  }
+
+  @Test func duplicateProviderConfigurationThrowsInsteadOfTrapping() throws {
+    let directory = try TemporaryDirectory()
+    let url = directory.url.appendingPathComponent("MonitoredProviderAccounts.json")
+    try Data(#"{"selections":[{"provider":"codex","accounts":[]},{"provider":"codex","accounts":[]}]}"#.utf8)
+      .write(to: url)
+    let store = ProviderAccountMonitoringStore(url: url)
+
+    #expect(throws: DecodingError.self) {
+      try store.load()
+    }
   }
 }
 

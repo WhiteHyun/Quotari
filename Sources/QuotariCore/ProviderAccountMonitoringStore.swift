@@ -20,11 +20,19 @@ public struct ProviderAccountMonitoringStore: Sendable {
 
   /// A missing provider means the user has not configured monitoring yet.
   /// An explicitly persisted empty array means the user chose to monitor none.
-  public func load() -> [UsageProvider: [ProviderAccount]] {
-    guard let data = try? Data(contentsOf: url),
-          let payload = try? JSONDecoder().decode(Payload.self, from: data)
-    else { return [:] }
-    return Dictionary(uniqueKeysWithValues: payload.selections.map { ($0.provider, $0.accounts) })
+  public func load() throws -> [UsageProvider: [ProviderAccount]] {
+    guard FileManager.default.fileExists(atPath: url.path) else { return [:] }
+    let data = try Data(contentsOf: url)
+    let payload = try JSONDecoder().decode(Payload.self, from: data)
+    return try payload.selections.reduce(into: [:]) { selections, selection in
+      guard selections[selection.provider] == nil else {
+        throw DecodingError.dataCorrupted(.init(
+          codingPath: [],
+          debugDescription: "Duplicate monitoring selection for \(selection.provider.rawValue)"
+        ))
+      }
+      selections[selection.provider] = selection.accounts
+    }
   }
 
   public func save(_ selections: [UsageProvider: [ProviderAccount]]) throws {

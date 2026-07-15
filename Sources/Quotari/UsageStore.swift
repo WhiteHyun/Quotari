@@ -23,6 +23,10 @@ final class UsageStore {
   /// managed registry account so a mutable credential slot cannot transfer
   /// monitoring to a different login after an external switch.
   var persistedMonitoredAccounts: [UsageProvider: [ProviderAccount]] = [:]
+  /// False when the persisted monitoring file could not be read. In that
+  /// state monitoring fails closed and no partial in-memory view may replace
+  /// the user's last durable choices.
+  var isMonitoringConfigurationLoaded = true
   /// The hidden saved registry copy behind each live account, keyed by the
   /// live account's id — identities that are saved while also being live.
   private(set) var capturedEquivalents: [String: ProviderAccount] = [:]
@@ -190,7 +194,14 @@ final class UsageStore {
     self.menuBarPreferences = menuBarPreferences ?? MenuBarPreferencesController(defaults: defaults)
     self.quotaNotifications = quotaNotifications ?? QuotaNotificationController(defaults: defaults)
     selectedAccounts = accountSelectionStore.load()
-    persistedMonitoredAccounts = self.accountMonitoringStore.load()
+    do {
+      persistedMonitoredAccounts = try self.accountMonitoringStore.load()
+    } catch {
+      // Explicit empty arrays prevent a read failure from being mistaken for
+      // first launch and turning monitoring back on for every discovered row.
+      persistedMonitoredAccounts = Dictionary(uniqueKeysWithValues: providers.map { ($0.id, []) })
+      isMonitoringConfigurationLoaded = false
+    }
     claudeProfiles = profileStore.load()
     // refreshInterval has no inline default: its first assignment runs the
     // @Observable-generated init accessor instead of the setter, so restoring
@@ -318,6 +329,7 @@ extension UsageStore {
     // Settings toggle can run while this main-actor reload is suspended; using
     // the latest persisted choices here prevents an earlier provider snapshot
     // from overwriting that user action when a later provider finishes.
+    let persistedMonitoringBeforeReconciliation = persistedMonitoredAccounts
     var nextMonitoredAccounts: [UsageProvider: [ProviderAccount]] = [:]
     for descriptor in providers {
       nextMonitoredAccounts[descriptor.id] = reloadedMonitoredAccounts(
@@ -335,7 +347,9 @@ extension UsageStore {
     for (provider, update) in refreshedSelections {
       selectAccount(update.account, for: provider, standingInFor: update.origin)
     }
-    try? accountMonitoringStore.save(persistedMonitoredAccounts)
+    if persistedMonitoredAccounts != persistedMonitoringBeforeReconciliation {
+      persistMonitoringSelections()
+    }
     await migrateCachedClaudeProfilesToCapturedAccounts()
     await syncCapturedCopies(of: syncCandidates)
     refreshClaudeProfiles()
