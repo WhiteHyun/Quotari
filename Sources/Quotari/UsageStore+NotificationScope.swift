@@ -16,9 +16,13 @@ extension UsageStore {
         sourceKind: sourceKind,
         credentialScopeID: credentialScopeID
       ) else { return .staleCredential }
-      let logicalAccount = provider == .claude
-        ? account
-        : reconciledSelectionOrigins[provider] ?? account
+      let logicalAccount = if provider == .claude {
+        account
+      } else if selectedAccounts[provider]?.id == account.id {
+        reconciledSelectionOrigins[provider] ?? account
+      } else {
+        account
+      }
       return notificationScopeResolution(
         for: logicalAccount,
         claudeCredentialFingerprint: claudeCredentialFingerprint

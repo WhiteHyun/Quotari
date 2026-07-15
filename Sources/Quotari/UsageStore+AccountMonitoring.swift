@@ -16,7 +16,11 @@ extension UsageStore {
     persistedMonitoredAccounts[provider] = persisted
 
     var visible = monitoredAccounts[provider] ?? []
-    visible.removeAll { $0.id == account.id }
+    visible.removeAll { visibleAccount in
+      let visibleLogicalAccount = capturedEquivalents[visibleAccount.id] ?? visibleAccount
+      return visibleAccount.id == account.id
+        || visibleLogicalAccount.id == logicalAccount.id
+    }
     if isMonitored {
       visible.append(account)
     }

@@ -41,6 +41,7 @@ struct MonitoringUsageStrategy: ProviderFetchStrategy {
   let automaticCredentialScopeID: String?
   let automaticAccountName: String?
   let explicitCredentialScopeID: String?
+  let automaticFailureTransitionTargetScopeID: String?
   let automaticTransitionSourceScopeIDs: Set<String>
   let gate: MonitoringUsageGate?
   let id = "monitoring-usage"
@@ -49,6 +50,13 @@ struct MonitoringUsageStrategy: ProviderFetchStrategy {
   func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
     await gate?.suspendFirstRequest()
     await recorder.record(context.account)
+    if context.account == nil, let automaticFailureTransitionTargetScopeID {
+      throw ProviderFetchTransitionError(
+        underlying: ProviderFetchError.emptyUsage(context.provider),
+        credentialTransitionTargetScopeID: automaticFailureTransitionTargetScopeID,
+        credentialTransitionSourceScopeIDs: automaticTransitionSourceScopeIDs
+      )
+    }
     return ProviderFetchResult(
       usage: UsageSnapshot(
         provider: context.provider,

@@ -50,6 +50,7 @@ extension UsageStore {
     return ProviderAccountReloadState(
       provider: provider,
       accounts: providerAccounts,
+      discoveredAccounts: reload.accounts,
       capturedCopies: reload.capturedCopies,
       credentialTransitions: reload.credentialTransitions,
       selectionUpdate: update,
@@ -65,15 +66,16 @@ extension UsageStore {
     guard let state else { return [] }
     let provider = state.provider
     let accounts = state.accounts
+    let discoveredAccounts = state.discoveredAccounts
     let credentialTransitions = state.credentialTransitions
     guard let persisted = persistedMonitoredAccounts[provider] else {
       // Missing means "not configured yet" while an explicit empty array means
       // the user chose none. Do not collapse those states before an account is
       // available, or a later first login would never become monitored.
-      guard !accounts.isEmpty else { return [] }
-      let logicalAccounts = accounts.map { capturedCopies[$0.id] ?? $0 }
+      guard !discoveredAccounts.isEmpty else { return [] }
+      let logicalAccounts = discoveredAccounts.map { capturedCopies[$0.id] ?? $0 }
       persistedMonitoredAccounts[provider] = logicalAccounts.uniquedByID()
-      return accounts
+      return discoveredAccounts
     }
 
     var migrated = persisted
@@ -213,6 +215,7 @@ extension UsageStore {
 struct ProviderAccountReloadState {
   var provider: UsageProvider
   var accounts: [ProviderAccount]
+  var discoveredAccounts: [ProviderAccount]
   var capturedCopies: [String: ProviderAccount]
   var credentialTransitions: [String: String]
   var selectionUpdate: SelectionUpdate?

@@ -299,6 +299,7 @@ final class MonitoringFixture {
     automaticCredentialScopeID: String? = nil,
     automaticAccountName: String? = nil,
     explicitCredentialScopeID: String? = nil,
+    automaticFailureTransitionTargetScopeID: String? = nil,
     automaticTransitionSourceScopeIDs: Set<String> = [],
     strategyGate: MonitoringUsageGate? = nil
   ) throws {
@@ -331,6 +332,7 @@ final class MonitoringFixture {
           automaticCredentialScopeID: automaticCredentialScopeID,
           automaticAccountName: automaticAccountName,
           explicitCredentialScopeID: explicitCredentialScopeID,
+          automaticFailureTransitionTargetScopeID: automaticFailureTransitionTargetScopeID,
           automaticTransitionSourceScopeIDs: automaticTransitionSourceScopeIDs,
           gate: strategyGate
         )]

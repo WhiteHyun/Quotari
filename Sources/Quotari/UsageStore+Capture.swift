@@ -243,15 +243,17 @@ extension UsageStore {
   }
 
   /// An implicit provider fetch (`account == nil`) follows the provider's
-  /// first discovered live source, matching credential resolution order. Keep
-  /// that source's saved-copy link attached to every refresh so consecutive
-  /// token rotations form A -> B -> C in the registry instead of leaving A
-  /// behind and trying to apply only the final B -> C grant later.
+  /// active CLI source. Keep that source's saved-copy link attached to every
+  /// refresh so consecutive token rotations form A -> B -> C in the registry
+  /// instead of leaving A behind and trying to apply only the final B -> C
+  /// grant later.
   func capturedRegistryIDForFetch(
     provider: UsageProvider,
     selectedAccount: ProviderAccount?
   ) -> String? {
-    capturedRegistryID(for: selectedAccount ?? accounts[provider]?.first)
+    capturedRegistryID(
+      for: selectedAccount ?? activeCLIAccounts[provider] ?? accounts[provider]?.first
+    )
   }
 
   /// Hidden saved copies track the live credential's own token rotations —

@@ -183,8 +183,23 @@ extension UsageStore {
     by completion: ProviderFetchCompletion,
     provider: UsageProvider
   ) -> Set<String> {
-    guard case let .success(value) = completion.result, value.sourceKind != .mock else { return [] }
     var scopeIDs = Set<String>()
+    if let transition = completion.result.credentialTransitionEvidence {
+      // A refresh may rotate the credential before a later usage request
+      // fails. The proven source scopes still belong to this fetch and must
+      // not be refreshed again through the stale discovered rows.
+      scopeIDs.formUnion(transition.sourceScopeIDs)
+    }
+    guard case let .success(value) = completion.result, value.sourceKind != .mock else {
+      return scopeIDs
+    }
+    if let fetchedAccount = completion.account,
+       !fetchResult(value, belongsTo: fetchedAccount) {
+      // The mutable slot was replaced by an unrelated login after discovery.
+      // Do not let its reported scope suppress that account's real monitored
+      // refresh, and do not claim the stale requested row was covered.
+      return scopeIDs
+    }
     // Prefer explicit fetch evidence. Older/custom strategies may omit it, so
     // fall back to the account captured for this fetch, or automatic mode's
     // effective CLI account. Row order is unrelated to credential resolution.
@@ -192,9 +207,6 @@ extension UsageStore {
       scopeIDs.insert(credentialScopeID)
     } else if let fetchedAccount = completion.account ?? activeCLIAccounts[provider] {
       scopeIDs.insert(fetchedAccount.credentialScopeID)
-    }
-    if let transition = completion.result.credentialTransitionEvidence {
-      scopeIDs.formUnion(transition.sourceScopeIDs)
     }
     if let selectedAccount = completion.account {
       // A successful refresh may rotate the credential generation. Keep the
@@ -257,6 +269,10 @@ extension UsageStore {
   ) {
     switch result {
     case let .success(value):
+      if let account, value.sourceKind != .mock,
+         !fetchResult(value, belongsTo: account) {
+        return
+      }
       applySuccessfulFetch(value, provider: provider, account: account)
     case let .failure(error):
       errors[provider] = error.localizedDescription // keep any prior snapshot
