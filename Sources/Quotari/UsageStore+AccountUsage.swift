@@ -322,6 +322,13 @@ extension UsageStore {
               (accountRevisions[provider] ?? 0) == revision,
               self.accounts[provider]?.contains(account) == true
         else { continue }
+        if case let .success(value) = result,
+           !fetchResult(value, belongsTo: account) {
+          // A mutable credential source can be replaced after discovery but
+          // before its fetch reads the file/keychain. Never publish account B's
+          // usage under the stale row for account A.
+          continue
+        }
         applyAccountUsageResult(result, account: account)
       }
       return credentialTransitions

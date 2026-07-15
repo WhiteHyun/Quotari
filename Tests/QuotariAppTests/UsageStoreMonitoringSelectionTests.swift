@@ -52,6 +52,46 @@ struct UsageStoreMonitoringSelectionTests {
     #expect(fixture.monitoringStore.load()[.codex] == [saved, MonitoringFixture.work])
   }
 
+  @Test func emptyFirstScanRemainsUnconfiguredUntilAnAccountAppears() async throws {
+    let discovery = MutableAccountDiscovery(StaticAccountDiscovery())
+    let fixture = try MonitoringFixture(
+      accounts: [],
+      monitored: nil,
+      accountDiscovery: discovery
+    )
+    defer { fixture.remove() }
+
+    await fixture.store.reloadAccounts()
+    #expect(fixture.monitoringStore.load()[.codex] == nil)
+
+    discovery.update(StaticAccountDiscovery(accounts: [.codex: [MonitoringFixture.personal]]))
+    await fixture.store.reloadAccounts()
+
+    #expect(fixture.store.monitoredAccounts[.codex] == [MonitoringFixture.personal])
+    #expect(fixture.monitoringStore.load()[.codex] == [MonitoringFixture.personal])
+  }
+
+  @Test func laterCaptureMigratesPersistedLiveSelectionToManagedIdentity() async throws {
+    let live = MonitoringFixture.personal
+    let saved = ProviderAccount(
+      provider: .codex,
+      displayName: "Personal",
+      detail: "Saved in Quotari",
+      credentialSource: .quotariRegistry(id: "codex:personal")
+    )
+    let fixture = try MonitoringFixture(
+      accounts: [live],
+      capturedCopies: [live.id: saved],
+      monitored: [.codex: [live]]
+    )
+    defer { fixture.remove() }
+
+    await fixture.store.reloadAccounts()
+
+    #expect(fixture.store.monitoredAccounts[.codex] == [live])
+    #expect(fixture.monitoringStore.load()[.codex] == [saved])
+  }
+
   @Test func replacedMutableSlotDoesNotInheritMonitoringSelection() async throws {
     let replacement = ProviderAccount(
       provider: .codex,
@@ -85,6 +125,72 @@ struct UsageStoreMonitoringSelectionTests {
     #expect(await fixture.recorder.names == ["Work", "Personal"])
     #expect(fixture.store.accountUsage(for: MonitoringFixture.personal)?.snapshot != nil)
     #expect(fixture.store.accountUsage(for: MonitoringFixture.work)?.snapshot != nil)
+  }
+
+  @Test func automaticRefreshExcludesTheCredentialReportedByTheProvider() async throws {
+    let fixture = try MonitoringFixture(
+      monitored: [.codex: [MonitoringFixture.personal, MonitoringFixture.work]],
+      automaticCredentialScopeID: MonitoringFixture.work.credentialScopeID,
+      automaticAccountName: MonitoringFixture.work.displayName
+    )
+    defer { fixture.remove() }
+    await fixture.store.reloadAccounts()
+
+    await fixture.store.refresh()
+
+    #expect(await fixture.recorder.names == ["Automatic", "Personal"])
+    #expect(fixture.store.accountUsage(for: MonitoringFixture.personal)?.snapshot != nil)
+    #expect(fixture.store.accountUsage(for: MonitoringFixture.work)?.snapshot != nil)
+  }
+
+  @Test func periodicRefreshRediscoveryRejectsAReplacedMonitoredSlot() async throws {
+    let saved = ProviderAccount(
+      provider: .codex,
+      displayName: "Saved",
+      detail: "Saved in Quotari",
+      credentialSource: .quotariRegistry(id: "codex:saved")
+    )
+    let replacement = ProviderAccount(
+      provider: .codex,
+      displayName: "Replacement",
+      detail: "Default",
+      credentialSource: MonitoringFixture.personal.credentialSource,
+      credentialIdentity: "replacement"
+    )
+    let discovery = MutableAccountDiscovery(StaticAccountDiscovery(
+      accounts: [.codex: [MonitoringFixture.personal, saved]]
+    ))
+    let fixture = try MonitoringFixture(
+      accounts: [],
+      selected: [.codex: saved],
+      monitored: [.codex: [MonitoringFixture.personal]],
+      accountDiscovery: discovery
+    )
+    defer { fixture.remove() }
+    await fixture.store.reloadAccounts()
+    discovery.update(StaticAccountDiscovery(accounts: [.codex: [replacement, saved]]))
+
+    await fixture.store.refresh()
+
+    #expect(await fixture.recorder.names == ["Saved"])
+    #expect(fixture.store.monitoredAccounts[.codex] == [])
+    #expect(fixture.store.accountUsage(for: MonitoringFixture.personal) == nil)
+    #expect(fixture.store.accountUsage(for: replacement) == nil)
+  }
+
+  @Test func accountRefreshRejectsUsageFromAReplacedCredentialScope() async throws {
+    let fixture = try MonitoringFixture(
+      accounts: [MonitoringFixture.personal],
+      monitored: [.codex: [MonitoringFixture.personal]],
+      explicitCredentialScopeID: MonitoringFixture.work.credentialScopeID
+    )
+    defer { fixture.remove() }
+    await fixture.store.reloadAccounts()
+
+    await fixture.store.refreshAccountUsage(for: .codex, force: true)
+
+    #expect(await fixture.recorder.names == ["Personal"])
+    #expect(fixture.store.accountUsage(for: MonitoringFixture.personal) == nil)
   }
 
   @Test func dashboardSelectionDoesNotChangeTheCLIActiveAccount() async throws {
@@ -134,7 +240,11 @@ private final class MonitoringFixture {
     accounts: [ProviderAccount] = [personal, work],
     capturedCopies: [String: ProviderAccount] = [:],
     selected: [UsageProvider: ProviderAccount] = [:],
-    monitored: [UsageProvider: [ProviderAccount]]?
+    monitored: [UsageProvider: [ProviderAccount]]?,
+    accountDiscovery: (any ProviderAccountDiscovering)? = nil,
+    automaticCredentialScopeID: String? = nil,
+    automaticAccountName: String? = nil,
+    explicitCredentialScopeID: String? = nil
   ) throws {
     directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("quotari-monitoring-\(UUID().uuidString)", isDirectory: true)
@@ -157,11 +267,18 @@ private final class MonitoringFixture {
         accent: .init(0, 0.6, 0.5),
         supportsWeekly: true
       ),
-      pipeline: ProviderFetchPipeline { _ in [MonitoringUsageStrategy(recorder: recorder)] }
+      pipeline: ProviderFetchPipeline { _ in
+        [MonitoringUsageStrategy(
+          recorder: recorder,
+          automaticCredentialScopeID: automaticCredentialScopeID,
+          automaticAccountName: automaticAccountName,
+          explicitCredentialScopeID: explicitCredentialScopeID
+        )]
+      }
     )
     store = UsageStore.isolatedForTesting(
       providers: [descriptor],
-      accountDiscovery: StaticAccountDiscovery(
+      accountDiscovery: accountDiscovery ?? StaticAccountDiscovery(
         accounts: [.codex: accounts],
         capturedCopies: capturedCopies
       ),
@@ -186,6 +303,9 @@ private actor MonitoringUsageRecorder {
 
 private struct MonitoringUsageStrategy: ProviderFetchStrategy {
   let recorder: MonitoringUsageRecorder
+  let automaticCredentialScopeID: String?
+  let automaticAccountName: String?
+  let explicitCredentialScopeID: String?
   let id = "monitoring-usage"
   let kind = ProviderFetchKind.api
 
@@ -194,11 +314,15 @@ private struct MonitoringUsageStrategy: ProviderFetchStrategy {
     return ProviderFetchResult(
       usage: UsageSnapshot(
         provider: context.provider,
+        account: context.account?.displayName ?? automaticAccountName,
         primary: RateWindow(kind: .session, usedPercent: 25),
         secondary: nil,
         updatedAt: context.now
       ),
-      sourceLabel: "Test"
+      sourceLabel: "Test",
+      credentialScopeID: context.account == nil
+        ? automaticCredentialScopeID
+        : explicitCredentialScopeID ?? context.account?.credentialScopeID
     )
   }
 }

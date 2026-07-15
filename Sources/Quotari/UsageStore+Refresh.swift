@@ -72,7 +72,10 @@ extension UsageStore {
   }
 
   func prepareReconciledAccountsForRefresh() async -> Bool {
-    guard !reconciledSelectionOrigins.isEmpty else { return true }
+    let hasMutableMonitoredAccount = monitoredAccounts.contains { provider, accounts in
+      isProviderEnabled(provider) && accounts.contains { !$0.credentialSource.isCaptured }
+    }
+    guard !reconciledSelectionOrigins.isEmpty || hasMutableMonitoredAccount else { return true }
     guard !isSwitching else {
       // The switch already owes a post-write discovery. Queue this request
       // without making the refresh being drained wait behind its own gate.
@@ -111,9 +114,19 @@ extension UsageStore {
         guard isProviderEnabled(provider),
               (accountRevisions[provider] ?? 0) == completion.revision
         else { continue }
-        let fetchedAccount = completion.account ?? accounts[provider]?.first
-        if let fetchedAccount {
-          fetchedCredentialScopeIDs[provider, default: []].insert(fetchedAccount.credentialScopeID)
+        if case let .success(value) = completion.result, value.sourceKind != .mock {
+          // Automatic mode has no selected account, so only the provider result
+          // can identify the credential actually used. Row order is unrelated
+          // to Codex's effective CODEX_HOME/keyring resolution.
+          if let credentialScopeID = value.credentialScopeID {
+            fetchedCredentialScopeIDs[provider, default: []].insert(credentialScopeID)
+          }
+          if let selectedAccount = completion.account {
+            // A successful refresh may rotate the credential generation. Keep
+            // the selected row's pre-rotation scope excluded as the same logical
+            // account so it is not fetched twice in this pass.
+            fetchedCredentialScopeIDs[provider, default: []].insert(selectedAccount.credentialScopeID)
+          }
         }
         apply(provider: provider, account: completion.account, result: completion.result)
       }
