@@ -137,7 +137,7 @@ struct AccountsPreferencesView: View {
       set: { isMonitored in
         store.setMonitoring(isMonitored, for: account)
         guard isMonitored else { return }
-        Task { await store.refreshAccountUsage(for: account.provider, force: true) }
+        Task { await store.refreshAccountUsage(for: account) }
       }
     )
   }

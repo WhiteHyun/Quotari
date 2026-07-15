@@ -112,7 +112,7 @@ struct ProviderAccountPopover: View {
         isSelected: isSelected,
         isCLIActive: isCLIActive,
         isMonitored: isMonitored,
-        isLoading: store.refreshingAccountUsageProviders.contains(descriptor.id) && usage == nil,
+        isLoading: isMonitored && store.refreshingAccountUsageProviders.contains(descriptor.id) && usage == nil,
         accent: accent
       )
     }
@@ -127,7 +127,7 @@ struct ProviderAccountPopover: View {
       let shouldMonitor = !store.isMonitoring(account)
       store.setMonitoring(shouldMonitor, for: account)
       if shouldMonitor {
-        Task { await store.refreshAccountUsage(for: descriptor.id, force: true) }
+        Task { await store.refreshAccountUsage(for: account) }
       }
     }
     if store.capturedEquivalents.keys.contains(account.id) {

@@ -193,6 +193,27 @@ struct UsageStoreMonitoringSelectionTests {
     #expect(fixture.store.accountUsage(for: MonitoringFixture.personal) == nil)
   }
 
+  @Test func monitoringToggleQueuesAnAccountMissingFromAnInFlightRefresh() async throws {
+    let gate = MonitoringUsageGate()
+    let fixture = try MonitoringFixture(
+      monitored: [.codex: [MonitoringFixture.personal]],
+      strategyGate: gate
+    )
+    defer { fixture.remove() }
+    await fixture.store.reloadAccounts()
+
+    let first = Task { await fixture.store.refreshAccountUsage(for: .codex, force: true) }
+    await gate.waitUntilFirstRequestStarts()
+    fixture.store.setMonitoring(true, for: MonitoringFixture.work)
+    let second = Task { await fixture.store.refreshAccountUsage(for: MonitoringFixture.work) }
+    await gate.resumeFirstRequest()
+    await first.value
+    await second.value
+
+    #expect(await fixture.recorder.names == ["Personal", "Work"])
+    #expect(fixture.store.accountUsage(for: MonitoringFixture.work)?.snapshot != nil)
+  }
+
   @Test func dashboardSelectionDoesNotChangeTheCLIActiveAccount() async throws {
     let saved = ProviderAccount(
       provider: .codex,
@@ -215,7 +236,7 @@ struct UsageStoreMonitoringSelectionTests {
 }
 
 @MainActor
-private final class MonitoringFixture {
+final class MonitoringFixture {
   static let personal = ProviderAccount(
     provider: .codex,
     displayName: "Personal",
@@ -241,10 +262,13 @@ private final class MonitoringFixture {
     capturedCopies: [String: ProviderAccount] = [:],
     selected: [UsageProvider: ProviderAccount] = [:],
     monitored: [UsageProvider: [ProviderAccount]]?,
+    rawMonitoringData: Data? = nil,
     accountDiscovery: (any ProviderAccountDiscovering)? = nil,
     automaticCredentialScopeID: String? = nil,
     automaticAccountName: String? = nil,
-    explicitCredentialScopeID: String? = nil
+    explicitCredentialScopeID: String? = nil,
+    automaticTransitionSourceScopeIDs: Set<String> = [],
+    strategyGate: MonitoringUsageGate? = nil
   ) throws {
     directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("quotari-monitoring-\(UUID().uuidString)", isDirectory: true)
@@ -256,7 +280,9 @@ private final class MonitoringFixture {
     monitoringStore = ProviderAccountMonitoringStore(
       url: directory.appendingPathComponent("MonitoredProviderAccounts.json")
     )
-    if let monitored {
+    if let rawMonitoringData {
+      try rawMonitoringData.write(to: monitoringStore.url)
+    } else if let monitored {
       try monitoringStore.save(monitored)
     }
     let recorder = recorder
@@ -272,7 +298,9 @@ private final class MonitoringFixture {
           recorder: recorder,
           automaticCredentialScopeID: automaticCredentialScopeID,
           automaticAccountName: automaticAccountName,
-          explicitCredentialScopeID: explicitCredentialScopeID
+          explicitCredentialScopeID: explicitCredentialScopeID,
+          automaticTransitionSourceScopeIDs: automaticTransitionSourceScopeIDs,
+          gate: strategyGate
         )]
       }
     )
@@ -290,39 +318,5 @@ private final class MonitoringFixture {
 
   func remove() {
     try? FileManager.default.removeItem(at: directory)
-  }
-}
-
-private actor MonitoringUsageRecorder {
-  private(set) var names: [String] = []
-
-  func record(_ account: ProviderAccount?) {
-    names.append(account?.displayName ?? "Automatic")
-  }
-}
-
-private struct MonitoringUsageStrategy: ProviderFetchStrategy {
-  let recorder: MonitoringUsageRecorder
-  let automaticCredentialScopeID: String?
-  let automaticAccountName: String?
-  let explicitCredentialScopeID: String?
-  let id = "monitoring-usage"
-  let kind = ProviderFetchKind.api
-
-  func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
-    await recorder.record(context.account)
-    return ProviderFetchResult(
-      usage: UsageSnapshot(
-        provider: context.provider,
-        account: context.account?.displayName ?? automaticAccountName,
-        primary: RateWindow(kind: .session, usedPercent: 25),
-        secondary: nil,
-        updatedAt: context.now
-      ),
-      sourceLabel: "Test",
-      credentialScopeID: context.account == nil
-        ? automaticCredentialScopeID
-        : explicitCredentialScopeID ?? context.account?.credentialScopeID
-    )
   }
 }

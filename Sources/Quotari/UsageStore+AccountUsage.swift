@@ -66,6 +66,7 @@ extension UsageStore {
   func refreshAccountUsage(
     for provider: UsageProvider,
     force: Bool = false,
+    includingLogicalAccountIDs: Set<String>? = nil,
     excludingCredentialScopeIDs: Set<String> = []
   ) async {
     // A per-account fetch can rotate/persist a live token; never start one
@@ -73,22 +74,21 @@ extension UsageStore {
     guard !isSwitching, isProviderEnabled(provider) else { return }
     await waitForAutomaticCaptureBeforeAccountUsage(provider)
     guard !isSwitching, isProviderEnabled(provider) else { return }
-    if let current = accountUsageRefreshTasks[provider] {
-      await awaitAccountUsageRefresh(current, provider: provider, force: force)
+    if await joinsAccountUsageRefresh(
+      provider,
+      force: force,
+      includingLogicalAccountIDs: includingLogicalAccountIDs,
+      excludingCredentialScopeIDs: excludingCredentialScopeIDs
+    ) {
       return
     }
     guard let descriptor = providers.first(where: { $0.id == provider }) else { return }
     let now = Date()
     let accountsToFetch = accountsNeedingRefresh(
-      for: provider,
-      now: now,
-      force: force,
-      excludingCredentialScopeIDs: excludingCredentialScopeIDs
+      provider, at: now, forced: force, including: includingLogicalAccountIDs,
+      excluding: excludingCredentialScopeIDs
     )
-    guard !accountsToFetch.isEmpty else {
-      accountUsageRefreshDidFindNoCandidates(provider)
-      return
-    }
+    guard accountUsageRefreshWillStart(accountsToFetch, provider: provider) else { return }
 
     refreshingAccountUsageProviders.insert(provider)
     let revision = accountRevisions[provider] ?? 0
@@ -128,35 +128,36 @@ extension UsageStore {
     _ = await task.value
   }
 
-  private func accountUsageRefreshDidFindNoCandidates(_ provider: UsageProvider) {
-    // The token may have rotated since the last label attempt — relabel so the
-    // picker doesn't show a stale email even when no usage fetch is needed.
-    if provider == .claude {
-      refreshClaudeProfiles()
-    }
+  func refreshAccountUsage(for account: ProviderAccount, force: Bool = false) async {
+    await waitForAutomaticCaptureBeforeAccountUsage(account.provider)
+    guard !isSwitching, isProviderEnabled(account.provider),
+          let currentAccount = monitoredAccount(afterCapturing: account)
+    else { return }
+    await refreshAccountUsage(
+      for: account.provider,
+      force: force,
+      includingLogicalAccountIDs: [logicalMonitoringAccountID(for: currentAccount)]
+    )
   }
 
-  private func waitForAutomaticCaptureBeforeAccountUsage(_ provider: UsageProvider) async {
-    if automaticallyCapturingProviders.contains(provider) {
-      await inFlightAccountReload?.value
+  func logicalMonitoringAccountID(for account: ProviderAccount) -> String {
+    if account.credentialSource.isCaptured {
+      return account.id
     }
+    return capturedEquivalents[account.id]?.id ?? account.id
   }
 
-  private func awaitAccountUsageRefresh(
-    _ current: AccountUsageRefreshTask,
-    provider: UsageProvider,
-    force: Bool
-  ) async {
-    _ = await current.task.value
-    guard isProviderEnabled(provider) else { return }
-    // Disabling cancels but intentionally retains the old handle until its
-    // closure finishes. If the provider was re-enabled while that fetch was
-    // draining, replace the cancelled generation instead of treating it as
-    // a successful coalesced request and leaving the cleared cache empty.
-    if current.task.isCancelled {
-      await refreshAccountUsage(for: provider, force: force)
-    } else if force, !current.force {
-      await refreshAccountUsage(for: provider, force: true)
+  private func monitoredAccount(afterCapturing account: ProviderAccount) -> ProviderAccount? {
+    let logicalAccountID = account.credentialSource.isCaptured
+      ? account.id
+      : capturedEquivalents[account.id]?.id
+    return (monitoredAccounts[account.provider] ?? []).first { current in
+      if let logicalAccountID {
+        return current.id == logicalAccountID
+          || capturedEquivalents[current.id]?.id == logicalAccountID
+      }
+      return current.id == account.id
+        && current.credentialScopeID == account.credentialScopeID
     }
   }
 
@@ -269,21 +270,6 @@ extension UsageStore {
     guard let snapshot = usage.snapshot, Self.isExpired(snapshot) else { return usage }
     usage.snapshot = nil
     return usage.error == nil ? nil : usage
-  }
-
-  private func accountsNeedingRefresh(
-    for provider: UsageProvider,
-    now: Date,
-    force: Bool,
-    excludingCredentialScopeIDs: Set<String>
-  ) -> [ProviderAccount] {
-    (monitoredAccounts[provider] ?? []).filter { account in
-      guard !excludingCredentialScopeIDs.contains(account.credentialScopeID) else { return false }
-      guard !force,
-            let snapshot = accountUsage[provider]?[account.id]?.snapshot
-      else { return true }
-      return now.timeIntervalSince(snapshot.updatedAt) >= refreshInterval
-    }
   }
 
   private func performAccountUsageRefresh(
