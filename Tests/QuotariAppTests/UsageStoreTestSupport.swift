@@ -217,6 +217,7 @@ extension UsageStore {
     costEstimator: any UsageCostEstimating = NullCostEstimator(),
     accountDiscovery: any ProviderAccountDiscovering = StaticAccountDiscovery(),
     accountSelectionStore: ProviderAccountSelectionStore = .temporaryForTesting(),
+    accountMonitoringStore: ProviderAccountMonitoringStore? = nil,
     accountCapture: AccountCaptureService = .inMemoryForTesting(),
     accountLogin: AccountLoginService = AccountLoginService(operation: { provider in
       throw AccountLoginError.credentialUnavailable(provider)
@@ -232,6 +233,11 @@ extension UsageStore {
     startsAutomatically: Bool = true
   ) -> UsageStore {
     let isolatedDefaults = defaults ?? ephemeralDefaults()
+    let isolatedMonitoringStore = accountMonitoringStore ?? ProviderAccountMonitoringStore(
+      url: accountSelectionStore.url
+        .deletingPathExtension()
+        .appendingPathExtension("monitoring.json")
+    )
     let isolatedNotifications = quotaNotifications ?? QuotaNotificationController(
       center: UnavailableQuotaNotificationCenter(),
       defaults: isolatedDefaults
@@ -241,6 +247,7 @@ extension UsageStore {
       costEstimator: costEstimator,
       accountDiscovery: accountDiscovery,
       accountSelectionStore: accountSelectionStore,
+      accountMonitoringStore: isolatedMonitoringStore,
       accountCapture: accountCapture,
       accountLogin: accountLogin,
       automaticallyCapturesDiscoveredAccounts: automaticallyCapturesDiscoveredAccounts,

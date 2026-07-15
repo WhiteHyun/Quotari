@@ -97,6 +97,31 @@ struct ProviderAccountSelectionStoreTests {
   }
 }
 
+struct ProviderAccountMonitoringStoreTests {
+  @Test func roundTripsMultipleAndExplicitlyEmptyProviderSelections() throws {
+    let directory = try TemporaryDirectory()
+    let store = ProviderAccountMonitoringStore(
+      url: directory.url.appendingPathComponent("MonitoredProviderAccounts.json")
+    )
+    let personal = ProviderAccount(
+      provider: .codex,
+      displayName: "Personal",
+      detail: "Default",
+      credentialSource: .quotariRegistry(id: "codex:personal")
+    )
+    let work = ProviderAccount(
+      provider: .codex,
+      displayName: "Work",
+      detail: "Saved in Quotari",
+      credentialSource: .quotariRegistry(id: "codex:work")
+    )
+
+    try store.save([.codex: [personal, work], .claude: []])
+
+    #expect(store.load() == [.codex: [personal, work], .claude: []])
+  }
+}
+
 struct ProviderAccountStrategyTests {
   @Test func codexStrategyUsesSelectedAccountSource() async throws {
     let directory = try TemporaryDirectory()

@@ -13,6 +13,13 @@ final class UsageStore {
   private(set) var providersWithDiscoveredCredentials = Set<UsageProvider>()
   private(set) var credentialDiscoveryCompleted = Set<UsageProvider>()
   private(set) var selectedAccounts: [UsageProvider: ProviderAccount] = [:]
+  /// Visible accounts whose quota and usage are refreshed in the background.
+  /// This is independent from the single account shown on the dashboard.
+  var monitoredAccounts: [UsageProvider: [ProviderAccount]] = [:]
+  /// Logical persisted monitoring choices. A live CLI row is stored as its
+  /// managed registry account so a mutable credential slot cannot transfer
+  /// monitoring to a different login after an external switch.
+  var persistedMonitoredAccounts: [UsageProvider: [ProviderAccount]] = [:]
   /// The hidden saved registry copy behind each live account, keyed by the
   /// live account's id — identities that are saved while also being live.
   private(set) var capturedEquivalents: [String: ProviderAccount] = [:]
@@ -70,6 +77,7 @@ final class UsageStore {
   let costEstimator: any UsageCostEstimating
   let accountDiscovery: any ProviderAccountDiscovering
   private let accountSelectionStore: ProviderAccountSelectionStore
+  let accountMonitoringStore: ProviderAccountMonitoringStore
   let accountCapture: AccountCaptureService
   let accountLogin: AccountLoginService
   let automaticallyCapturesDiscoveredAccounts: Bool
@@ -132,6 +140,7 @@ final class UsageStore {
     costEstimator: any UsageCostEstimating = LocalUsageCostEstimator(),
     accountDiscovery: any ProviderAccountDiscovering = ProviderAccountDiscovery(),
     accountSelectionStore: ProviderAccountSelectionStore = ProviderAccountSelectionStore(),
+    accountMonitoringStore: ProviderAccountMonitoringStore? = nil,
     accountCapture: AccountCaptureService = AccountCaptureService(),
     accountLogin: AccountLoginService = AccountLoginService(),
     automaticallyCapturesDiscoveredAccounts: Bool = true,
@@ -155,6 +164,11 @@ final class UsageStore {
     self.costEstimator = costEstimator
     self.accountDiscovery = accountDiscovery
     self.accountSelectionStore = accountSelectionStore
+    self.accountMonitoringStore = accountMonitoringStore ?? ProviderAccountMonitoringStore(
+      url: accountSelectionStore.url
+        .deletingLastPathComponent()
+        .appendingPathComponent("MonitoredProviderAccounts.json")
+    )
     self.accountCapture = accountCapture
     self.accountLogin = accountLogin
     self.automaticallyCapturesDiscoveredAccounts = automaticallyCapturesDiscoveredAccounts
@@ -170,6 +184,7 @@ final class UsageStore {
     self.menuBarPreferences = menuBarPreferences ?? MenuBarPreferencesController(defaults: defaults)
     self.quotaNotifications = quotaNotifications ?? QuotaNotificationController(defaults: defaults)
     selectedAccounts = accountSelectionStore.load()
+    persistedMonitoredAccounts = self.accountMonitoringStore.load()
     claudeProfiles = profileStore.load()
     // refreshInterval has no inline default: its first assignment runs the
     // @Observable-generated init accessor instead of the setter, so restoring
