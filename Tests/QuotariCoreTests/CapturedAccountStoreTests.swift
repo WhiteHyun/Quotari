@@ -154,6 +154,23 @@ struct CapturedAccountStoreTests {
     #expect(store.load().map(\.id) == ["a"])
   }
 
+  @Test func upsertFailsClosedWhenExistingAccountReadFails() throws {
+    let keychain = InMemoryKeychain()
+    let store = CapturedAccountStore(keychain: keychain.store, service: "UpsertReadTest")
+    let existing = Self.account(id: "a", capturedAt: Date(timeIntervalSince1970: 100), token: "fresh")
+    try store.save(existing)
+    keychain.failReads(of: "UpsertReadTest.a")
+
+    #expect(throws: (any Error).self) {
+      try store.upsert(
+        Self.account(id: "a", capturedAt: Date(timeIntervalSince1970: 200), token: "stale")
+      ) { current, _ in current }
+    }
+
+    keychain.stopFailing("UpsertReadTest.a")
+    #expect(store.account(id: "a") == existing)
+  }
+
   @Test func updatePayloadRewritesOnlyTheAccountItemNotTheIndex() throws {
     let keychain = InMemoryKeychain()
     let store = CapturedAccountStore(keychain: keychain.store, service: "UpdateTest")

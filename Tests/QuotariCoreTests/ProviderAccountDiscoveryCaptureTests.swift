@@ -230,6 +230,39 @@ struct ProviderAccountDiscoveryCaptureTests {
     #expect(await otherDiscovery.capturedCopies(among: accounts) == [:])
   }
 
+  @Test func capturedCopyDoesNotMatchAStaleDiscoveryRowAfterSlotReuse() async throws {
+    let liveHome = try codexHome(accountID: "acct-a")
+    defer { try? FileManager.default.removeItem(at: liveHome) }
+    let store = CapturedAccountStore(
+      keychain: InMemoryKeychain().store,
+      service: "Test-Disc-\(UUID().uuidString)"
+    )
+    let discovery = ProviderAccountDiscovery(
+      environment: ["CODEX_HOME": liveHome.path],
+      home: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
+      keychainData: { nil },
+      capturedAccounts: store
+    )
+    let staleAccounts = await discovery.accounts(for: .codex)
+    let authURL = liveHome.appendingPathComponent("auth.json")
+    try store.save(CapturedAccount(
+      id: "codex:acct-b",
+      provider: .codex,
+      displayName: "B",
+      detail: "Saved in Quotari",
+      capturedAt: Date(timeIntervalSince1970: 1000),
+      origin: .codexAuthFile(path: authURL.path),
+      payload: Data(
+        #"{"tokens":{"access_token":"saved-b","account_id":"acct-b","refresh_token":"saved-ref-b"}}"#.utf8
+      )
+    ))
+    try Data(
+      #"{"tokens":{"access_token":"live-b","account_id":"acct-b","refresh_token":"live-ref-b"}}"#.utf8
+    ).write(to: authURL)
+
+    #expect(await discovery.capturedCopies(among: staleAccounts) == [:])
+  }
+
   @Test func anUnrenewableLiveLoginDoesNotHideTheSavedCopy() async throws {
     // The live slot parses (same account_id) but has no refresh token, so it
     // can't renew itself — the saved copy that can must stay visible.
