@@ -28,7 +28,13 @@ public enum AccountLoginError: LocalizedError, Sendable {
   public var errorDescription: String? {
     switch self {
     case let .isolatedLoginUnavailable(provider):
-      "Quotari can’t safely isolate \(provider.accountLoginCLIName) login yet, so it won’t risk replacing your current CLI account."
+      if provider == .claude {
+        "Claude Code uses one shared macOS Keychain login. Its safe setup-token flow doesn’t provide a renewable "
+          + "credential, so Quotari keeps Add Account disabled instead of replacing your active CLI account."
+      } else {
+        "Quotari can’t safely isolate \(provider.accountLoginCLIName) login yet, so it won’t risk replacing your "
+          + "current CLI account."
+      }
     case let .executableNotFound(provider):
       "Couldn’t find the \(provider.accountLoginCLIName) CLI. Install it or add it to PATH, then try again."
     case let .commandFailed(provider, status):
@@ -123,9 +129,11 @@ enum IsolatedAccountLogin {
   ) throws -> AccountLoginConfiguration {
     switch provider {
     case .claude:
-      // Claude Code stores OAuth credentials in a process-global macOS
-      // Keychain entry even when CLAUDE_CONFIG_DIR is redirected. Starting a
-      // second login could therefore replace the user's active CLI session.
+      // Anthropic documents macOS OAuth storage as one encrypted Keychain
+      // login; CLAUDE_CONFIG_DIR credential-file isolation is guaranteed only
+      // on Linux and Windows. `claude setup-token` is non-destructive, but it
+      // emits a one-year access token rather than the renewable credential pair
+      // required by Quotari's managed registry. Keep this path fail-closed.
       throw AccountLoginError.isolatedLoginUnavailable(provider)
     case .codex:
       let directory = root.appendingPathComponent("codex", isDirectory: true)

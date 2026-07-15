@@ -3,12 +3,15 @@ import Foundation
 import Testing
 
 struct AccountLoginServiceTests {
-  @Test func productionServiceOnlyAdvertisesSafelyIsolatedProviders() {
+  @Test func productionServiceOnlyAdvertisesSafelyIsolatedProviders() throws {
     let service = AccountLoginService()
 
     #expect(service.supports(provider: .codex))
     #expect(!service.supports(provider: .claude))
-    #expect(service.unavailableReason(provider: .claude) != nil)
+    let reason = try #require(service.unavailableReason(provider: .claude))
+    #expect(reason.contains("shared macOS Keychain"))
+    #expect(reason.contains("setup-token"))
+    #expect(reason.contains("renewable"))
   }
 
   @Test func codexLoginUsesAnIsolatedCodexHome() throws {
