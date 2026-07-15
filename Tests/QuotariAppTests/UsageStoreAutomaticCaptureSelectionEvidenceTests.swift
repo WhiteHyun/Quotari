@@ -6,6 +6,70 @@ import Testing
 @MainActor
 struct CaptureSelectionEvidenceTests {
   // swiftlint:disable:next function_body_length
+  @Test func completedRotationAdvancesSelectionWhenEveryAccountIsManaged() async throws {
+    let directory = try TemporaryDirectory()
+    let sourcePayload = claudePayload(accessToken: "access-a", refreshToken: "refresh-a")
+    let targetPayload = claudePayload(accessToken: "access-b", refreshToken: "refresh-b")
+    let payload = AutomaticCapturePayloadBox(sourcePayload)
+    let registry = CapturedAccountStore.inMemoryForTesting()
+    let capture = AccountCaptureService(capturedAccounts: registry)
+    try registry.save(CapturedAccount(
+      id: "claude:saved",
+      provider: .claude,
+      displayName: "Saved Claude",
+      detail: "Saved in Quotari",
+      capturedAt: Date(timeIntervalSince1970: 0),
+      origin: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+      payload: sourcePayload
+    ))
+    let discovery = ProviderAccountDiscovery(
+      environment: [:],
+      home: directory.url,
+      keychainData: { payload.value },
+      capturedAccounts: registry
+    )
+    let source = try #require(await discovery.accounts(for: .claude).first {
+      !$0.credentialSource.isCaptured
+    })
+    let selectionStore = ProviderAccountSelectionStore(
+      url: directory.url.appendingPathComponent("selection.json")
+    )
+    try selectionStore.save([.claude: source])
+    let store = UsageStore.isolatedForTesting(
+      providers: [claudeDescriptorForAutomaticCapture()],
+      accountDiscovery: discovery,
+      accountSelectionStore: selectionStore,
+      accountCapture: capture,
+      automaticallyCapturesDiscoveredAccounts: true,
+      claudeCredentialLoader: {
+        selectionEvidenceCredentials(source: $0, payload: payload, registry: registry)
+      },
+      startsAutomatically: false
+    )
+    await store.reloadAccounts()
+    store.selectAccount(source, for: .claude, standingInFor: nil)
+
+    _ = try capture.refreshCapturedAccount(
+      id: "claude:saved",
+      provider: .claude,
+      payload: targetPayload
+    )
+    payload.value = targetPayload
+    let target = try #require(await discovery.accounts(for: .claude).first {
+      !$0.credentialSource.isCaptured
+    })
+    store.completedCredentialTransitions[.claude] = [
+      source.credentialScopeID: [target.credentialScopeID],
+    ]
+
+    await store.reloadAccounts()
+
+    #expect(store.selectedAccounts[.claude] == target)
+    #expect(store.reconciledSelectionOrigins[.claude]?.credentialSource == .quotariRegistry(id: "claude:saved"))
+    #expect(selectionStore.load()[.claude]?.credentialSource == .quotariRegistry(id: "claude:saved"))
+  }
+
+  // swiftlint:disable:next function_body_length
   @Test func failedRefreshCaptureKeepsSelectionOnTheExistingSavedAccount() async throws {
     let directory = try TemporaryDirectory()
     let payload = AutomaticCapturePayloadBox(

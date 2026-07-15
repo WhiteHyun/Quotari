@@ -76,14 +76,17 @@ extension UsageStore {
   }
 
   private func currentVerifiedClaudeProfile(for account: ProviderAccount) async -> ClaudeProfile? {
-    guard let profile = claudeProfiles[account.id], !profile.isEmpty else { return nil }
+    guard let profile = claudeProfiles[account.id],
+          !profile.isEmpty,
+          let expectedFingerprint = profile.fingerprint
+    else { return nil }
     let loader = claudeCredentialLoader
-    let fingerprint = await Task.detached { () -> String? in
-      loader(account.credentialSource).map {
-        ProviderCredentialIdentity.fingerprint(of: $0.accessToken)
-      }
+    let credentials = await Task.detached {
+      loader(account.credentialSource)
     }.value
-    guard profile.fingerprint == fingerprint else { return nil }
+    guard let credentials,
+          ProviderCredentialIdentity.fingerprint(of: credentials.accessToken) == expectedFingerprint
+    else { return nil }
     return profile
   }
 

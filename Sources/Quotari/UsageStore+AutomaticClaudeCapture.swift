@@ -11,19 +11,22 @@ extension UsageStore {
   func automaticCapturePlans(
     for candidates: [ProviderAccount],
     among accounts: [ProviderAccount],
-    provider: UsageProvider
+    provider: UsageProvider,
+    capturedCopies: [String: ProviderAccount] = [:]
   ) async -> [String: AutomaticAccountCapturePlan] {
     await automaticCapturePlanning(
       for: candidates,
       among: accounts,
-      provider: provider
+      provider: provider,
+      capturedCopies: capturedCopies
     ).plans
   }
 
   func automaticCapturePlanning(
     for candidates: [ProviderAccount],
     among accounts: [ProviderAccount],
-    provider: UsageProvider
+    provider: UsageProvider,
+    capturedCopies: [String: ProviderAccount] = [:]
   ) async -> AutomaticAccountCapturePlanningResult {
     guard provider == .claude else {
       return AutomaticAccountCapturePlanningResult(
@@ -32,12 +35,17 @@ extension UsageStore {
         credentialTransitions: [:]
       )
     }
-    return await automaticClaudeCapturePlanning(for: candidates, among: accounts)
+    return await automaticClaudeCapturePlanning(
+      for: candidates,
+      among: accounts,
+      capturedCopies: capturedCopies
+    )
   }
 
   private func automaticClaudeCapturePlanning(
     for candidates: [ProviderAccount],
-    among accounts: [ProviderAccount]
+    among accounts: [ProviderAccount],
+    capturedCopies: [String: ProviderAccount]
   ) async -> AutomaticAccountCapturePlanningResult {
     let saved = await savedClaudeAccounts()
     let liveAccounts = accounts.filter(\.credentialSource.isAutomaticallyCapturable)
@@ -54,7 +62,10 @@ extension UsageStore {
     }
 
     let savedResolution = await resolvedSavedClaudeProfiles(saved)
-    let liveResolution = await resolvedLiveClaudeProfiles(liveAccounts)
+    let liveResolution = await resolvedLiveClaudeProfiles(
+      liveAccounts,
+      capturedCopies: capturedCopies
+    )
     let liveProfiles = liveResolution.profiles
     let plans = Dictionary(uniqueKeysWithValues: candidates.map { candidate in
       let plan = claudeCapturePlan(

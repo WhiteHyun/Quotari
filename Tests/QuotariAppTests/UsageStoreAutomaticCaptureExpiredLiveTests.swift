@@ -20,6 +20,91 @@ struct AutomaticCaptureExpiredLiveTests {
     #expect(fixture.selectionStore.load()[.claude]?.id == managed.first?.providerAccount.id)
     #expect(fixture.store.captureErrors[.claude] == nil)
   }
+
+  // swiftlint:disable:next function_body_length
+  @Test func expiredLinkedLiveRefreshCarriesItsCapturedRegistryID() async throws {
+    let recorder = CapturedRegistryIDRecordingStrategy()
+    let descriptor = ProviderDescriptor(
+      id: .claude,
+      metadata: ProviderMetadata(
+        displayName: "Claude",
+        accent: .init(0.8, 0.5, 0.2),
+        supportsWeekly: true
+      ),
+      pipeline: ProviderFetchPipeline { _ in [recorder] }
+    )
+    let linkedPayload = claudePayload(
+      accessToken: "linked-expired",
+      refreshToken: "linked-refresh",
+      expiresAt: Date(timeIntervalSince1970: 0)
+    )
+    let candidatePayload = claudePayload(
+      accessToken: "candidate-access",
+      refreshToken: "candidate-refresh",
+      expiresAt: Date().addingTimeInterval(3600)
+    )
+    let savedPayload = claudePayload(
+      accessToken: "saved-access",
+      refreshToken: "saved-refresh",
+      expiresAt: Date().addingTimeInterval(3600)
+    )
+    let linked = ProviderAccount(
+      provider: .claude,
+      displayName: "Linked",
+      detail: "Keychain",
+      credentialSource: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+      credentialIdentity: "linked-expired"
+    )
+    let candidate = ProviderAccount(
+      provider: .claude,
+      displayName: "Candidate",
+      detail: ".credentials.json",
+      credentialSource: .claudeCredentialsFile(path: "/candidate/.credentials.json"),
+      credentialIdentity: "candidate-access"
+    )
+    let registry = CapturedAccountStore.inMemoryForTesting()
+    try registry.save(CapturedAccount(
+      id: "claude:linked",
+      provider: .claude,
+      displayName: "Linked",
+      detail: "Saved in Quotari",
+      capturedAt: Date(timeIntervalSince1970: 0),
+      origin: linked.credentialSource,
+      payload: savedPayload
+    ))
+    let saved = try #require(registry.account(id: "claude:linked")?.providerAccount)
+    let store = UsageStore.isolatedForTesting(
+      providers: [descriptor],
+      accountCapture: AccountCaptureService(capturedAccounts: registry),
+      automaticallyCapturesDiscoveredAccounts: true,
+      profileFetcher: TokenClaudeProfileFetcher(profiles: [
+        "saved-access": ClaudeProfile(accountID: "linked", email: "linked@example.com"),
+        "candidate-access": ClaudeProfile(accountID: "candidate", email: "candidate@example.com"),
+      ]),
+      claudeCredentialLoader: { source in
+        switch source {
+        case .claudeKeychain:
+          try? ClaudeCredentialsStore.parse(linkedPayload)
+        case .claudeCredentialsFile:
+          try? ClaudeCredentialsStore.parse(candidatePayload)
+        case let .quotariRegistry(id):
+          registry.account(id: id).flatMap { try? ClaudeCredentialsStore.parse($0.payload) }
+        case .codexAuthFile, .codexKeychain, .claudeEnvironment:
+          nil
+        }
+      },
+      startsAutomatically: false
+    )
+
+    _ = await store.automaticCapturePlans(
+      for: [candidate],
+      among: [linked, candidate],
+      provider: .claude,
+      capturedCopies: [linked.id: saved]
+    )
+
+    #expect(await recorder.capturedRegistryIDs == ["claude:linked"])
+  }
 }
 
 private struct ExpiredLiveFixture {
@@ -157,6 +242,20 @@ private actor FailingCredentialRotationStrategy: ProviderFetchStrategy {
       underlying: SimulatedUsageFailure(),
       credentialTransitionTargetScopeID: target.credentialScopeID,
       credentialTransitionSourceScopeIDs: [sourceScopeID]
+    )
+  }
+}
+
+private actor CapturedRegistryIDRecordingStrategy: ProviderFetchStrategy {
+  nonisolated let id = "captured-registry-id-recorder"
+  nonisolated let kind = ProviderFetchKind.oauth
+  private(set) var capturedRegistryIDs: [String?] = []
+
+  func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
+    capturedRegistryIDs.append(context.capturedRegistryID)
+    return ProviderFetchResult(
+      usage: UsageSnapshot(provider: context.provider, updatedAt: context.now),
+      sourceLabel: "Recorded"
     )
   }
 }

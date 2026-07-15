@@ -15,16 +15,19 @@ extension UsageStore {
     let candidates = accounts.filter { account in
       capturedCopies[account.id] == nil && account.credentialSource.isAutomaticallyCapturable
     }
+    let drainedCredentialTransitions = await drainProviderActivityBeforeCapture(provider)
     guard !candidates.isEmpty else {
-      captureErrors[provider] = nil
-      return .none
+      return captureResultWithoutCandidates(
+        provider: provider,
+        credentialTransitions: drainedCredentialTransitions
+      )
     }
 
-    let drainedCredentialTransitions = await drainProviderActivityBeforeCapture(provider)
     let planning = await automaticCapturePlanning(
       for: candidates,
       among: accounts,
-      provider: provider
+      provider: provider,
+      capturedCopies: capturedCopies
     )
     let credentialTransitions = mergedCredentialTransitions(
       drainedCredentialTransitions,
@@ -60,6 +63,25 @@ extension UsageStore {
       credentialTransitions: credentialTransitions,
       verifiedDuplicateCredentialScopeIDs: planning.verifiedDuplicateCredentialScopeIDs,
       didCapture: outcomes.contains { $0.captured != nil },
+      attempted: true
+    )
+  }
+
+  private func captureResultWithoutCandidates(
+    provider: UsageProvider,
+    credentialTransitions: [String: String]
+  ) -> AutomaticAccountCaptureResult {
+    captureErrors[provider] = nil
+    guard !credentialTransitions.isEmpty else {
+      automaticallyCapturingProviders.remove(provider)
+      return .none
+    }
+    return AutomaticAccountCaptureResult(
+      selectionOrigins: [:],
+      managedCopies: [:],
+      credentialTransitions: credentialTransitions,
+      verifiedDuplicateCredentialScopeIDs: [],
+      didCapture: false,
       attempted: true
     )
   }

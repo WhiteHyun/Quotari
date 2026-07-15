@@ -29,12 +29,22 @@ extension UsageStore {
   }
 
   func resolvedLiveClaudeProfiles(
-    _ accounts: [ProviderAccount]
+    _ accounts: [ProviderAccount],
+    capturedCopies: [String: ProviderAccount] = [:]
   ) async -> LiveClaudeProfileResolution {
     var profiles: [ResolvedLiveClaudeProfile] = []
     var credentialTransitions: [String: String] = [:]
     for account in accounts {
-      if let resolution = await resolvedClaudeCaptureProfile(for: account) {
+      let capturedRegistryID: String? = if case let .quotariRegistry(id) =
+        capturedCopies[account.id]?.credentialSource {
+        id
+      } else {
+        nil
+      }
+      if let resolution = await resolvedClaudeCaptureProfile(
+        for: account,
+        capturedRegistryID: capturedRegistryID
+      ) {
         if let transition = resolution.credentialTransition {
           credentialTransitions[transition.sourceScopeID] = transition.targetScopeID
         }
@@ -58,7 +68,8 @@ extension UsageStore {
   }
 
   private func resolvedClaudeCaptureProfile(
-    for account: ProviderAccount
+    for account: ProviderAccount,
+    capturedRegistryID: String? = nil
   ) async -> ClaudeCaptureProfileResolution? {
     let loader = claudeCredentialLoader
     guard var credentials = await Task.detached(operation: {
@@ -68,7 +79,8 @@ extension UsageStore {
     let credentialResolution = await refreshedClaudeCredentialIfNeeded(
       account,
       credentials: credentials,
-      now: now
+      now: now,
+      capturedRegistryID: capturedRegistryID
     )
     credentials = credentialResolution.credentials
     let credentialTransition = credentialResolution.transition
@@ -118,7 +130,8 @@ extension UsageStore {
   private func refreshedClaudeCredentialIfNeeded(
     _ account: ProviderAccount,
     credentials: ClaudeCredentials,
-    now: Date
+    now: Date,
+    capturedRegistryID: String?
   ) async -> ClaudeCredentialResolution {
     guard credentials.isExpired(now: now),
           let refreshToken = credentials.refreshToken,
@@ -126,7 +139,11 @@ extension UsageStore {
     else { return ClaudeCredentialResolution(credentials: credentials, transition: nil) }
     let loader = claudeCredentialLoader
     let initialScopeID = account.credentialScopeID
-    let result = await refreshClaudeCredential(account, now: now)
+    let result = await refreshClaudeCredential(
+      account,
+      now: now,
+      capturedRegistryID: capturedRegistryID
+    )
     guard let refreshed = await Task.detached(operation: {
       loader(account.credentialSource)
     }).value else { return ClaudeCredentialResolution(credentials: credentials, transition: nil) }
@@ -152,18 +169,16 @@ extension UsageStore {
 
   private func refreshClaudeCredential(
     _ account: ProviderAccount,
-    now: Date
+    now: Date,
+    capturedRegistryID linkedCapturedRegistryID: String?
   ) async -> Result<ProviderFetchResult, Error>? {
     guard let descriptor = providers.first(where: { $0.id == .claude }) else { return nil }
     // The normal Claude fetch path owns refresh-token rotation, recovery
     // journals, and persistence for both saved and CLI-owned credentials.
     // Automatic capture has already closed the provider gate and drained older
     // activity, so this identity refresh cannot overlap another slot writer.
-    let capturedRegistryID: String? = if case let .quotariRegistry(id) = account.credentialSource {
-      id
-    } else {
-      nil
-    }
+    let capturedRegistryID: String? =
+      linkedCapturedRegistryID ?? account.credentialSource.quotariRegistryID
     return await descriptor.fetch(
       now: now,
       account: account,
@@ -185,6 +200,13 @@ extension UsageStore {
     // path could not recover must not permanently prevent a new live account
     // from entering management.
     return !credentials.isExpired(now: Date())
+  }
+}
+
+private extension ProviderCredentialSource {
+  var quotariRegistryID: String? {
+    guard case let .quotariRegistry(id) = self else { return nil }
+    return id
   }
 }
 
