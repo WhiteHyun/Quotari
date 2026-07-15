@@ -1,0 +1,312 @@
+import Foundation
+
+public struct AccountLoginResult: Sendable {
+  public let provider: UsageProvider
+  public let origin: ProviderCredentialSource
+  public let payload: Data
+
+  public init(
+    provider: UsageProvider,
+    origin: ProviderCredentialSource,
+    payload: Data
+  ) {
+    self.provider = provider
+    self.origin = origin
+    self.payload = payload
+  }
+}
+
+public enum AccountLoginError: LocalizedError, Sendable {
+  case isolatedLoginUnavailable(UsageProvider)
+  case executableNotFound(UsageProvider)
+  case commandFailed(UsageProvider, status: Int32)
+  case credentialUnavailable(UsageProvider)
+  case temporaryCredentialCleanupFailed(UsageProvider)
+
+  public var errorDescription: String? {
+    switch self {
+    case let .isolatedLoginUnavailable(provider):
+      "Quotari can’t safely isolate \(provider.accountLoginCLIName) login yet, so it won’t risk replacing your current CLI account."
+    case let .executableNotFound(provider):
+      "Couldn’t find the \(provider.accountLoginCLIName) CLI. Install it or add it to PATH, then try again."
+    case let .commandFailed(provider, status):
+      "\(provider.accountLoginCLIName) login didn’t finish successfully (status \(status))."
+    case let .credentialUnavailable(provider):
+      "\(provider.accountLoginCLIName) login finished without a reusable account credential."
+    case let .temporaryCredentialCleanupFailed(provider):
+      "Quotari couldn’t securely remove the temporary \(provider.accountLoginCLIName) login credential."
+    }
+  }
+}
+
+/// Runs provider login in an isolated CLI home. A normal Codex login revokes
+/// the credential already occupying its default slot, so Add Account must not
+/// share the live configuration directory. Providers without an isolated
+/// credential store fail closed. Only the successful temporary credential
+/// bytes leave this service, and cleanup must succeed before they are returned.
+public struct AccountLoginService: Sendable {
+  private let operation: @Sendable (UsageProvider) async throws -> AccountLoginResult
+  private let supportedProviders: Set<UsageProvider>
+
+  public init() {
+    supportedProviders = [.codex]
+    operation = { provider in
+      try await IsolatedAccountLogin.perform(provider: provider)
+    }
+  }
+
+  public init(
+    operation: @escaping @Sendable (UsageProvider) async throws -> AccountLoginResult
+  ) {
+    supportedProviders = Set(UsageProvider.allCases)
+    self.operation = operation
+  }
+
+  public func supports(provider: UsageProvider) -> Bool {
+    supportedProviders.contains(provider)
+  }
+
+  public func unavailableReason(provider: UsageProvider) -> String? {
+    guard !supports(provider: provider) else { return nil }
+    return AccountLoginError.isolatedLoginUnavailable(provider).localizedDescription
+  }
+
+  public func login(provider: UsageProvider) async throws -> AccountLoginResult {
+    guard supports(provider: provider) else {
+      throw AccountLoginError.isolatedLoginUnavailable(provider)
+    }
+    return try await operation(provider)
+  }
+}
+
+private extension UsageProvider {
+  var accountLoginCLIName: String {
+    switch self {
+    case .claude: "Claude Code"
+    case .codex: "Codex"
+    }
+  }
+}
+
+struct AccountLoginConfiguration: Equatable {
+  let executableName: String
+  let executableOverrideEnvironmentKey: String
+  let arguments: [String]
+  let authDirectory: URL
+  let credentialURL: URL
+  let isolatedEnvironment: [String: String]
+  let origin: ProviderCredentialSource
+}
+
+enum IsolatedAccountLogin {
+  static func configuration(
+    provider: UsageProvider,
+    root: URL
+  ) throws -> AccountLoginConfiguration {
+    switch provider {
+    case .claude:
+      // Claude Code stores OAuth credentials in a process-global macOS
+      // Keychain entry even when CLAUDE_CONFIG_DIR is redirected. Starting a
+      // second login could therefore replace the user's active CLI session.
+      throw AccountLoginError.isolatedLoginUnavailable(provider)
+    case .codex:
+      let directory = root.appendingPathComponent("codex", isDirectory: true)
+      let credentialURL = directory.appendingPathComponent("auth.json")
+      return AccountLoginConfiguration(
+        executableName: "codex",
+        executableOverrideEnvironmentKey: "QUOTARI_CODEX_PATH",
+        arguments: ["login"],
+        authDirectory: directory,
+        credentialURL: credentialURL,
+        isolatedEnvironment: ["CODEX_HOME": directory.path],
+        origin: .codexAuthFile(path: credentialURL.path)
+      )
+    }
+  }
+
+  static func executableURL(
+    for configuration: AccountLoginConfiguration,
+    environment: [String: String],
+    home: URL,
+    fileManager: FileManager = .default
+  ) -> URL? {
+    var directories = environment["PATH"]?
+      .split(separator: ":")
+      .map { URL(fileURLWithPath: String($0), isDirectory: true) } ?? []
+    directories += [
+      home.appendingPathComponent(".local/bin", isDirectory: true),
+      home.appendingPathComponent(".local/share/mise/shims", isDirectory: true),
+      home.appendingPathComponent(".mise/shims", isDirectory: true),
+      home.appendingPathComponent(".asdf/shims", isDirectory: true),
+      home.appendingPathComponent(".volta/bin", isDirectory: true),
+      home.appendingPathComponent(".bun/bin", isDirectory: true),
+      URL(fileURLWithPath: "/opt/homebrew/bin", isDirectory: true),
+      URL(fileURLWithPath: "/usr/local/bin", isDirectory: true),
+      URL(fileURLWithPath: "/usr/bin", isDirectory: true),
+    ]
+
+    var candidates: [URL] = []
+    if let override = environment[configuration.executableOverrideEnvironmentKey], !override.isEmpty {
+      candidates.append(URL(fileURLWithPath: override))
+    }
+    candidates += directories.map { $0.appendingPathComponent(configuration.executableName) }
+    return candidates.first { fileManager.isExecutableFile(atPath: $0.path) }
+  }
+
+  static func perform(provider: UsageProvider) async throws -> AccountLoginResult {
+    let fileManager = FileManager.default
+    return try await perform(
+      provider: provider,
+      environment: ProcessInfo.processInfo.environment,
+      home: fileManager.homeDirectoryForCurrentUser,
+      temporaryDirectory: fileManager.temporaryDirectory,
+      fileManager: fileManager
+    )
+  }
+
+  static func perform(
+    provider: UsageProvider,
+    environment: [String: String],
+    home: URL,
+    temporaryDirectory: URL,
+    fileManager: FileManager = .default
+  ) async throws -> AccountLoginResult {
+    let root = temporaryDirectory
+      .appendingPathComponent("Quotari-AddAccount-\(UUID().uuidString)", isDirectory: true)
+    let configuration = try configuration(provider: provider, root: root)
+    guard let executable = executableURL(
+      for: configuration,
+      environment: environment,
+      home: home,
+      fileManager: fileManager
+    ) else {
+      throw AccountLoginError.executableNotFound(provider)
+    }
+
+    try fileManager.createDirectory(
+      at: configuration.authDirectory,
+      withIntermediateDirectories: true,
+      attributes: [.posixPermissions: 0o700]
+    )
+    let outcome: Result<AccountLoginResult, any Error>
+    do {
+      outcome = try await .success(executeLogin(
+        provider: provider,
+        configuration: configuration,
+        executable: executable,
+        environment: environment,
+        root: root
+      ))
+    } catch {
+      outcome = .failure(error)
+    }
+
+    do {
+      try fileManager.removeItem(at: root)
+    } catch {
+      throw AccountLoginError.temporaryCredentialCleanupFailed(provider)
+    }
+    return try outcome.get()
+  }
+
+  private static func executeLogin(
+    provider: UsageProvider,
+    configuration: AccountLoginConfiguration,
+    executable: URL,
+    environment: [String: String],
+    root: URL
+  ) async throws -> AccountLoginResult {
+    var loginEnvironment = environment
+    configuration.isolatedEnvironment.forEach { loginEnvironment[$0.key] = $0.value }
+    let executableDirectory = executable.deletingLastPathComponent().path
+    let existingPath = loginEnvironment["PATH"] ?? ""
+    loginEnvironment["PATH"] = existingPath.isEmpty
+      ? executableDirectory
+      : "\(executableDirectory):\(existingPath)"
+    loginEnvironment["NO_COLOR"] = "1"
+
+    let status = try await runLoginCommand(
+      executable: executable,
+      arguments: configuration.arguments,
+      environment: loginEnvironment,
+      currentDirectory: root
+    )
+    try Task.checkCancellation()
+    guard status == 0 else {
+      throw AccountLoginError.commandFailed(provider, status: status)
+    }
+    guard let payload = try? Data(contentsOf: configuration.credentialURL), !payload.isEmpty else {
+      throw AccountLoginError.credentialUnavailable(provider)
+    }
+    return AccountLoginResult(
+      provider: provider,
+      origin: configuration.origin,
+      payload: payload
+    )
+  }
+
+  private static func runLoginCommand(
+    executable: URL,
+    arguments: [String],
+    environment: [String: String],
+    currentDirectory: URL
+  ) async throws -> Int32 {
+    let process = Process()
+    // Run the CLI itself so cancellation terminates the process that owns the
+    // OAuth callback and credential write, rather than only a TTY wrapper.
+    process.executableURL = executable
+    process.arguments = arguments
+    process.environment = environment
+    process.currentDirectoryURL = currentDirectory
+    process.standardInput = FileHandle.nullDevice
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    let box = AccountLoginProcessBox(process)
+
+    return try await withTaskCancellationHandler {
+      try Task.checkCancellation()
+      return try await withCheckedThrowingContinuation { continuation in
+        process.terminationHandler = { finished in
+          continuation.resume(returning: finished.terminationStatus)
+        }
+        do {
+          try box.run()
+        } catch {
+          process.terminationHandler = nil
+          continuation.resume(throwing: error)
+        }
+      }
+    } onCancel: {
+      box.cancel()
+    }
+  }
+}
+
+private final class AccountLoginProcessBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private let process: Process
+  private var cancelled = false
+
+  init(_ process: Process) {
+    self.process = process
+  }
+
+  func run() throws {
+    try lock.withLock {
+      if cancelled {
+        throw CancellationError()
+      }
+      try process.run()
+    }
+  }
+
+  func cancel() {
+    let shouldTerminate = lock.withLock {
+      cancelled = true
+      return process.isRunning
+    }
+    if shouldTerminate {
+      process.terminate()
+    }
+  }
+}
