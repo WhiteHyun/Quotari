@@ -23,6 +23,7 @@ struct UsageStoreMonitoringRotationTests {
     let selectionStore = ProviderAccountSelectionStore(
       url: directory.url.appendingPathComponent("selection.json")
     )
+    // Monitoring must follow a verified rotation even when another account drives the dashboard.
     try selectionStore.save([:])
     let monitoringStore = ProviderAccountMonitoringStore(
       url: directory.url.appendingPathComponent("monitoring.json")
