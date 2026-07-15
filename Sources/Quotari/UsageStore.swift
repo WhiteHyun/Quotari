@@ -49,6 +49,7 @@ final class UsageStore {
   var isSwitching = false
   var addingAccountProviders = Set<UsageProvider>()
   var accountLoginErrors: [UsageProvider: String] = [:]
+  var accountLoginOutputs: [UsageProvider: String] = [:]
 
   var refreshInterval: TimeInterval {
     didSet {

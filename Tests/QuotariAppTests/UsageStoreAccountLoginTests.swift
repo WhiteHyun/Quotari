@@ -86,6 +86,23 @@ struct UsageStoreAccountLoginTests {
     #expect(store.accountLoginErrors[.codex]?.contains("status 1") == true)
   }
 
+  @Test func loginOutputIsVisibleAlongsideFailure() async {
+    let login = AccountLoginService(streamingOperation: { provider, onOutput in
+      await onOutput?("If your browser did not open, visit https://example.com/device\n")
+      throw AccountLoginError.commandFailed(provider, status: 1)
+    })
+    let store = UsageStore.isolatedForTesting(
+      providers: [codexDescriptor()],
+      accountLogin: login,
+      startsAutomatically: false
+    )
+
+    await store.addAccount(for: .codex)
+
+    #expect(store.accountLoginOutputs[.codex]?.contains("https://example.com/device") == true)
+    #expect(store.accountLoginErrors[.codex]?.contains("status 1") == true)
+  }
+
   @Test func unrenewableLoginIsRejected() async {
     let registry = CapturedAccountStore.inMemoryForTesting()
     let login = AccountLoginService { provider in

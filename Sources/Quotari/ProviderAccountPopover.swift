@@ -53,6 +53,12 @@ struct ProviderAccountPopover: View {
           .foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
       }
+      if let output = store.accountLoginOutputs[descriptor.id], !output.isEmpty {
+        Text(output)
+          .font(.caption.monospaced())
+          .textSelection(.enabled)
+          .fixedSize(horizontal: false, vertical: true)
+      }
       Divider()
       footer
     }

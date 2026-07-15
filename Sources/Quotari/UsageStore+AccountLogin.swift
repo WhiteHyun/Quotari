@@ -18,6 +18,7 @@ extension UsageStore {
 
     addingAccountProviders.insert(provider)
     accountLoginErrors[provider] = nil
+    accountLoginOutputs[provider] = nil
     defer { addingAccountProviders.remove(provider) }
 
     // The scan is the preservation boundary: every renewable login already in
@@ -32,7 +33,9 @@ extension UsageStore {
     let login = accountLogin
     let capture = accountCapture
     do {
-      let result = try await login.login(provider: provider)
+      let result = try await login.login(provider: provider) { [weak self] output in
+        await self?.appendAccountLoginOutput(output, for: provider)
+      }
       let captured = try await Task.detached {
         try capture.captureRawPayload(
           provider: result.provider,
@@ -46,11 +49,17 @@ extension UsageStore {
       }
       await reloadAccounts()
       accountLoginErrors[provider] = nil
+      accountLoginOutputs[provider] = nil
     } catch is CancellationError {
       accountLoginErrors[provider] = "Account login was cancelled."
     } catch {
       accountLoginErrors[provider] = error.localizedDescription
     }
+  }
+
+  private func appendAccountLoginOutput(_ output: String, for provider: UsageProvider) {
+    let combined = (accountLoginOutputs[provider] ?? "") + output
+    accountLoginOutputs[provider] = String(combined.suffix(12000))
   }
 }
 

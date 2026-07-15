@@ -16,6 +16,8 @@ public struct AccountLoginResult: Sendable {
   }
 }
 
+public typealias AccountLoginOutputHandler = @Sendable (String) async -> Void
+
 public enum AccountLoginError: LocalizedError, Sendable {
   case isolatedLoginUnavailable(UsageProvider)
   case executableNotFound(UsageProvider)
@@ -45,13 +47,16 @@ public enum AccountLoginError: LocalizedError, Sendable {
 /// credential store fail closed. Only the successful temporary credential
 /// bytes leave this service, and cleanup must succeed before they are returned.
 public struct AccountLoginService: Sendable {
-  private let operation: @Sendable (UsageProvider) async throws -> AccountLoginResult
+  private let operation: @Sendable (
+    UsageProvider,
+    AccountLoginOutputHandler?
+  ) async throws -> AccountLoginResult
   private let supportedProviders: Set<UsageProvider>
 
   public init() {
     supportedProviders = [.codex]
-    operation = { provider in
-      try await IsolatedAccountLogin.perform(provider: provider)
+    operation = { provider, onOutput in
+      try await IsolatedAccountLogin.perform(provider: provider, onOutput: onOutput)
     }
   }
 
@@ -59,7 +64,17 @@ public struct AccountLoginService: Sendable {
     operation: @escaping @Sendable (UsageProvider) async throws -> AccountLoginResult
   ) {
     supportedProviders = Set(UsageProvider.allCases)
-    self.operation = operation
+    self.operation = { provider, _ in try await operation(provider) }
+  }
+
+  public init(
+    streamingOperation: @escaping @Sendable (
+      UsageProvider,
+      AccountLoginOutputHandler?
+    ) async throws -> AccountLoginResult
+  ) {
+    supportedProviders = Set(UsageProvider.allCases)
+    operation = streamingOperation
   }
 
   public func supports(provider: UsageProvider) -> Bool {
@@ -71,11 +86,14 @@ public struct AccountLoginService: Sendable {
     return AccountLoginError.isolatedLoginUnavailable(provider).localizedDescription
   }
 
-  public func login(provider: UsageProvider) async throws -> AccountLoginResult {
+  public func login(
+    provider: UsageProvider,
+    onOutput: AccountLoginOutputHandler? = nil
+  ) async throws -> AccountLoginResult {
     guard supports(provider: provider) else {
       throw AccountLoginError.isolatedLoginUnavailable(provider)
     }
-    return try await operation(provider)
+    return try await operation(provider, onOutput)
   }
 }
 
@@ -153,14 +171,18 @@ enum IsolatedAccountLogin {
     return candidates.first { fileManager.isExecutableFile(atPath: $0.path) }
   }
 
-  static func perform(provider: UsageProvider) async throws -> AccountLoginResult {
+  static func perform(
+    provider: UsageProvider,
+    onOutput: AccountLoginOutputHandler? = nil
+  ) async throws -> AccountLoginResult {
     let fileManager = FileManager.default
     return try await perform(
       provider: provider,
       environment: ProcessInfo.processInfo.environment,
       home: fileManager.homeDirectoryForCurrentUser,
       temporaryDirectory: fileManager.temporaryDirectory,
-      fileManager: fileManager
+      fileManager: fileManager,
+      onOutput: onOutput
     )
   }
 
@@ -169,7 +191,8 @@ enum IsolatedAccountLogin {
     environment: [String: String],
     home: URL,
     temporaryDirectory: URL,
-    fileManager: FileManager = .default
+    fileManager: FileManager = .default,
+    onOutput: AccountLoginOutputHandler? = nil
   ) async throws -> AccountLoginResult {
     let root = temporaryDirectory
       .appendingPathComponent("Quotari-AddAccount-\(UUID().uuidString)", isDirectory: true)
@@ -195,7 +218,7 @@ enum IsolatedAccountLogin {
         configuration: configuration,
         executable: executable,
         environment: environment,
-        root: root
+        onOutput: onOutput
       ))
     } catch {
       outcome = .failure(error)
@@ -214,7 +237,7 @@ enum IsolatedAccountLogin {
     configuration: AccountLoginConfiguration,
     executable: URL,
     environment: [String: String],
-    root: URL
+    onOutput: AccountLoginOutputHandler?
   ) async throws -> AccountLoginResult {
     var loginEnvironment = environment
     configuration.isolatedEnvironment.forEach { loginEnvironment[$0.key] = $0.value }
@@ -229,7 +252,8 @@ enum IsolatedAccountLogin {
       executable: executable,
       arguments: configuration.arguments,
       environment: loginEnvironment,
-      currentDirectory: root
+      currentDirectory: configuration.authDirectory.deletingLastPathComponent(),
+      onOutput: onOutput
     )
     try Task.checkCancellation()
     guard status == 0 else {
@@ -249,7 +273,8 @@ enum IsolatedAccountLogin {
     executable: URL,
     arguments: [String],
     environment: [String: String],
-    currentDirectory: URL
+    currentDirectory: URL,
+    onOutput: AccountLoginOutputHandler?
   ) async throws -> Int32 {
     let process = Process()
     // Run the CLI itself so cancellation terminates the process that owns the
@@ -259,26 +284,41 @@ enum IsolatedAccountLogin {
     process.environment = environment
     process.currentDirectoryURL = currentDirectory
     process.standardInput = FileHandle.nullDevice
-    process.standardOutput = FileHandle.nullDevice
-    process.standardError = FileHandle.nullDevice
+    let outputPipe = onOutput.map { _ in Pipe() }
+    process.standardOutput = outputPipe?.fileHandleForWriting ?? FileHandle.nullDevice
+    process.standardError = outputPipe?.fileHandleForWriting ?? FileHandle.nullDevice
     let box = AccountLoginProcessBox(process)
-
-    return try await withTaskCancellationHandler {
-      try Task.checkCancellation()
-      return try await withCheckedThrowingContinuation { continuation in
-        process.terminationHandler = { finished in
-          continuation.resume(returning: finished.terminationStatus)
-        }
-        do {
-          try box.run()
-        } catch {
-          process.terminationHandler = nil
-          continuation.resume(throwing: error)
-        }
-      }
-    } onCancel: {
-      box.cancel()
+    let outputReader = outputPipe.flatMap { pipe in
+      onOutput.map { AccountLoginOutputReader(pipe: pipe, handler: $0) }
     }
+    outputReader?.start()
+
+    let status: Int32
+    do {
+      status = try await withTaskCancellationHandler {
+        try Task.checkCancellation()
+        return try await withCheckedThrowingContinuation { continuation in
+          process.terminationHandler = { finished in
+            continuation.resume(returning: finished.terminationStatus)
+          }
+          do {
+            try box.run()
+            try? outputPipe?.fileHandleForWriting.close()
+          } catch {
+            process.terminationHandler = nil
+            try? outputPipe?.fileHandleForWriting.close()
+            continuation.resume(throwing: error)
+          }
+        }
+      } onCancel: {
+        box.cancel()
+      }
+    } catch {
+      outputReader?.cancel()
+      throw error
+    }
+    await outputReader?.finish()
+    return status
   }
 }
 
