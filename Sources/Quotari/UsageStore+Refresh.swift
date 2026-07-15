@@ -8,7 +8,7 @@ extension UsageStore {
   /// through `refreshRequested` instead of replacing the handle with a task
   /// that would return immediately via the `isRefreshing` guard — otherwise a
   /// switch could await a no-op and race the real refresh's slot write.
-  func beginRefresh() {
+  func beginRefresh(reusesLatestAccountReload: Bool = false) {
     // Don't start a fetch while a switch is rewriting a credential slot.
     guard !isSwitching else { return }
     guard inFlightRefresh == nil else {
@@ -16,15 +16,21 @@ extension UsageStore {
       return
     }
     inFlightRefresh = Task { [weak self] in
-      await self?.refresh(clearsInFlightRefresh: true)
+      await self?.refresh(
+        clearsInFlightRefresh: true,
+        reusesLatestAccountReload: reusesLatestAccountReload
+      )
     }
   }
 
   func refresh() async {
-    await refresh(clearsInFlightRefresh: false)
+    await refresh(clearsInFlightRefresh: false, reusesLatestAccountReload: false)
   }
 
-  private func refresh(clearsInFlightRefresh: Bool) async {
+  private func refresh(
+    clearsInFlightRefresh: Bool,
+    reusesLatestAccountReload: Bool
+  ) async {
     // Clear the tracked handle before this actor-isolated operation returns.
     // Doing it in the spawning task leaves an executor hop where a new request
     // can observe the completed task, set `refreshRequested`, and be stranded
@@ -44,7 +50,9 @@ extension UsageStore {
     // A live stand-in can silently start pointing at a different login when
     // its CLI slot is reused; rediscover first so the timer path reconciles
     // the selection just like a manual reload.
-    guard await prepareReconciledAccountsForRefresh() else { return }
+    guard await prepareReconciledAccountsForRefresh(
+      reusesLatestAccountReload: reusesLatestAccountReload
+    ) else { return }
     repeat {
       refreshRequested = false
       // A switch can close the gate after the discovery await above, or while
@@ -58,12 +66,14 @@ extension UsageStore {
     refreshClaudeProfiles()
   }
 
-  func startTimer() {
+  func startTimer(reusesLatestAccountReloadForFirstRefresh: Bool = false) {
     timerTask?.cancel()
     timerTask = Task { [weak self] in
+      var reusesLatestAccountReload = reusesLatestAccountReloadForFirstRefresh
       while !Task.isCancelled {
         guard let self else { break }
-        beginRefresh()
+        beginRefresh(reusesLatestAccountReload: reusesLatestAccountReload)
+        reusesLatestAccountReload = false
         await inFlightRefresh?.value
         let interval = refreshInterval
         try? await Task.sleep(for: .seconds(interval))
@@ -71,7 +81,9 @@ extension UsageStore {
     }
   }
 
-  func prepareReconciledAccountsForRefresh() async -> Bool {
+  func prepareReconciledAccountsForRefresh(
+    reusesLatestAccountReload: Bool = false
+  ) async -> Bool {
     let hasMutableMonitoredAccount = monitoredAccounts.contains { provider, accounts in
       isProviderEnabled(provider) && accounts.contains { !$0.credentialSource.isCaptured }
     }
@@ -81,6 +93,31 @@ extension UsageStore {
       // without making the refresh being drained wait behind its own gate.
       beginAccountRediscovery()
       return false
+    }
+    // Automatic startup has just awaited its account-reload generation before
+    // it starts the timer. A newer Settings or activation reload may already
+    // be queued behind that generation, so wait for the queue to become fully
+    // current instead of fetching from the older snapshot. Later timer and
+    // manual refreshes still initiate their own rediscovery.
+    if reusesLatestAccountReload {
+      while completedAccountRediscoveryRequest != accountRediscoveryRequest {
+        guard !isSwitching else {
+          beginAccountRediscovery()
+          return false
+        }
+        startQueuedAccountRediscoveryIfNeeded()
+        guard let accountReload = inFlightAccountReload else { return false }
+        // Await the task rather than a particular generation waiter. A switch
+        // can close the gate and stop this drain before the newest generation;
+        // waiting on that generation here would deadlock with the switch that
+        // is itself draining this refresh.
+        await accountReload.value
+      }
+      guard !isSwitching else {
+        beginAccountRediscovery()
+        return false
+      }
+      return true
     }
     await reloadAccounts()
     guard !isSwitching else {

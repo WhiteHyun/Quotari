@@ -5,6 +5,49 @@ import Testing
 
 @MainActor
 struct UsageStoreMonitoringReloadRaceTests {
+  @Test func startupRefreshWaitsForNewerQueuedAccountReload() async throws {
+    let replacement = ProviderAccount(
+      provider: .codex,
+      displayName: "Replacement",
+      detail: "Default",
+      credentialSource: MonitoringFixture.personal.credentialSource,
+      credentialIdentity: "replacement"
+    )
+    let discovery = SequencedMonitoringDiscovery(
+      results: [[MonitoringFixture.personal], [replacement]]
+    )
+    let fixture = try MonitoringFixture(
+      monitored: [.codex: [MonitoringFixture.personal]],
+      accountDiscovery: discovery
+    )
+    defer { fixture.remove() }
+
+    let startupReload = Task { await fixture.store.reloadAccounts() }
+    await discovery.waitUntilRequestStarts(1)
+    fixture.store.beginAccountRediscovery()
+    await discovery.release(1)
+    await startupReload.value
+    await discovery.waitUntilRequestStarts(2)
+
+    let completion = MonitoringPreparationCompletion()
+    let preparation = Task {
+      let result = await fixture.store.prepareReconciledAccountsForRefresh(
+        reusesLatestAccountReload: true
+      )
+      await completion.finish()
+      return result
+    }
+    for _ in 0 ..< 10 {
+      await Task.yield()
+    }
+
+    let finishedBeforeLatestReload = await completion.isFinished
+    #expect(!finishedBeforeLatestReload)
+    await discovery.release(2)
+    #expect(await preparation.value)
+    #expect(fixture.store.accounts[.codex] == [replacement])
+  }
+
   @Test func monitoringToggleDuringLaterProviderReloadIsPreserved() async throws {
     let codex = ProviderAccount(
       provider: .codex,
@@ -60,6 +103,49 @@ struct UsageStoreMonitoringReloadRaceTests {
       ),
       pipeline: ProviderFetchPipeline { _ in [MonitoringReloadStrategy()] }
     )
+  }
+}
+
+private actor MonitoringPreparationCompletion {
+  private(set) var isFinished = false
+
+  func finish() {
+    isFinished = true
+  }
+}
+
+private actor SequencedMonitoringDiscovery: ProviderAccountDiscovering {
+  private let results: [[ProviderAccount]]
+  private var requestCount = 0
+  private var releasedRequests = Set<Int>()
+  private var startWaiters: [Int: [CheckedContinuation<Void, Never>]] = [:]
+  private var releaseWaiters: [Int: [CheckedContinuation<Void, Never>]] = [:]
+
+  init(results: [[ProviderAccount]]) {
+    self.results = results
+  }
+
+  func accounts(for provider: UsageProvider) async -> [ProviderAccount] {
+    requestCount += 1
+    let request = requestCount
+    let readyWaiters = startWaiters.keys.filter { $0 <= request }
+    for key in readyWaiters {
+      startWaiters.removeValue(forKey: key)?.forEach { $0.resume() }
+    }
+    if !releasedRequests.contains(request) {
+      await withCheckedContinuation { releaseWaiters[request, default: []].append($0) }
+    }
+    return results[min(request - 1, results.count - 1)]
+  }
+
+  func waitUntilRequestStarts(_ request: Int) async {
+    guard requestCount < request else { return }
+    await withCheckedContinuation { startWaiters[request, default: []].append($0) }
+  }
+
+  func release(_ request: Int) {
+    releasedRequests.insert(request)
+    releaseWaiters.removeValue(forKey: request)?.forEach { $0.resume() }
   }
 }
 

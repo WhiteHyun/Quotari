@@ -208,7 +208,7 @@ final class UsageStore {
       Task {
         _ = await self.quotaNotifications.refreshAuthorizationStatus()
         await reloadAccounts()
-        startTimer()
+        startTimer(reusesLatestAccountReloadForFirstRefresh: true)
       }
     }
   }
