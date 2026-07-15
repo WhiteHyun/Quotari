@@ -85,11 +85,12 @@ struct ProviderAccountPopover: View {
   }
 
   private var header: some View {
-    HStack(alignment: .firstTextBaseline) {
+    let monitoredCount = accounts.filter(store.isMonitoring).count
+    return HStack(alignment: .firstTextBaseline) {
       Text("\(descriptor.metadata.displayName) Accounts")
         .font(.headline)
       Spacer()
-      Text("\(accounts.count) \(accounts.count == 1 ? "account" : "accounts")")
+      Text("\(monitoredCount)/\(accounts.count) monitored")
         .font(.caption)
         .foregroundStyle(.secondary)
     }
@@ -97,6 +98,8 @@ struct ProviderAccountPopover: View {
 
   private func accountButton(_ account: ProviderAccount) -> some View {
     let isSelected = store.activeAccount(for: descriptor.id)?.id == account.id
+    let isCLIActive = store.activeCLIAccount(for: descriptor.id)?.id == account.id
+    let isMonitored = store.isMonitoring(account)
     let usage = store.accountUsage(for: account)
     return Button {
       store.selectAccount(account, for: descriptor.id)
@@ -107,6 +110,8 @@ struct ProviderAccountPopover: View {
         label: store.accountLabel(for: account),
         usage: usage,
         isSelected: isSelected,
+        isCLIActive: isCLIActive,
+        isMonitored: isMonitored,
         isLoading: store.refreshingAccountUsageProviders.contains(descriptor.id) && usage == nil,
         accent: accent
       )
@@ -118,6 +123,13 @@ struct ProviderAccountPopover: View {
 
   @ViewBuilder
   private func accountMenu(_ account: ProviderAccount) -> some View {
+    Button(store.isMonitoring(account) ? "Stop Monitoring" : "Monitor Account") {
+      let shouldMonitor = !store.isMonitoring(account)
+      store.setMonitoring(shouldMonitor, for: account)
+      if shouldMonitor {
+        Task { await store.refreshAccountUsage(for: descriptor.id, force: true) }
+      }
+    }
     if store.capturedEquivalents.keys.contains(account.id) {
       Button("Remove Account (Still in CLI)", role: .destructive) {}
         .disabled(true)
@@ -175,6 +187,8 @@ private struct ProviderAccountUsageRow: View {
   let label: String
   let usage: ProviderAccountUsage?
   let isSelected: Bool
+  let isCLIActive: Bool
+  let isMonitored: Bool
   let isLoading: Bool
   let accent: Color
 
@@ -196,13 +210,14 @@ private struct ProviderAccountUsageRow: View {
           }
         }
         Spacer()
+        if isCLIActive {
+          accountBadge("CLI Active", color: .secondary)
+        }
+        if isMonitored {
+          accountBadge("Monitored", color: accent)
+        }
         if account.credentialSource.isCaptured {
-          Text("Saved")
-            .font(.caption2.weight(.medium))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(accent.opacity(0.15), in: Capsule())
-            .foregroundStyle(accent)
+          accountBadge("Saved", color: accent)
         }
         if let plan = usage?.snapshot?.plan {
           Text(plan)
@@ -224,6 +239,15 @@ private struct ProviderAccountUsageRow: View {
       RoundedRectangle(cornerRadius: 8, style: .continuous)
         .stroke(isSelected ? accent.opacity(0.75) : Color.primary.opacity(0.1))
     }
+  }
+
+  private func accountBadge(_ title: String, color: Color) -> some View {
+    Text(title)
+      .font(.caption2.weight(.medium))
+      .padding(.horizontal, 6)
+      .padding(.vertical, 2)
+      .background(color.opacity(0.15), in: Capsule())
+      .foregroundStyle(color)
   }
 
   @ViewBuilder
