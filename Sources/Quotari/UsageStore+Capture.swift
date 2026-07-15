@@ -104,7 +104,7 @@ extension UsageStore {
     // Drain whatever was already running when the gate closed.
     await inFlightRefresh?.value
     await inFlightAccountReload?.value
-    await accountUsageRefreshTasks[provider]?.task.value
+    _ = await accountUsageRefreshTasks[provider]?.task.value
     await selectionRefreshTasks[provider]?.value
     let switcher = accountSwitch
     let knownLiveTarget = knownLiveTarget(for: account)

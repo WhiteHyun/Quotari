@@ -22,17 +22,21 @@ final class UsageStore {
   var reconciledSelectionOrigins: [UsageProvider: ProviderAccount] = [:]
   var accountUsage: [UsageProvider: [String: ProviderAccountUsage]] = [:]
   var refreshingAccountUsageProviders = Set<UsageProvider>()
-  private(set) var isRefreshing = false
+  var isRefreshing = false
   // Settable from the refresh extension (a sibling file) that records it.
   var lastRefresh: Date?
   /// The most recent spawned dashboard refresh, so a credential-slot mutation
   /// (an account switch) can await any in-flight refresh — which can rotate
   /// and persist a live token — before reading and overwriting the slot.
-  private(set) var inFlightRefresh: Task<Void, Never>?
+  var inFlightRefresh: Task<Void, Never>?
   /// The shared account-discovery pass used by app activation, Settings, and
   /// manual reloads. Joining this task prevents simultaneous lifecycle events
   /// from repeating the same keychain and credential-file reads.
   private(set) var inFlightAccountReload: Task<Void, Never>?
+  /// Providers whose discovered credentials are being copied into the registry.
+  /// A fetch that starts after this gate closes waits for the reload to finish,
+  /// so it receives the newly established live-to-registry identity link.
+  var automaticallyCapturingProviders = Set<UsageProvider>()
   private(set) var accountRediscoveryRequest: UInt = 0
   private(set) var completedAccountRediscoveryRequest: UInt = 0
   private var accountRediscoveryWaiters: [AccountRediscoveryWaiter] = []
@@ -60,6 +64,7 @@ final class UsageStore {
   let accountDiscovery: any ProviderAccountDiscovering
   private let accountSelectionStore: ProviderAccountSelectionStore
   let accountCapture: AccountCaptureService
+  let automaticallyCapturesDiscoveredAccounts: Bool
   let accountSwitch: AccountSwitchService
   let profileFetcher: any ClaudeProfileFetching
   let profileStore: ClaudeProfileStore
@@ -84,8 +89,8 @@ final class UsageStore {
   /// is still in flight, so deferred alerts can be drained as unattributed.
   var emptyClaudeProfileFingerprints: [String: String] = [:]
 
-  private(set) var timerTask: Task<Void, Never>?
-  private var refreshRequested = false
+  var timerTask: Task<Void, Never>?
+  var refreshRequested = false
   var accountRevisions: [UsageProvider: UInt] = [:]
   var costTasks: [UsageProvider: CostRefreshTask] = [:]
   var lastCostScans: [UsageProvider: Date] = [:]
@@ -93,9 +98,22 @@ final class UsageStore {
   var latestReportedCostFallbacks: [UsageProvider: ReportedCostFallback] = [:]
   var accountUsageRefreshTasks: [UsageProvider: AccountUsageRefreshTask] = [:]
   var providerFetchTasks: [UsageProvider: ProviderFetchTask] = [:]
+  var selectionProviderFetchTasks: [UsageProvider: ProviderFetchTask] = [:]
+  /// Credential transitions completed by Quotari immediately before an
+  /// account scan. Fetch handles disappear at completion, but rediscovery
+  /// still needs this evidence to distinguish a token rotation from an
+  /// external login replacing the same mutable CLI slot.
+  var completedCredentialTransitions: [UsageProvider: [String: Set<String>]] = [:]
   /// The fetch `selectAccount` starts, tracked so an account switch can await
   /// it (it may rotate/persist the live token the switch is about to back up).
   var selectionRefreshTasks: [UsageProvider: Task<Void, Never>] = [:]
+  /// User-selection refreshes block a dashboard generation that has not yet
+  /// entered its provider fetch. Reactivation refreshes are excluded because
+  /// they may already be waiting for that same dashboard generation to drain.
+  /// The latest user-selection generation a dashboard must drain before it
+  /// snapshots this provider's account. Provider reactivation is deliberately
+  /// excluded because it may already be waiting for that dashboard.
+  var dashboardBlockingSelectionRefreshes: [UsageProvider: UUID] = [:]
   var quotaNotificationTask: Task<Void, Never>?
   var deferredClaudeQuotaNotification: DeferredClaudeQuotaNotification?
 
@@ -107,6 +125,7 @@ final class UsageStore {
     accountDiscovery: any ProviderAccountDiscovering = ProviderAccountDiscovery(),
     accountSelectionStore: ProviderAccountSelectionStore = ProviderAccountSelectionStore(),
     accountCapture: AccountCaptureService = AccountCaptureService(),
+    automaticallyCapturesDiscoveredAccounts: Bool = true,
     accountSwitch: AccountSwitchService? = nil,
     profileFetcher: any ClaudeProfileFetching = ClaudeProfileFetcher(),
     profileStore: ClaudeProfileStore = ClaudeProfileStore(),
@@ -128,6 +147,7 @@ final class UsageStore {
     self.accountDiscovery = accountDiscovery
     self.accountSelectionStore = accountSelectionStore
     self.accountCapture = accountCapture
+    self.automaticallyCapturesDiscoveredAccounts = automaticallyCapturesDiscoveredAccounts
     self.accountSwitch = accountSwitch ?? AccountSwitchService(
       activeCLIProcesses: CLIActivityDetector().activeProcesses
     )
@@ -317,75 +337,4 @@ final class UsageStore {
 private struct AccountRediscoveryWaiter {
   let request: UInt
   let continuation: CheckedContinuation<Void, Never>
-}
-
-extension UsageStore {
-  /// Spawns a tracked dashboard refresh. UI and the timer go through this so
-  /// `inFlightRefresh` always reflects the actually-running refresh an account
-  /// switch may need to await. A second call while one is in flight coalesces
-  /// through `refreshRequested` instead of replacing the handle with a task
-  /// that would return immediately via the `isRefreshing` guard — otherwise a
-  /// switch could await a no-op and race the real refresh's slot write.
-  func beginRefresh() {
-    // Don't start a fetch while a switch is rewriting a credential slot.
-    guard !isSwitching else { return }
-    guard inFlightRefresh == nil else {
-      refreshRequested = true
-      return
-    }
-    inFlightRefresh = Task { [weak self] in
-      await self?.refresh(clearsInFlightRefresh: true)
-    }
-  }
-
-  func refresh() async {
-    await refresh(clearsInFlightRefresh: false)
-  }
-
-  private func refresh(clearsInFlightRefresh: Bool) async {
-    // Clear the tracked handle before this actor-isolated operation returns.
-    // Doing it in the spawning task leaves an executor hop where a new request
-    // can observe the completed task, set `refreshRequested`, and be stranded
-    // when that task subsequently clears its handle and exits.
-    defer {
-      if clearsInFlightRefresh {
-        inFlightRefresh = nil
-      }
-    }
-    guard !isRefreshing else {
-      refreshRequested = true
-      return
-    }
-    isRefreshing = true
-    defer { isRefreshing = false }
-
-    // A live stand-in can silently start pointing at a different login when
-    // its CLI slot is reused; rediscover first so the timer path reconciles
-    // the selection just like a manual reload.
-    guard await prepareReconciledAccountsForRefresh() else { return }
-    repeat {
-      refreshRequested = false
-      // A switch can close the gate after the discovery await above, or while
-      // draining a previous pass. Never begin another provider fetch inside
-      // that protected write window.
-      guard !isSwitching else { return }
-      await performRefresh()
-    } while refreshRequested
-    // Self-heal email labels after a usage refresh may have rotated a token:
-    // the access-token fingerprint changes, so this re-fetches exactly once.
-    refreshClaudeProfiles()
-  }
-
-  private func startTimer() {
-    timerTask?.cancel()
-    timerTask = Task { [weak self] in
-      while !Task.isCancelled {
-        guard let self else { break }
-        beginRefresh()
-        await inFlightRefresh?.value
-        let interval = refreshInterval
-        try? await Task.sleep(for: .seconds(interval))
-      }
-    }
-  }
 }
