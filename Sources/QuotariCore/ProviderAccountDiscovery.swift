@@ -3,6 +3,13 @@ import Foundation
 public protocol ProviderAccountDiscovering: Sendable {
   func accounts(for provider: UsageProvider) async -> [ProviderAccount]
 
+  /// The live credential source the provider resolves implicitly when Quotari
+  /// does not pass an explicit account override.
+  func activeCLIAccount(
+    for provider: UsageProvider,
+    among accounts: [ProviderAccount]
+  ) async -> ProviderAccount?
+
   /// The live account among `accounts` holding the same underlying credential
   /// identity as the given saved (registry) account, if any. Lets a selection
   /// pointing at a saved copy be reconciled to the live login that hides it.
@@ -18,6 +25,13 @@ public protocol ProviderAccountDiscovering: Sendable {
 }
 
 public extension ProviderAccountDiscovering {
+  func activeCLIAccount(
+    for provider: UsageProvider,
+    among accounts: [ProviderAccount]
+  ) async -> ProviderAccount? {
+    accounts.first { !$0.credentialSource.isCaptured }
+  }
+
   func liveAccount(
     equivalentTo account: ProviderAccount,
     among accounts: [ProviderAccount]
@@ -79,6 +93,17 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
         )
       }
     return live + saved
+  }
+
+  public func activeCLIAccount(
+    for provider: UsageProvider,
+    among accounts: [ProviderAccount]
+  ) async -> ProviderAccount? {
+    guard provider == .codex else {
+      return accounts.first { !$0.credentialSource.isCaptured }
+    }
+    guard let effectiveCodexSource else { return nil }
+    return accounts.first { $0.credentialSource == effectiveCodexSource }
   }
 
   public func liveAccount(

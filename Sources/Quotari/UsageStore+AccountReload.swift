@@ -1,6 +1,19 @@
 import QuotariCore
 
 extension UsageStore {
+  func finishAccountReload(syncCandidates: [ProviderAccount]) async {
+    for provider in providers.map(\.id) {
+      synchronizeQuotaNotificationScope(
+        account: selectedAccounts[provider],
+        origin: reconciledSelectionOrigins[provider],
+        provider: provider
+      )
+    }
+    await migrateCachedClaudeProfilesToCapturedAccounts()
+    await syncCapturedCopies(of: syncCandidates)
+    refreshClaudeProfiles()
+  }
+
   func accountPreservationProviders(through request: UInt) -> Set<UsageProvider> {
     Set(accountPreservationRequests.compactMap { provider, requiredRequest in
       requiredRequest <= request ? provider : nil
@@ -32,6 +45,10 @@ extension UsageStore {
       for: provider,
       capturesWhileDisabled: providersForLogin.contains(provider)
     )
+    let activeCLIAccount = await accountDiscovery.activeCLIAccount(
+      for: provider,
+      among: reload.accounts
+    )
     var providerAccounts = reload.accounts
     let update = await reloadedSelectionUpdate(
       provider: provider,
@@ -46,10 +63,63 @@ extension UsageStore {
     return ProviderAccountReloadState(
       provider: provider,
       accounts: providerAccounts,
+      discoveredAccounts: reload.accounts,
       capturedCopies: reload.capturedCopies,
+      credentialTransitions: reload.credentialTransitions,
       selectionUpdate: update,
+      activeCLIAccount: activeCLIAccount,
       keepsCaptureGate: reload.keepsCaptureGate
     )
+  }
+
+  func reloadedMonitoredAccounts(
+    _ state: ProviderAccountReloadState?,
+    capturedCopies: [String: ProviderAccount]
+  ) -> [ProviderAccount] {
+    guard let state else { return [] }
+    let provider = state.provider
+    let accounts = state.accounts
+    let discoveredAccounts = state.discoveredAccounts
+    let credentialTransitions = state.credentialTransitions
+    guard let persisted = persistedMonitoredAccounts[provider] else {
+      // Missing means "not configured yet" while an explicit empty array means
+      // the user chose none. Do not collapse those states before an account is
+      // available, or a later first login would never become monitored.
+      guard !discoveredAccounts.isEmpty else { return [] }
+      let logicalAccounts = discoveredAccounts.map { capturedCopies[$0.id] ?? $0 }
+      persistedMonitoredAccounts[provider] = logicalAccounts.uniquedByID()
+      return discoveredAccounts
+    }
+
+    var migrated = persisted
+    let visible = persisted.enumerated().compactMap { index, logicalAccount in
+      if let visible = accounts.first(where: {
+        $0.id == logicalAccount.id && $0.credentialScopeID == logicalAccount.credentialScopeID
+      }) {
+        // A capture may have succeeded after this live row was first persisted.
+        // Move the durable choice to its immutable registry identity before the
+        // mutable slot can be reused by another login.
+        if let captured = capturedCopies[visible.id] {
+          migrated[index] = captured
+        }
+        return visible
+      }
+      if let targetScopeID = credentialTransitions[logicalAccount.credentialScopeID],
+         let visible = accounts.first(where: { $0.credentialScopeID == targetScopeID }) {
+        // A completed OAuth refresh proves that this new credential is the
+        // successor to the monitored live row. Persist its captured identity
+        // when available; otherwise remember the rotated scope so a later
+        // unrelated slot replacement cannot inherit monitoring.
+        migrated[index] = capturedCopies[visible.id] ?? visible
+        return visible
+      }
+      return accounts.first { capturedCopies[$0.id]?.id == logicalAccount.id }
+    }.uniquedByID()
+    let migratedUnique = migrated.uniquedByID()
+    if migratedUnique != persisted {
+      persistedMonitoredAccounts[provider] = migratedUnique
+    }
+    return visible
   }
 
   private func reloadProviderAccounts(
@@ -158,9 +228,19 @@ extension UsageStore {
 struct ProviderAccountReloadState {
   var provider: UsageProvider
   var accounts: [ProviderAccount]
+  var discoveredAccounts: [ProviderAccount]
   var capturedCopies: [String: ProviderAccount]
+  var credentialTransitions: [String: String]
   var selectionUpdate: SelectionUpdate?
+  var activeCLIAccount: ProviderAccount?
   var keepsCaptureGate: Bool
+}
+
+private extension [ProviderAccount] {
+  func uniquedByID() -> [ProviderAccount] {
+    var ids = Set<String>()
+    return filter { ids.insert($0.id).inserted }
+  }
 }
 
 private struct ProviderAccountReload {

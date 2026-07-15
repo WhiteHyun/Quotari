@@ -13,6 +13,20 @@ final class UsageStore {
   private(set) var providersWithDiscoveredCredentials = Set<UsageProvider>()
   private(set) var credentialDiscoveryCompleted = Set<UsageProvider>()
   private(set) var selectedAccounts: [UsageProvider: ProviderAccount] = [:]
+  /// The live account each CLI resolves without an explicit Quotari override.
+  /// This is discovered from provider configuration rather than row order.
+  private(set) var activeCLIAccounts: [UsageProvider: ProviderAccount] = [:]
+  /// Visible accounts whose quota and usage are refreshed in the background.
+  /// This is independent from the single account shown on the dashboard.
+  var monitoredAccounts: [UsageProvider: [ProviderAccount]] = [:]
+  /// Logical persisted monitoring choices. A live CLI row is stored as its
+  /// managed registry account so a mutable credential slot cannot transfer
+  /// monitoring to a different login after an external switch.
+  var persistedMonitoredAccounts: [UsageProvider: [ProviderAccount]] = [:]
+  /// False when the persisted monitoring file could not be read. In that
+  /// state monitoring fails closed and no partial in-memory view may replace
+  /// the user's last durable choices.
+  var isMonitoringConfigurationLoaded = true
   /// The hidden saved registry copy behind each live account, keyed by the
   /// live account's id — identities that are saved while also being live.
   private(set) var capturedEquivalents: [String: ProviderAccount] = [:]
@@ -70,6 +84,7 @@ final class UsageStore {
   let costEstimator: any UsageCostEstimating
   let accountDiscovery: any ProviderAccountDiscovering
   private let accountSelectionStore: ProviderAccountSelectionStore
+  let accountMonitoringStore: ProviderAccountMonitoringStore
   let accountCapture: AccountCaptureService
   let accountLogin: AccountLoginService
   let automaticallyCapturesDiscoveredAccounts: Bool
@@ -115,6 +130,9 @@ final class UsageStore {
   /// The fetch `selectAccount` starts, tracked so an account switch can await
   /// it (it may rotate/persist the live token the switch is about to back up).
   var selectionRefreshTasks: [UsageProvider: Task<Void, Never>] = [:]
+  /// Disabling clears per-account usage. The first successful provider fetch
+  /// after reactivation consumes this marker and restores every monitored row.
+  var providersNeedingMonitoredUsageRestore = Set<UsageProvider>()
   /// User-selection refreshes block a dashboard generation that has not yet
   /// entered its provider fetch. Reactivation refreshes are excluded because
   /// they may already be waiting for that same dashboard generation to drain.
@@ -123,7 +141,9 @@ final class UsageStore {
   /// excluded because it may already be waiting for that dashboard.
   var dashboardBlockingSelectionRefreshes: [UsageProvider: UUID] = [:]
   var quotaNotificationTask: Task<Void, Never>?
-  var deferredClaudeQuotaNotification: DeferredClaudeQuotaNotification?
+  var deferredClaudeQuotaNotifications: [String: DeferredClaudeQuotaNotification] = [:]
+  var notificationScopeIDsByAccountID: [String: String] = [:]
+  var scopedNotificationAccountIDs: [UsageProvider: Set<String>] = [:]
 
   /// Tests inject mock descriptors so results don't depend on credentials
   /// present on the machine running them.
@@ -132,6 +152,7 @@ final class UsageStore {
     costEstimator: any UsageCostEstimating = LocalUsageCostEstimator(),
     accountDiscovery: any ProviderAccountDiscovering = ProviderAccountDiscovery(),
     accountSelectionStore: ProviderAccountSelectionStore = ProviderAccountSelectionStore(),
+    accountMonitoringStore: ProviderAccountMonitoringStore? = nil,
     accountCapture: AccountCaptureService = AccountCaptureService(),
     accountLogin: AccountLoginService = AccountLoginService(),
     automaticallyCapturesDiscoveredAccounts: Bool = true,
@@ -155,6 +176,11 @@ final class UsageStore {
     self.costEstimator = costEstimator
     self.accountDiscovery = accountDiscovery
     self.accountSelectionStore = accountSelectionStore
+    self.accountMonitoringStore = accountMonitoringStore ?? ProviderAccountMonitoringStore(
+      url: accountSelectionStore.url
+        .deletingLastPathComponent()
+        .appendingPathComponent("MonitoredProviderAccounts.json")
+    )
     self.accountCapture = accountCapture
     self.accountLogin = accountLogin
     self.automaticallyCapturesDiscoveredAccounts = automaticallyCapturesDiscoveredAccounts
@@ -170,6 +196,14 @@ final class UsageStore {
     self.menuBarPreferences = menuBarPreferences ?? MenuBarPreferencesController(defaults: defaults)
     self.quotaNotifications = quotaNotifications ?? QuotaNotificationController(defaults: defaults)
     selectedAccounts = accountSelectionStore.load()
+    do {
+      persistedMonitoredAccounts = try self.accountMonitoringStore.load()
+    } catch {
+      // Explicit empty arrays prevent a read failure from being mistaken for
+      // first launch and turning monitoring back on for every discovered row.
+      persistedMonitoredAccounts = Dictionary(uniqueKeysWithValues: providers.map { ($0.id, []) })
+      isMonitoringConfigurationLoaded = false
+    }
     claudeProfiles = profileStore.load()
     // refreshInterval has no inline default: its first assignment runs the
     // @Observable-generated init accessor instead of the setter, so restoring
@@ -187,7 +221,7 @@ final class UsageStore {
       Task {
         _ = await self.quotaNotifications.refreshAuthorizationStatus()
         await reloadAccounts()
-        startTimer()
+        startTimer(reusesLatestAccountReloadForFirstRefresh: true)
       }
     }
   }
@@ -269,9 +303,10 @@ extension UsageStore {
   private func performAccountReload(preserving providersForLogin: Set<UsageProvider>) async {
     var gatedProviders = Set<UsageProvider>()
     defer { automaticallyCapturingProviders.subtract(gatedProviders) }
-    var next: [UsageProvider: [ProviderAccount]] = [:]
+    var reloadStates: [UsageProvider: ProviderAccountReloadState] = [:]
     var nextProvidersWithDiscoveredCredentials = Set<UsageProvider>()
     var refreshedSelections: [(UsageProvider, SelectionUpdate)] = []
+    var nextActiveCLIAccounts: [UsageProvider: ProviderAccount] = [:]
     var alreadyCaptured: [String: ProviderAccount] = [:]
     var syncCandidates: [ProviderAccount] = []
     for descriptor in providers {
@@ -285,20 +320,38 @@ extension UsageStore {
       if let selectionUpdate = state.selectionUpdate {
         refreshedSelections.append((state.provider, selectionUpdate))
       }
+      if let activeCLIAccount = state.activeCLIAccount {
+        nextActiveCLIAccounts[state.provider] = activeCLIAccount
+      }
       alreadyCaptured.merge(state.capturedCopies) { current, _ in current }
       syncCandidates += state.accounts.filter { state.capturedCopies.keys.contains($0.id) }
-      next[state.provider] = state.accounts
+      reloadStates[state.provider] = state
     }
-    accounts = next
+    // Reconcile monitoring only after every provider await has completed. A
+    // Settings toggle can run while this main-actor reload is suspended; using
+    // the latest persisted choices here prevents an earlier provider snapshot
+    // from overwriting that user action when a later provider finishes.
+    let persistedMonitoringBeforeReconciliation = persistedMonitoredAccounts
+    var nextMonitoredAccounts: [UsageProvider: [ProviderAccount]] = [:]
+    for descriptor in providers {
+      nextMonitoredAccounts[descriptor.id] = reloadedMonitoredAccounts(
+        reloadStates[descriptor.id],
+        capturedCopies: alreadyCaptured
+      )
+    }
+    accounts = reloadStates.mapValues(\.accounts)
     providersWithDiscoveredCredentials = nextProvidersWithDiscoveredCredentials
     credentialDiscoveryCompleted = Set(providers.map(\.id))
     capturedEquivalents = alreadyCaptured
+    activeCLIAccounts = nextActiveCLIAccounts
+    monitoredAccounts = nextMonitoredAccounts
     for (provider, update) in refreshedSelections {
       selectAccount(update.account, for: provider, standingInFor: update.origin)
     }
-    await migrateCachedClaudeProfilesToCapturedAccounts()
-    await syncCapturedCopies(of: syncCandidates)
-    refreshClaudeProfiles()
+    if persistedMonitoredAccounts != persistedMonitoringBeforeReconciliation {
+      persistMonitoringSelections()
+    }
+    await finishAccountReload(syncCandidates: syncCandidates)
   }
 
   /// `origin` is the saved account a reconciled live selection stands in for

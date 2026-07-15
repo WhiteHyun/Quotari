@@ -94,22 +94,27 @@ extension UsageStore {
     let providerFetch = providerFetchTasks[provider]
     let selectionFetch = selectionProviderFetchTasks[provider]
     let accountUsageRefresh = accountUsageRefreshTasks[provider]
-    let selectedCredentialScopeID = selectedAccounts[provider]?.credentialScopeID
+    let trackedCredentialScopeIDs = Set(
+      (persistedMonitoredAccounts[provider] ?? []).map(\.credentialScopeID)
+        + [selectedAccounts[provider]?.credentialScopeID].compactMap(\.self)
+    )
     _ = await providerFetch?.task.value
     _ = await selectionFetch?.task.value
     _ = await accountUsageRefresh?.task.value
     // Each task records its transition before completing, so this also covers
     // a fetch whose handle was already cleared immediately before the scan.
     let completedTransitions = completedCredentialTransitions.removeValue(forKey: provider) ?? [:]
-    guard provider == .claude, let selectedCredentialScopeID else { return [:] }
+    guard provider == .claude, !trackedCredentialScopeIDs.isEmpty else { return [:] }
 
     let unambiguousTransitions = completedTransitions.reduce(into: [String: String]()) { result, transition in
       guard transition.value.count == 1, let target = transition.value.first else { return }
       result[transition.key] = target
     }
     let resolvedTransitions = mergedCredentialTransitions(unambiguousTransitions)
-    guard let finalScopeID = resolvedTransitions[selectedCredentialScopeID] else { return [:] }
-    return [selectedCredentialScopeID: finalScopeID]
+    return trackedCredentialScopeIDs.reduce(into: [:]) { trackedTransitions, sourceScopeID in
+      guard let finalScopeID = resolvedTransitions[sourceScopeID] else { return }
+      trackedTransitions[sourceScopeID] = finalScopeID
+    }
   }
 
   func mergedCredentialTransitions(

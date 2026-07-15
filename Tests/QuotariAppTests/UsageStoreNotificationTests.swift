@@ -14,7 +14,7 @@ struct UsageStoreNotificationTests {
     let center = harness.center
     let live = account(name: "Live", path: "/tmp/live-auth.json")
     let saved = account(name: "Saved", source: .quotariRegistry(id: "codex:saved"))
-    store.reconciledSelectionOrigins[.codex] = saved
+    store.selectAccount(live, for: .codex, standingInFor: saved)
     let value = fetchResult(accountName: live.displayName)
 
     store.applySuccessfulFetch(value, provider: .codex, account: live)
@@ -29,6 +29,36 @@ struct UsageStoreNotificationTests {
       window: .session
     )
     #expect(controller.ledger.windows[key]?.deliveredThresholds == [.warning])
+  }
+
+  @Test func monitoredAccountNotificationDoesNotUseTheSelectedAccountsOrigin() async throws {
+    let harness = try await makeStore("monitored-origin")
+    let store = harness.store
+    let controller = harness.controller
+    let center = harness.center
+    let selected = account(name: "Selected", path: "/tmp/selected-auth.json")
+    let saved = account(name: "Saved", source: .quotariRegistry(id: "codex:saved"))
+    let monitored = account(name: "Monitored", path: "/tmp/monitored-auth.json")
+    store.selectAccount(selected, for: .codex, standingInFor: saved)
+
+    let resolution = await store.quotaNotificationAccountResolution(
+      snapshot: usage(accountName: monitored.displayName),
+      provider: .codex,
+      account: monitored,
+      sourceKind: .api,
+      credentialScopeID: nil
+    )
+
+    store.applySuccessfulFetch(
+      fetchResult(accountName: monitored.displayName),
+      provider: .codex,
+      account: monitored
+    )
+    await store.waitForPendingQuotaNotifications()
+
+    #expect(resolution.logicalAccountID == monitored.id)
+    #expect(center.attemptedRequests.isEmpty)
+    #expect(controller.ledger.windows.isEmpty)
   }
 
   @Test func selectedAccountsKeepIndependentDeliveryHistory() async throws {

@@ -104,7 +104,7 @@ struct UsageStoreAccountRefreshTests {
     #expect(store.accounts[.codex] == [])
   }
 
-  @Test func implicitRefreshCarriesTheFirstLiveAccountsSavedCopyLink() async {
+  @Test func implicitAndMonitoredRefreshesCarryTheLiveAccountsSavedCopyLink() async {
     let live = ProviderAccount(
       provider: .claude,
       displayName: "Claude Code",
@@ -138,7 +138,8 @@ struct UsageStoreAccountRefreshTests {
     await store.refresh()
 
     #expect(store.selectedAccounts[.claude] == nil)
-    #expect(await recorder.ids == ["claude:saved"])
+    let ids = await recorder.ids
+    #expect(ids == ["claude:saved", "claude:saved"])
   }
 
   @Test func refreshUsesPersistedSelectedAccount() async throws {

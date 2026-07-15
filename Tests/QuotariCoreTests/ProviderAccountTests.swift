@@ -97,6 +97,54 @@ struct ProviderAccountSelectionStoreTests {
   }
 }
 
+struct ProviderAccountMonitoringStoreTests {
+  @Test func roundTripsMultipleAndExplicitlyEmptyProviderSelections() throws {
+    let directory = try TemporaryDirectory()
+    let store = ProviderAccountMonitoringStore(
+      url: directory.url.appendingPathComponent("MonitoredProviderAccounts.json")
+    )
+    let personal = ProviderAccount(
+      provider: .codex,
+      displayName: "Personal",
+      detail: "Default",
+      credentialSource: .quotariRegistry(id: "codex:personal")
+    )
+    let work = ProviderAccount(
+      provider: .codex,
+      displayName: "Work",
+      detail: "Saved in Quotari",
+      credentialSource: .quotariRegistry(id: "codex:work")
+    )
+
+    try store.save([.codex: [personal, work], .claude: []])
+
+    #expect(try store.load() == [.codex: [personal, work], .claude: []])
+  }
+
+  @Test func malformedConfigurationDoesNotLookLikeFirstLaunch() throws {
+    let directory = try TemporaryDirectory()
+    let url = directory.url.appendingPathComponent("MonitoredProviderAccounts.json")
+    try Data("not-json".utf8).write(to: url)
+    let store = ProviderAccountMonitoringStore(url: url)
+
+    #expect(throws: (any Error).self) {
+      try store.load()
+    }
+  }
+
+  @Test func duplicateProviderConfigurationThrowsInsteadOfTrapping() throws {
+    let directory = try TemporaryDirectory()
+    let url = directory.url.appendingPathComponent("MonitoredProviderAccounts.json")
+    try Data(#"{"selections":[{"provider":"codex","accounts":[]},{"provider":"codex","accounts":[]}]}"#.utf8)
+      .write(to: url)
+    let store = ProviderAccountMonitoringStore(url: url)
+
+    #expect(throws: DecodingError.self) {
+      try store.load()
+    }
+  }
+}
+
 struct ProviderAccountStrategyTests {
   @Test func codexStrategyUsesSelectedAccountSource() async throws {
     let directory = try TemporaryDirectory()

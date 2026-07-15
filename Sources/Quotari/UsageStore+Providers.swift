@@ -33,6 +33,7 @@ extension UsageStore {
     guard providerActivation.setProvider(provider, enabled: enabled) else { return }
 
     if enabled {
+      providersNeedingMonitoredUsageRestore.insert(provider)
       enqueueQuotaNotificationScopeRestore(for: provider)
       enqueueSelectionRefresh(for: provider, waitingForProviderActivity: true)
     } else {

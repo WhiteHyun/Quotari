@@ -49,6 +49,7 @@ struct AccountsPreferencesView: View {
               .disabled(!store.addingAccountProviders.isEmpty || !canAddAccount)
               .help(store.addAccountUnavailableReason(for: descriptor.id) ?? "Add another managed account")
             }
+            monitoringSelection(for: descriptor)
             if let reason = store.addAccountUnavailableReason(for: descriptor.id) {
               Text(reason)
                 .font(.caption)
@@ -80,13 +81,9 @@ struct AccountsPreferencesView: View {
     selection: Binding<String>
   ) -> some View {
     let provider = descriptor.id
-    var accounts = store.accounts[provider] ?? []
-    if let selected = store.selectedAccounts[provider],
-       !accounts.contains(where: { $0.id == selected.id }) {
-      accounts.append(selected)
-    }
+    let accounts = displayedAccounts(for: provider)
 
-    return Picker(descriptor.metadata.displayName, selection: selection) {
+    return Picker("\(descriptor.metadata.displayName) Dashboard", selection: selection) {
       Text("Automatic")
         .tag("")
       ForEach(accounts) { account in
@@ -96,6 +93,62 @@ struct AccountsPreferencesView: View {
     }
     .frame(maxWidth: .infinity)
     .disabled(accounts.isEmpty)
+  }
+
+  private func monitoringSelection(for descriptor: ProviderDescriptor) -> some View {
+    let accounts = displayedAccounts(for: descriptor.id)
+    let activeCLIID = store.activeCLIAccount(for: descriptor.id)?.id
+    return VStack(alignment: .leading, spacing: 4) {
+      Text("Monitored Accounts")
+        .font(.caption.weight(.medium))
+        .foregroundStyle(.secondary)
+      if accounts.isEmpty {
+        Text("No accounts available")
+          .font(.caption)
+          .foregroundStyle(.secondary)
+      } else {
+        ForEach(accounts) { account in
+          Toggle(isOn: monitoringBinding(for: account)) {
+            HStack(spacing: 6) {
+              Text(accountLabel(account))
+                .lineLimit(1)
+              if account.id == activeCLIID {
+                Text("CLI Active")
+                  .font(.caption2.weight(.medium))
+                  .foregroundStyle(.secondary)
+              }
+            }
+          }
+          .toggleStyle(.checkbox)
+        }
+      }
+      Text(
+        "Checked accounts refresh in the background. The dashboard account and CLI active account remain single choices."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+    }
+  }
+
+  private func monitoringBinding(for account: ProviderAccount) -> Binding<Bool> {
+    Binding(
+      get: { store.isMonitoring(account) },
+      set: { isMonitored in
+        store.setMonitoring(isMonitored, for: account)
+        guard isMonitored else { return }
+        Task { await store.refreshAccountUsage(for: account) }
+      }
+    )
+  }
+
+  private func displayedAccounts(for provider: UsageProvider) -> [ProviderAccount] {
+    var accounts = store.accounts[provider] ?? []
+    if let selected = store.selectedAccounts[provider],
+       !accounts.contains(where: { $0.id == selected.id }) {
+      accounts.append(selected)
+    }
+    return accounts
   }
 
   private func scanAccountsButtonTapped() async {

@@ -16,9 +16,13 @@ extension UsageStore {
         sourceKind: sourceKind,
         credentialScopeID: credentialScopeID
       ) else { return .staleCredential }
-      let logicalAccount = provider == .claude
-        ? account
-        : reconciledSelectionOrigins[provider] ?? account
+      let logicalAccount = if provider == .claude {
+        account
+      } else if selectedAccounts[provider]?.id == account.id {
+        reconciledSelectionOrigins[provider] ?? account
+      } else {
+        account
+      }
       return notificationScopeResolution(
         for: logicalAccount,
         claudeCredentialFingerprint: claudeCredentialFingerprint
@@ -161,6 +165,21 @@ extension UsageStore {
 
   func notificationScopeID(for account: ProviderAccount) -> String? {
     notificationScopeResolution(for: account).logicalAccountID
+  }
+
+  func lastKnownNotificationScopeID(for account: ProviderAccount) -> String? {
+    if let scopeID = notificationScopeIDsByAccountID[account.id] {
+      return scopeID
+    }
+    switch account.provider {
+    case .codex:
+      return notificationScopeID(for: account)
+    case .claude:
+      guard let profile = claudeProfiles[account.id],
+            let identity = stableClaudeNotificationIdentity(from: profile)
+      else { return nil }
+      return "claude:account:\(ProviderCredentialIdentity.fingerprint(of: identity))"
+    }
   }
 
   private func notificationScopeResolution(

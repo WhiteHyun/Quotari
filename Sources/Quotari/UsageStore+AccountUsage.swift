@@ -63,48 +63,47 @@ extension UsageStore {
     )
   }
 
-  func refreshAccountUsage(for provider: UsageProvider, force: Bool = false) async {
+  func refreshAccountUsage(
+    for provider: UsageProvider,
+    force: Bool = false,
+    notifiesQuota: Bool = false,
+    includingLogicalAccountIDs: Set<String>? = nil,
+    excludingCredentialScopeIDs: Set<String> = []
+  ) async {
     // A per-account fetch can rotate/persist a live token; never start one
     // while a switch is rewriting a credential slot.
     guard !isSwitching, isProviderEnabled(provider) else { return }
-    if automaticallyCapturingProviders.contains(provider) {
-      await inFlightAccountReload?.value
-    }
+    await waitForAutomaticCaptureBeforeAccountUsage(provider)
     guard !isSwitching, isProviderEnabled(provider) else { return }
-    if let current = accountUsageRefreshTasks[provider] {
-      await awaitAccountUsageRefresh(current, provider: provider, force: force)
-      return
-    }
+    let request = AccountUsageRefreshRequest(
+      force: force, notifiesQuota: notifiesQuota,
+      includingLogicalAccountIDs: includingLogicalAccountIDs,
+      excludingCredentialScopeIDs: excludingCredentialScopeIDs
+    )
+    guard await joinsAccountUsageRefresh(provider, request: request) == false else { return }
     guard let descriptor = providers.first(where: { $0.id == provider }) else { return }
     let now = Date()
-    let accountsToFetch = accountsNeedingRefresh(for: provider, now: now, force: force)
-    guard !accountsToFetch.isEmpty else {
-      // No usage fetch needed, but the token may have rotated since the last
-      // label attempt — relabel so the picker doesn't show a stale email.
-      if provider == .claude {
-        refreshClaudeProfiles()
-      }
-      return
-    }
+    let accountsToFetch = preparedAccountUsageRefreshAccounts(provider, now: now, request: request)
+    guard accountUsageRefreshWillStart(accountsToFetch, provider: provider) else { return }
 
     refreshingAccountUsageProviders.insert(provider)
     let revision = accountRevisions[provider] ?? 0
     let task = Task { [weak self] in
-      guard let self else { return [String: Set<String>]() }
-      let credentialTransitions = await performAccountUsageRefresh(
+      guard let self else { return AccountUsageRefreshOutcome() }
+      let outcome = await performAndCompleteAccountUsageRefresh(
         provider: provider,
-        descriptor: descriptor,
-        accounts: accountsToFetch,
-        now: now,
-        revision: revision
+        execution: AccountUsageRefreshExecution(
+          descriptor: descriptor,
+          accounts: accountsToFetch,
+          now: now,
+          revision: revision,
+          notifiesQuota: notifiesQuota
+        )
       )
-      recordCompletedCredentialTransitions(credentialTransitions, provider: provider)
-      refreshingAccountUsageProviders.remove(provider)
-      accountUsageRefreshTasks[provider] = nil
       guard !Task.isCancelled,
             isProviderEnabled(provider),
             (accountRevisions[provider] ?? 0) == revision
-      else { return credentialTransitions }
+      else { return outcome }
       // Per-account fetches can rotate a live token too; keep any hidden
       // saved copy of that identity in step.
       await syncCapturedCopies(of: capturedCopyCandidates.filter { $0.provider == provider })
@@ -115,31 +114,53 @@ extension UsageStore {
       if provider == .claude {
         refreshClaudeProfiles()
       }
-      return credentialTransitions
+      return outcome
     }
     accountUsageRefreshTasks[provider] = AccountUsageRefreshTask(
       task: task,
       force: force,
+      notifiesQuota: notifiesQuota,
+      revision: revision,
       credentialScopeIDs: Set(accountsToFetch.map(\.credentialScopeID))
     )
     _ = await task.value
+    await retryNotifyingAccountUsageRefreshIfNeeded(
+      provider: provider,
+      revision: revision,
+      request: request
+    )
   }
 
-  private func awaitAccountUsageRefresh(
-    _ current: AccountUsageRefreshTask,
-    provider: UsageProvider,
-    force: Bool
-  ) async {
-    _ = await current.task.value
-    guard isProviderEnabled(provider) else { return }
-    // Disabling cancels but intentionally retains the old handle until its
-    // closure finishes. If the provider was re-enabled while that fetch was
-    // draining, replace the cancelled generation instead of treating it as
-    // a successful coalesced request and leaving the cleared cache empty.
-    if current.task.isCancelled {
-      await refreshAccountUsage(for: provider, force: force)
-    } else if force, !current.force {
-      await refreshAccountUsage(for: provider, force: true)
+  func refreshAccountUsage(for account: ProviderAccount, force: Bool = false) async {
+    await waitForAutomaticCaptureBeforeAccountUsage(account.provider)
+    guard !isSwitching, isProviderEnabled(account.provider),
+          let currentAccount = monitoredAccount(afterCapturing: account)
+    else { return }
+    await refreshAccountUsage(
+      for: account.provider,
+      force: force,
+      includingLogicalAccountIDs: [logicalMonitoringAccountID(for: currentAccount)]
+    )
+  }
+
+  func logicalMonitoringAccountID(for account: ProviderAccount) -> String {
+    if account.credentialSource.isCaptured {
+      return account.id
+    }
+    return capturedEquivalents[account.id]?.id ?? account.id
+  }
+
+  private func monitoredAccount(afterCapturing account: ProviderAccount) -> ProviderAccount? {
+    let logicalAccountID = account.credentialSource.isCaptured
+      ? account.id
+      : capturedEquivalents[account.id]?.id
+    return (monitoredAccounts[account.provider] ?? []).first { current in
+      if let logicalAccountID {
+        return current.id == logicalAccountID
+          || capturedEquivalents[current.id]?.id == logicalAccountID
+      }
+      return current.id == account.id
+        && current.credentialScopeID == account.credentialScopeID
     }
   }
 
@@ -172,12 +193,15 @@ extension UsageStore {
     if account == nil, value.sourceKind == .mock {
       return usage
     }
-    if let resolvedAccount = account ?? matchedAccount(for: usage, provider: provider) {
+    if let resolvedAccount = account
+      ?? accountIdentified(by: value, provider: provider)
+      ?? matchedAccount(for: usage, provider: provider) {
       setAccountUsage(
         ProviderAccountUsage(
           snapshot: usage,
           sourceLabel: value.sourceLabel,
           sourceKind: value.sourceKind,
+          credentialScopeID: value.credentialScopeID,
           error: nil
         ),
         for: resolvedAccount
@@ -254,29 +278,16 @@ extension UsageStore {
     return usage.error == nil ? nil : usage
   }
 
-  private func accountsNeedingRefresh(
-    for provider: UsageProvider,
-    now: Date,
-    force: Bool
-  ) -> [ProviderAccount] {
-    (accounts[provider] ?? []).filter { account in
-      guard !force,
-            let snapshot = accountUsage[provider]?[account.id]?.snapshot
-      else { return true }
-      return now.timeIntervalSince(snapshot.updatedAt) >= refreshInterval
-    }
-  }
-
-  private func performAccountUsageRefresh(
+  func performAccountUsageRefresh(
     provider: UsageProvider,
     descriptor: ProviderDescriptor,
     accounts: [ProviderAccount],
     now: Date,
     revision: UInt
-  ) async -> [String: Set<String>] {
+  ) async -> AccountUsageRefreshOutcome {
     await withTaskGroup(
       of: (ProviderAccount, Result<ProviderFetchResult, Error>).self,
-      returning: [String: Set<String>].self
+      returning: AccountUsageRefreshOutcome.self
     ) { group in
       for account in accounts {
         let capturedRegistryID = capturedRegistryID(for: account)
@@ -292,6 +303,7 @@ extension UsageStore {
         }
       }
       var credentialTransitions: [String: Set<String>] = [:]
+      var notificationCandidates: [AccountUsageNotificationCandidate] = []
       for await (account, result) in group {
         if let transition = result.credentialTransitionEvidence {
           for sourceScopeID in transition.sourceScopeIDs {
@@ -303,9 +315,24 @@ extension UsageStore {
               (accountRevisions[provider] ?? 0) == revision,
               self.accounts[provider]?.contains(account) == true
         else { continue }
+        if case let .success(value) = result,
+           !fetchResult(value, belongsTo: account) {
+          // A mutable credential source can be replaced after discovery but
+          // before its fetch reads the file/keychain. Never publish account B's
+          // usage under the stale row for account A.
+          continue
+        }
         applyAccountUsageResult(result, account: account)
+        if case let .success(value) = result {
+          notificationCandidates.append(
+            AccountUsageNotificationCandidate(account: account, result: value)
+          )
+        }
       }
-      return credentialTransitions
+      return AccountUsageRefreshOutcome(
+        credentialTransitions: credentialTransitions,
+        notificationCandidates: notificationCandidates
+      )
     }
   }
 

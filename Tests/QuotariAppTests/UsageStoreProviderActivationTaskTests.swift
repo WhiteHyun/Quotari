@@ -47,7 +47,12 @@ struct UsageStoreProviderActivationTaskTests {
     let originalRefresh = Task {
       await store.refreshAccountUsage(for: .codex, force: true)
     }
-    await gate.waitUntilAccountRequestStarts()
+    let didStart = await Self.waitUntilAccountRequestStarts(gate)
+    #expect(didStart)
+    guard didStart else {
+      originalRefresh.cancel()
+      return
+    }
 
     store.setProviderEnabled(.codex, enabled: false)
     store.setProviderEnabled(.codex, enabled: true)
@@ -181,6 +186,16 @@ struct UsageStoreProviderActivationTaskTests {
       try await Task.sleep(for: .milliseconds(5))
     }
     throw ProviderActivationTaskTestError.timedOut
+  }
+
+  private static func waitUntilAccountRequestStarts(_ gate: ProviderActivationFetchGate) async -> Bool {
+    for _ in 0 ..< 100 {
+      if await gate.accountRequestCount > 0 {
+        return true
+      }
+      try? await Task.sleep(for: .milliseconds(5))
+    }
+    return false
   }
 }
 
