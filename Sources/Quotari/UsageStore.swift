@@ -39,6 +39,10 @@ final class UsageStore {
   var automaticallyCapturingProviders = Set<UsageProvider>()
   private(set) var accountRediscoveryRequest: UInt = 0
   private(set) var completedAccountRediscoveryRequest: UInt = 0
+  /// Add Account requests that must preserve a live CLI credential even when
+  /// its provider is disabled. The request generation keeps this override on
+  /// the exact coalesced reload that the caller awaits.
+  var accountPreservationRequests: [UsageProvider: UInt] = [:]
   private var accountRediscoveryWaiters: [AccountRediscoveryWaiter] = []
   /// True while an account switch is writing a credential slot. Refreshes are
   /// suppressed for the window so none rotates/persists a slot the switch is
@@ -47,6 +51,9 @@ final class UsageStore {
   /// and the user must still avoid launching one during the switch.
   /// Set by the switch flow (in a sibling extension), so not `private(set)`.
   var isSwitching = false
+  var addingAccountProviders = Set<UsageProvider>()
+  var accountLoginErrors: [UsageProvider: String] = [:]
+  var accountLoginOutputs: [UsageProvider: String] = [:]
 
   var refreshInterval: TimeInterval {
     didSet {
@@ -64,6 +71,7 @@ final class UsageStore {
   let accountDiscovery: any ProviderAccountDiscovering
   private let accountSelectionStore: ProviderAccountSelectionStore
   let accountCapture: AccountCaptureService
+  let accountLogin: AccountLoginService
   let automaticallyCapturesDiscoveredAccounts: Bool
   let accountSwitch: AccountSwitchService
   let profileFetcher: any ClaudeProfileFetching
@@ -125,6 +133,7 @@ final class UsageStore {
     accountDiscovery: any ProviderAccountDiscovering = ProviderAccountDiscovery(),
     accountSelectionStore: ProviderAccountSelectionStore = ProviderAccountSelectionStore(),
     accountCapture: AccountCaptureService = AccountCaptureService(),
+    accountLogin: AccountLoginService = AccountLoginService(),
     automaticallyCapturesDiscoveredAccounts: Bool = true,
     accountSwitch: AccountSwitchService? = nil,
     profileFetcher: any ClaudeProfileFetching = ClaudeProfileFetcher(),
@@ -147,6 +156,7 @@ final class UsageStore {
     self.accountDiscovery = accountDiscovery
     self.accountSelectionStore = accountSelectionStore
     self.accountCapture = accountCapture
+    self.accountLogin = accountLogin
     self.automaticallyCapturesDiscoveredAccounts = automaticallyCapturesDiscoveredAccounts
     self.accountSwitch = accountSwitch ?? AccountSwitchService(
       activeCLIProcesses: CLIActivityDetector().activeProcesses
@@ -200,9 +210,12 @@ extension UsageStore {
     }
   }
 
-  func reloadAccounts() async {
+  func reloadAccounts(preserving provider: UsageProvider? = nil) async {
     accountRediscoveryRequest &+= 1
     let request = accountRediscoveryRequest
+    if let provider {
+      accountPreservationRequests[provider] = request
+    }
     startQueuedAccountRediscoveryIfNeeded()
     await waitForAccountRediscovery(request)
   }
@@ -221,7 +234,9 @@ extension UsageStore {
     }
     var request = isSwitching ? drainableRequest : accountRediscoveryRequest
     while completedAccountRediscoveryRequest != request {
-      await performAccountReload()
+      let preservingProviders = accountPreservationProviders(through: request)
+      await performAccountReload(preserving: preservingProviders)
+      completeAccountPreservationRequests(preservingProviders, through: request)
       completedAccountRediscoveryRequest = request
       resumeAccountRediscoveryWaiters(through: request)
       // Once a switch closes the gate, finish only the pass that was already
@@ -251,7 +266,7 @@ extension UsageStore {
     accountRediscoveryWaiters = pending
   }
 
-  private func performAccountReload() async {
+  private func performAccountReload(preserving providersForLogin: Set<UsageProvider>) async {
     var gatedProviders = Set<UsageProvider>()
     defer { automaticallyCapturingProviders.subtract(gatedProviders) }
     var next: [UsageProvider: [ProviderAccount]] = [:]
@@ -260,7 +275,7 @@ extension UsageStore {
     var alreadyCaptured: [String: ProviderAccount] = [:]
     var syncCandidates: [ProviderAccount] = []
     for descriptor in providers {
-      let state = await reloadProviderState(for: descriptor)
+      let state = await reloadProviderState(for: descriptor, preserving: providersForLogin)
       if state.keepsCaptureGate {
         gatedProviders.insert(state.provider)
       }
