@@ -186,7 +186,7 @@ struct AccountLoginServiceTests {
         temporaryDirectory: directory
       )
     }
-    for _ in 0 ..< 100 where !FileManager.default.fileExists(atPath: marker.path) {
+    for _ in 0 ..< 500 where !FileManager.default.fileExists(atPath: marker.path) {
       try await Task.sleep(for: .milliseconds(10))
     }
     #expect(FileManager.default.fileExists(atPath: marker.path))

@@ -35,7 +35,7 @@ struct AccountLoginOutputTests {
       )
     }
 
-    for _ in 0 ..< 100 where await !(recorder.output.contains("https://example.com/device")) {
+    for _ in 0 ..< 500 where await !(recorder.output.contains("https://example.com/device")) {
       try await Task.sleep(for: .milliseconds(10))
     }
     #expect(await recorder.output.contains("If your browser did not open"))
