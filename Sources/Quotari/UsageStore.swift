@@ -47,6 +47,8 @@ final class UsageStore {
   /// and the user must still avoid launching one during the switch.
   /// Set by the switch flow (in a sibling extension), so not `private(set)`.
   var isSwitching = false
+  var addingAccountProviders = Set<UsageProvider>()
+  var accountLoginErrors: [UsageProvider: String] = [:]
 
   var refreshInterval: TimeInterval {
     didSet {
@@ -64,6 +66,7 @@ final class UsageStore {
   let accountDiscovery: any ProviderAccountDiscovering
   private let accountSelectionStore: ProviderAccountSelectionStore
   let accountCapture: AccountCaptureService
+  let accountLogin: AccountLoginService
   let automaticallyCapturesDiscoveredAccounts: Bool
   let accountSwitch: AccountSwitchService
   let profileFetcher: any ClaudeProfileFetching
@@ -125,6 +128,7 @@ final class UsageStore {
     accountDiscovery: any ProviderAccountDiscovering = ProviderAccountDiscovery(),
     accountSelectionStore: ProviderAccountSelectionStore = ProviderAccountSelectionStore(),
     accountCapture: AccountCaptureService = AccountCaptureService(),
+    accountLogin: AccountLoginService = AccountLoginService(),
     automaticallyCapturesDiscoveredAccounts: Bool = true,
     accountSwitch: AccountSwitchService? = nil,
     profileFetcher: any ClaudeProfileFetching = ClaudeProfileFetcher(),
@@ -147,6 +151,7 @@ final class UsageStore {
     self.accountDiscovery = accountDiscovery
     self.accountSelectionStore = accountSelectionStore
     self.accountCapture = accountCapture
+    self.accountLogin = accountLogin
     self.automaticallyCapturesDiscoveredAccounts = automaticallyCapturesDiscoveredAccounts
     self.accountSwitch = accountSwitch ?? AccountSwitchService(
       activeCLIProcesses: CLIActivityDetector().activeProcesses

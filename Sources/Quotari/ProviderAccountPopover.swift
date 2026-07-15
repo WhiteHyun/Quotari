@@ -47,6 +47,12 @@ struct ProviderAccountPopover: View {
           .foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
       }
+      if let error = store.accountLoginErrors[descriptor.id] {
+        Text(error)
+          .font(.caption)
+          .foregroundStyle(.red)
+          .fixedSize(horizontal: false, vertical: true)
+      }
       Divider()
       footer
     }
@@ -124,7 +130,17 @@ struct ProviderAccountPopover: View {
   }
 
   private var footer: some View {
-    VStack(spacing: 2) {
+    let canAddAccount = store.canAddAccount(for: descriptor.id)
+    return VStack(spacing: 2) {
+      PopoverActionButton(
+        title: canAddAccount ? "Add Account" : "Add Account (Unavailable)",
+        systemImage: "plus",
+        busy: !store.addingAccountProviders.isEmpty,
+        disabled: !canAddAccount
+      ) {
+        Task { await store.addAccount(for: descriptor.id) }
+      }
+      .help(store.addAccountUnavailableReason(for: descriptor.id) ?? "Add another managed account")
       PopoverActionButton(
         title: "Scan Accounts",
         systemImage: "arrow.clockwise",
@@ -279,6 +295,7 @@ private struct PopoverActionButton: View {
   let title: String
   let systemImage: String
   let busy: Bool
+  var disabled = false
   let action: () -> Void
 
   var body: some View {
@@ -290,7 +307,7 @@ private struct PopoverActionButton: View {
       }
     }
     .buttonStyle(.plain)
-    .disabled(busy)
+    .disabled(busy || disabled)
   }
 }
 

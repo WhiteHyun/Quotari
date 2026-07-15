@@ -218,6 +218,9 @@ extension UsageStore {
     accountDiscovery: any ProviderAccountDiscovering = StaticAccountDiscovery(),
     accountSelectionStore: ProviderAccountSelectionStore = .temporaryForTesting(),
     accountCapture: AccountCaptureService = .inMemoryForTesting(),
+    accountLogin: AccountLoginService = AccountLoginService(operation: { provider in
+      throw AccountLoginError.credentialUnavailable(provider)
+    }),
     automaticallyCapturesDiscoveredAccounts: Bool = false,
     accountSwitch: AccountSwitchService? = nil,
     profileFetcher: any ClaudeProfileFetching = NullProfileFetcher(),
@@ -239,6 +242,7 @@ extension UsageStore {
       accountDiscovery: accountDiscovery,
       accountSelectionStore: accountSelectionStore,
       accountCapture: accountCapture,
+      accountLogin: accountLogin,
       automaticallyCapturesDiscoveredAccounts: automaticallyCapturesDiscoveredAccounts,
       accountSwitch: accountSwitch ?? .isolatedForTesting(),
       profileFetcher: profileFetcher,

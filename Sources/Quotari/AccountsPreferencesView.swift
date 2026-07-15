@@ -29,10 +29,39 @@ struct AccountsPreferencesView: View {
 
       Section("Accounts") {
         ForEach(store.providers, id: \.id) { descriptor in
-          accountPicker(
-            for: descriptor,
-            selection: $store[selectedAccountID: descriptor.id]
-          )
+          VStack(alignment: .leading, spacing: 6) {
+            let canAddAccount = store.canAddAccount(for: descriptor.id)
+            HStack {
+              accountPicker(
+                for: descriptor,
+                selection: $store[selectedAccountID: descriptor.id]
+              )
+              Button {
+                Task { await store.addAccount(for: descriptor.id) }
+              } label: {
+                if store.addingAccountProviders.contains(descriptor.id) {
+                  ProgressView()
+                    .controlSize(.small)
+                } else {
+                  Label("Add Account", systemImage: "plus")
+                }
+              }
+              .disabled(!store.addingAccountProviders.isEmpty || !canAddAccount)
+              .help(store.addAccountUnavailableReason(for: descriptor.id) ?? "Add another managed account")
+            }
+            if let reason = store.addAccountUnavailableReason(for: descriptor.id) {
+              Text(reason)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            if let error = store.accountLoginErrors[descriptor.id] {
+              Text(error)
+                .font(.caption)
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+          }
         }
         Button("Scan Accounts") { Task { await scanAccountsButtonTapped() } }
       }
@@ -59,6 +88,7 @@ struct AccountsPreferencesView: View {
           .tag(account.id)
       }
     }
+    .frame(maxWidth: .infinity)
     .disabled(accounts.isEmpty)
   }
 
