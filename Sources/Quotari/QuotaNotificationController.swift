@@ -168,10 +168,11 @@ final class QuotaNotificationController {
     for provider: UsageProvider
   ) -> [String] {
     setActiveLogicalAccountIDs(
-      Set([logicalAccountID].compactMap { $0 }.filter { !$0.isEmpty }),
+      Set([logicalAccountID].compactMap(\.self).filter { !$0.isEmpty }),
       for: provider
     )
   }
+
   /// Updates the dashboard and monitored accounts currently in scope.
   @discardableResult
   func setActiveLogicalAccountIDs(
@@ -191,6 +192,7 @@ final class QuotaNotificationController {
     persistLedger()
     return identifiers
   }
+
   @discardableResult
   func updateThresholds(warning: Int, critical: Int) -> Bool {
     guard (1 ... 99).contains(warning),

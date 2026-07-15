@@ -37,6 +37,10 @@ private struct QuotaNotificationDispatch {
 }
 
 extension UsageStore {
+  var deferredClaudeQuotaNotification: DeferredClaudeQuotaNotification? {
+    deferredClaudeQuotaNotifications.values.first
+  }
+
   func enqueueQuotaNotification(
     snapshot: UsageSnapshot,
     provider: UsageProvider,

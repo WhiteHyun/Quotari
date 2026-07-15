@@ -144,7 +144,6 @@ final class UsageStore {
   var deferredClaudeQuotaNotifications: [String: DeferredClaudeQuotaNotification] = [:]
   var notificationScopeIDsByAccountID: [String: String] = [:]
   var scopedNotificationAccountIDs: [UsageProvider: Set<String>] = [:]
-  var deferredClaudeQuotaNotification: DeferredClaudeQuotaNotification? { deferredClaudeQuotaNotifications.values.first }
 
   /// Tests inject mock descriptors so results don't depend on credentials
   /// present on the machine running them.

@@ -43,8 +43,12 @@ struct MonitoringNotificationSafetyTests {
     let harness = try await support.makeStore(
       "stale-alias-keeps-shared-reset",
       claudeCredentialLoader: { source in
-        if source == firstSource { return ClaudeCredentials(accessToken: firstToken.value) }
-        if source == secondSource { return ClaudeCredentials(accessToken: "second-token") }
+        if source == firstSource {
+          return ClaudeCredentials(accessToken: firstToken.value)
+        }
+        if source == secondSource {
+          return ClaudeCredentials(accessToken: "second-token")
+        }
         return nil
       }
     )
@@ -170,7 +174,6 @@ struct MonitoringNotificationSafetyTests {
     #expect(harness.controller.ledger.windows[firstKey]?.scheduledReset != nil)
     #expect(harness.center.pendingIDs.count == 2)
   }
-
 }
 
 private extension MonitoringNotificationSafetyTests {
@@ -237,5 +240,4 @@ private extension MonitoringNotificationSafetyTests {
       updatedAt: now
     )
   }
-
 }
