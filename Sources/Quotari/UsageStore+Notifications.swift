@@ -164,6 +164,9 @@ extension UsageStore {
     case .unattributed:
       if provider == .claude, request.sourceKind != .mock {
         removeDeferredClaudeQuotaNotification(for: request)
+        if request.account != nil, !request.updatesNotificationScope {
+          removeStaleQuotaNotificationScope(for: request)
+        }
       }
       return true
     }

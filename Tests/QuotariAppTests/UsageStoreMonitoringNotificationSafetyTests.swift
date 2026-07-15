@@ -124,6 +124,56 @@ struct MonitoringNotificationSafetyTests {
     #expect(Set(harness.center.attemptedRequests.map(\.key.logicalAccountID)).count == 2)
   }
 
+  @Test func emptyProfileDrainsDeferredMonitorAndClearsItsStaleReset() async throws {
+    let support = UsageStoreNotificationTests()
+    let source = ProviderCredentialSource.claudeKeychain(service: "empty-profile-monitor")
+    let token = NotificationTokenBox("old-token")
+    let account = claudeAccount(name: "Monitored", source: source, token: token.value)
+    let harness = try await support.makeStore(
+      "empty-profile-clears-monitored-reset",
+      claudeCredentialLoader: { _ in ClaudeCredentials(accessToken: token.value) }
+    )
+    let store = harness.store
+    store.monitoredAccounts[.claude] = [account]
+    store.claudeProfiles[account.id] = verifiedProfile(id: "old-account", token: token.value)
+    store.synchronizeQuotaNotificationScope(account: nil, origin: nil, provider: .claude)
+    let oldScopeID = try #require(store.notificationScopeID(for: account))
+    _ = await harness.controller.process(
+      snapshot: support.claudeFetchResult().usage,
+      logicalAccountID: oldScopeID,
+      sourceKind: .oauth,
+      now: support.now
+    )
+    #expect(harness.center.pendingIDs.count == 1)
+
+    token.value = "replacement-token"
+    let replacement = claudeAccount(name: "Replacement", source: source, token: token.value)
+    store.applySuccessfulFetch(
+      support.claudeFetchResult(credentialScopeID: replacement.credentialScopeID),
+      provider: .claude,
+      account: account
+    )
+    await store.waitForPendingQuotaNotifications()
+    #expect(store.deferredClaudeQuotaNotifications[account.id] != nil)
+
+    store.claudeProfiles[account.id] = nil
+    store.emptyClaudeProfileFingerprints[account.id] = ProviderCredentialIdentity.fingerprint(
+      of: token.value
+    )
+    store.enqueueClaudeQuotaNotificationScopeRestore()
+    await store.waitForPendingQuotaNotifications()
+
+    let oldKey = QuotaNotificationWindowKey(
+      provider: .claude,
+      logicalAccountID: oldScopeID,
+      window: .weekly
+    )
+    #expect(store.deferredClaudeQuotaNotifications[account.id] == nil)
+    #expect(store.notificationScopeIDsByAccountID[account.id] == nil)
+    #expect(harness.controller.ledger.windows[oldKey]?.scheduledReset == nil)
+    #expect(harness.center.pendingIDs.isEmpty)
+  }
+
   @Test func staleMonitoredCredentialKeepsOtherAccountsResetScheduled() async throws {
     let support = UsageStoreNotificationTests()
     let harness = try await support.makeStore("stale-monitor-keeps-other-scope")
