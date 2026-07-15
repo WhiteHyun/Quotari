@@ -127,11 +127,27 @@ struct UsageStoreMonitoringSelectionTests {
     #expect(fixture.store.accountUsage(for: MonitoringFixture.work)?.snapshot != nil)
   }
 
-  @Test func automaticRefreshExcludesTheCredentialReportedByTheProvider() async throws {
+  @Test func reenablingProviderRestoresEveryMonitoredAccountImmediately() async throws {
+    let fixture = try MonitoringFixture(
+      selected: [.codex: MonitoringFixture.work],
+      monitored: [.codex: [MonitoringFixture.personal, MonitoringFixture.work]]
+    )
+    defer { fixture.remove() }
+    await fixture.store.reloadAccounts()
+
+    fixture.store.setProviderEnabled(.codex, enabled: false)
+    fixture.store.setProviderEnabled(.codex, enabled: true)
+    await fixture.store.selectionRefreshTasks[.codex]?.value
+
+    #expect(await fixture.recorder.names == ["Work", "Personal"])
+    #expect(fixture.store.accountUsage(for: MonitoringFixture.personal)?.snapshot != nil)
+    #expect(fixture.store.accountUsage(for: MonitoringFixture.work)?.snapshot != nil)
+  }
+
+  @Test func automaticRefreshAttributesAndExcludesTheCredentialReportedByTheProvider() async throws {
     let fixture = try MonitoringFixture(
       monitored: [.codex: [MonitoringFixture.personal, MonitoringFixture.work]],
-      automaticCredentialScopeID: MonitoringFixture.work.credentialScopeID,
-      automaticAccountName: MonitoringFixture.work.displayName
+      automaticCredentialScopeID: MonitoringFixture.work.credentialScopeID
     )
     defer { fixture.remove() }
     await fixture.store.reloadAccounts()
@@ -140,6 +156,22 @@ struct UsageStoreMonitoringSelectionTests {
 
     #expect(await fixture.recorder.names == ["Automatic", "Personal"])
     #expect(fixture.store.accountUsage(for: MonitoringFixture.personal)?.snapshot != nil)
+    #expect(fixture.store.accountUsage(for: MonitoringFixture.work)?.snapshot != nil)
+  }
+
+  @Test func automaticRotationExcludesItsPreviousCredentialScope() async throws {
+    let rotatedScopeID = "\(MonitoringFixture.work.credentialScopeID):rotated"
+    let fixture = try MonitoringFixture(
+      monitored: [.codex: [MonitoringFixture.personal, MonitoringFixture.work]],
+      automaticCredentialScopeID: rotatedScopeID,
+      automaticTransitionSourceScopeIDs: [MonitoringFixture.work.credentialScopeID]
+    )
+    defer { fixture.remove() }
+    await fixture.store.reloadAccounts()
+
+    await fixture.store.refresh()
+
+    #expect(await fixture.recorder.names == ["Automatic", "Personal"])
     #expect(fixture.store.accountUsage(for: MonitoringFixture.work)?.snapshot != nil)
   }
 

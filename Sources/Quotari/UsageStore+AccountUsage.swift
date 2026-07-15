@@ -190,7 +190,9 @@ extension UsageStore {
     if account == nil, value.sourceKind == .mock {
       return usage
     }
-    if let resolvedAccount = account ?? matchedAccount(for: usage, provider: provider) {
+    if let resolvedAccount = account
+      ?? accountIdentified(by: value, provider: provider)
+      ?? matchedAccount(for: usage, provider: provider) {
       setAccountUsage(
         ProviderAccountUsage(
           snapshot: usage,

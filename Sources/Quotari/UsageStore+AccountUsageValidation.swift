@@ -1,6 +1,28 @@
 import QuotariCore
 
 extension UsageStore {
+  func accountIdentified(
+    by value: ProviderFetchResult,
+    provider: UsageProvider
+  ) -> ProviderAccount? {
+    guard value.sourceKind != .mock,
+          let resultScopeID = value.credentialScopeID
+    else { return nil }
+    let candidates = accounts[provider] ?? []
+    if let exact = candidates.first(where: { $0.credentialScopeID == resultScopeID }) {
+      return exact
+    }
+    guard let transition = Result<ProviderFetchResult, Error>.success(value)
+      .credentialTransitionEvidence,
+      transition.targetScopeID == resultScopeID
+    else { return nil }
+    let sources = candidates.filter {
+      transition.sourceScopeIDs.contains($0.credentialScopeID)
+    }
+    guard sources.count == 1 else { return nil }
+    return sources[0]
+  }
+
   func fetchResult(_ value: ProviderFetchResult, belongsTo account: ProviderAccount) -> Bool {
     guard value.sourceKind != .mock else { return false }
     guard let resultScopeID = value.credentialScopeID else {

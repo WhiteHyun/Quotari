@@ -114,20 +114,8 @@ extension UsageStore {
         guard isProviderEnabled(provider),
               (accountRevisions[provider] ?? 0) == completion.revision
         else { continue }
-        if case let .success(value) = completion.result, value.sourceKind != .mock {
-          // Automatic mode has no selected account, so only the provider result
-          // can identify the credential actually used. Row order is unrelated
-          // to Codex's effective CODEX_HOME/keyring resolution.
-          if let credentialScopeID = value.credentialScopeID {
-            fetchedCredentialScopeIDs[provider, default: []].insert(credentialScopeID)
-          }
-          if let selectedAccount = completion.account {
-            // A successful refresh may rotate the credential generation. Keep
-            // the selected row's pre-rotation scope excluded as the same logical
-            // account so it is not fetched twice in this pass.
-            fetchedCredentialScopeIDs[provider, default: []].insert(selectedAccount.credentialScopeID)
-          }
-        }
+        fetchedCredentialScopeIDs[provider, default: []]
+          .formUnion(credentialScopeIDsCovered(by: completion, provider: provider))
         apply(provider: provider, account: completion.account, result: completion.result)
       }
     }
@@ -154,6 +142,31 @@ extension UsageStore {
     }
   }
 
+  private func credentialScopeIDsCovered(
+    by completion: ProviderFetchCompletion,
+    provider: UsageProvider
+  ) -> Set<String> {
+    guard case let .success(value) = completion.result, value.sourceKind != .mock else { return [] }
+    var scopeIDs = Set<String>()
+    // Prefer explicit fetch evidence. Older/custom strategies may omit it, so
+    // fall back to the account captured for this fetch, or automatic mode's
+    // effective CLI account. Row order is unrelated to credential resolution.
+    if let credentialScopeID = value.credentialScopeID {
+      scopeIDs.insert(credentialScopeID)
+    } else if let fetchedAccount = completion.account ?? activeCLIAccounts[provider] {
+      scopeIDs.insert(fetchedAccount.credentialScopeID)
+    }
+    if let transition = completion.result.credentialTransitionEvidence {
+      scopeIDs.formUnion(transition.sourceScopeIDs)
+    }
+    if let selectedAccount = completion.account {
+      // A successful refresh may rotate the credential generation. Keep the
+      // pre-rotation scope excluded as the same logical account.
+      scopeIDs.insert(selectedAccount.credentialScopeID)
+    }
+    return scopeIDs
+  }
+
   func refresh(
     provider: UsageProvider,
     serializesProviderFetch: Bool = false
@@ -164,6 +177,10 @@ extension UsageStore {
     guard !Task.isCancelled, !isSwitching, isProviderEnabled(provider),
           let descriptor = providers.first(where: { $0.id == provider })
     else { return }
+    if providersNeedingMonitoredUsageRestore.contains(provider) {
+      await reloadAccounts()
+      guard !Task.isCancelled, !isSwitching, isProviderEnabled(provider) else { return }
+    }
     let now = Date()
     let completion: ProviderFetchCompletion = if serializesProviderFetch {
       await coordinatedSerializedProviderFetch(
@@ -177,8 +194,17 @@ extension UsageStore {
           isProviderEnabled(provider),
           (accountRevisions[provider] ?? 0) == completion.revision
     else { return }
+    let coveredCredentialScopeIDs = credentialScopeIDsCovered(by: completion, provider: provider)
     apply(provider: provider, account: completion.account, result: completion.result)
     lastRefresh = Date()
+    if providersNeedingMonitoredUsageRestore.remove(provider) != nil,
+       !(monitoredAccounts[provider] ?? []).isEmpty {
+      await refreshAccountUsage(
+        for: provider,
+        force: false,
+        excludingCredentialScopeIDs: coveredCredentialScopeIDs
+      )
+    }
     await syncCapturedCopies(of: capturedCopyCandidates.filter { $0.provider == provider })
     // The fetch may have rotated a Claude token; the email label's retry key
     // is the access-token fingerprint, so this re-fetches exactly once.

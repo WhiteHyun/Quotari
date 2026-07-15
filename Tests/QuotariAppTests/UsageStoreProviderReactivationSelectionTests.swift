@@ -46,6 +46,7 @@ struct ProviderReactivationSelectionTests {
 
     #expect(await strategy.requestCount == 2)
     #expect(await strategy.maximumConcurrentRequests == 1)
+    #expect(await discovery.requestCount == 2)
   }
 
   private func descriptor(_ strategy: ReactivationSelectionStrategy) -> ProviderDescriptor {
@@ -62,12 +63,14 @@ struct ProviderReactivationSelectionTests {
 }
 
 private actor ReactivationBlockingDiscovery: ProviderAccountDiscovering {
+  private(set) var requestCount = 0
   private var started = false
   private var released = false
   private var startWaiters: [CheckedContinuation<Void, Never>] = []
   private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
 
   func accounts(for _: UsageProvider) async -> [ProviderAccount] {
+    requestCount += 1
     started = true
     startWaiters.forEach { $0.resume() }
     startWaiters.removeAll()
@@ -133,11 +136,13 @@ private func waitForRequestCount(
   _ strategy: ReactivationSelectionStrategy,
   atLeast expected: Int
 ) async -> Bool {
-  for _ in 0 ..< 100 {
+  let clock = ContinuousClock()
+  let deadline = clock.now.advanced(by: .seconds(2))
+  while clock.now < deadline {
     if await strategy.requestCount >= expected {
       return true
     }
-    await Task.yield()
+    try? await Task.sleep(for: .milliseconds(1))
   }
   return await strategy.requestCount >= expected
 }

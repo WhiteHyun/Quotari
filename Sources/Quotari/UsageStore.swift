@@ -126,6 +126,9 @@ final class UsageStore {
   /// The fetch `selectAccount` starts, tracked so an account switch can await
   /// it (it may rotate/persist the live token the switch is about to back up).
   var selectionRefreshTasks: [UsageProvider: Task<Void, Never>] = [:]
+  /// Disabling clears per-account usage. The first successful provider fetch
+  /// after reactivation consumes this marker and restores every monitored row.
+  var providersNeedingMonitoredUsageRestore = Set<UsageProvider>()
   /// User-selection refreshes block a dashboard generation that has not yet
   /// entered its provider fetch. Reactivation refreshes are excluded because
   /// they may already be waiting for that same dashboard generation to drain.
