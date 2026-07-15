@@ -23,8 +23,8 @@ final class QuotaNotificationController {
   @ObservationIgnored private var processingTail: Task<QuotaNotificationProcessingResult, Never>?
   @ObservationIgnored private var inFlightRequestIDs = Set<String>()
   @ObservationIgnored private var scheduledRequestRevision: UInt = 0
-  @ObservationIgnored private var scopedProviders = Set<UsageProvider>()
-  @ObservationIgnored private var activeLogicalAccountIDs: [UsageProvider: String] = [:]
+  @ObservationIgnored var scopedProviders = Set<UsageProvider>()
+  @ObservationIgnored var activeLogicalAccountIDs: [UsageProvider: Set<String>] = [:]
 
   var ledger: QuotaNotificationLedger {
     policy.ledger
@@ -161,29 +161,36 @@ final class QuotaNotificationController {
     persistPreferences()
   }
 
-  /// Updates the account whose reset schedule is currently relevant for a
-  /// provider. Passing nil represents Automatic mode before a fresh result can
-  /// be confidently attributed, and therefore clears every prior account's
-  /// scheduled reset for that provider.
+  /// Passing nil clears every prior account's scheduled reset for the provider.
   @discardableResult
   func setActiveLogicalAccountID(
     _ logicalAccountID: String?,
     for provider: UsageProvider
   ) -> [String] {
-    let logicalAccountID = logicalAccountID.flatMap { $0.isEmpty ? nil : $0 }
+    setActiveLogicalAccountIDs(
+      Set([logicalAccountID].compactMap { $0 }.filter { !$0.isEmpty }),
+      for: provider
+    )
+  }
+  /// Updates the dashboard and monitored accounts currently in scope.
+  @discardableResult
+  func setActiveLogicalAccountIDs(
+    _ logicalAccountIDs: Set<String>,
+    for provider: UsageProvider
+  ) -> [String] {
+    let logicalAccountIDs = Set(logicalAccountIDs.filter { !$0.isEmpty })
     scopedProviders.insert(provider)
-    activeLogicalAccountIDs[provider] = logicalAccountID
+    activeLogicalAccountIDs[provider] = logicalAccountIDs
 
     let identifiers = policy.clearScheduledResets(
       for: provider,
-      keeping: logicalAccountID
+      keeping: logicalAccountIDs
     )
     guard !identifiers.isEmpty else { return [] }
     center.removePendingRequests(withIdentifiers: identifiers)
     persistLedger()
     return identifiers
   }
-
   @discardableResult
   func updateThresholds(warning: Int, critical: Int) -> Bool {
     guard (1 ... 99).contains(warning),
@@ -357,7 +364,7 @@ private extension QuotaNotificationController {
 
   func scopeAllows(provider: UsageProvider, logicalAccountID: String) -> Bool {
     !scopedProviders.contains(provider)
-      || activeLogicalAccountIDs[provider] == logicalAccountID
+      || activeLogicalAccountIDs[provider]?.contains(logicalAccountID) == true
   }
 
   func reconcilePendingRequests() async {

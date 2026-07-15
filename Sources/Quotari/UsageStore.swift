@@ -141,7 +141,10 @@ final class UsageStore {
   /// excluded because it may already be waiting for that dashboard.
   var dashboardBlockingSelectionRefreshes: [UsageProvider: UUID] = [:]
   var quotaNotificationTask: Task<Void, Never>?
-  var deferredClaudeQuotaNotification: DeferredClaudeQuotaNotification?
+  var deferredClaudeQuotaNotifications: [String: DeferredClaudeQuotaNotification] = [:]
+  var notificationScopeIDsByAccountID: [String: String] = [:]
+  var scopedNotificationAccountIDs: [UsageProvider: Set<String>] = [:]
+  var deferredClaudeQuotaNotification: DeferredClaudeQuotaNotification? { deferredClaudeQuotaNotifications.values.first }
 
   /// Tests inject mock descriptors so results don't depend on credentials
   /// present on the machine running them.
@@ -349,9 +352,7 @@ extension UsageStore {
     if persistedMonitoredAccounts != persistedMonitoringBeforeReconciliation {
       persistMonitoringSelections()
     }
-    await migrateCachedClaudeProfilesToCapturedAccounts()
-    await syncCapturedCopies(of: syncCandidates)
-    refreshClaudeProfiles()
+    await finishAccountReload(syncCandidates: syncCandidates)
   }
 
   /// `origin` is the saved account a reconciled live selection stands in for

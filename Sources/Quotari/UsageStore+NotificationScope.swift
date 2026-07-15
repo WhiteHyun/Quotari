@@ -167,6 +167,21 @@ extension UsageStore {
     notificationScopeResolution(for: account).logicalAccountID
   }
 
+  func lastKnownNotificationScopeID(for account: ProviderAccount) -> String? {
+    if let scopeID = notificationScopeIDsByAccountID[account.id] {
+      return scopeID
+    }
+    switch account.provider {
+    case .codex:
+      return notificationScopeID(for: account)
+    case .claude:
+      guard let profile = claudeProfiles[account.id],
+            let identity = stableClaudeNotificationIdentity(from: profile)
+      else { return nil }
+      return "claude:account:\(ProviderCredentialIdentity.fingerprint(of: identity))"
+    }
+  }
+
   private func notificationScopeResolution(
     for account: ProviderAccount,
     claudeCredentialFingerprint: String? = nil

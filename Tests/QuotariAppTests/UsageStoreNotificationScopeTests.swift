@@ -69,7 +69,7 @@ extension UsageStoreNotificationTests {
     #expect(center.attemptedRequests.last?.key.logicalAccountID == discovered.id)
   }
 
-  @Test func unattributedAutomaticResultClearsThePreviousAccountsReset() async throws {
+  @Test func unattributedAutomaticResultKeepsMonitoredAccountsReset() async throws {
     let discovered = account(name: "Matched", path: "/tmp/matched-auth.json")
     let discovery = StaticAccountDiscovery(accounts: [.codex: [discovered]])
     let harness = try await makeStore(
@@ -98,8 +98,8 @@ extension UsageStoreNotificationTests {
     )
     await store.waitForPendingQuotaNotifications()
 
-    #expect(center.pendingIDs.isEmpty)
-    #expect(controller.ledger.windows[reset.key]?.scheduledReset == nil)
+    #expect(center.pendingIDs == [reset.requestID])
+    #expect(controller.ledger.windows[reset.key]?.scheduledReset != nil)
   }
 
   @Test func automaticCodexSlotReuseRefreshesIdentityBeforeAttribution() async throws {

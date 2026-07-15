@@ -8,9 +8,21 @@ extension QuotaNotificationPolicy {
     for provider: UsageProvider,
     keeping logicalAccountID: String?
   ) -> [String] {
+    clearScheduledResets(
+      for: provider,
+      keeping: Set([logicalAccountID].compactMap(\.self))
+    )
+  }
+
+  /// Multi-account monitoring keeps reset reminders for every account still
+  /// in scope while removing schedules for accounts the user stopped watching.
+  mutating func clearScheduledResets(
+    for provider: UsageProvider,
+    keeping logicalAccountIDs: Set<String>
+  ) -> [String] {
     var requestIDs: [String] = []
     for key in Array(ledger.windows.keys) where key.provider == provider {
-      guard key.logicalAccountID != logicalAccountID,
+      guard !logicalAccountIDs.contains(key.logicalAccountID),
             var state = ledger.windows[key],
             let requestID = state.scheduledReset?.requestID
       else { continue }

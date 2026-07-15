@@ -25,6 +25,11 @@ extension UsageStore {
       visible.append(account)
     }
     monitoredAccounts[provider] = visible
+    synchronizeQuotaNotificationScope(
+      account: selectedAccounts[provider],
+      origin: reconciledSelectionOrigins[provider],
+      provider: provider
+    )
     // A direct user action is authoritative enough to repair a malformed file
     // or retry a previous write failure. Automatic reconciliation continues
     // to fail closed through the default persistence path.

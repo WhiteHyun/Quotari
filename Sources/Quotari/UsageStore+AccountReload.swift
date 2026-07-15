@@ -1,6 +1,19 @@
 import QuotariCore
 
 extension UsageStore {
+  func finishAccountReload(syncCandidates: [ProviderAccount]) async {
+    for provider in providers.map(\.id) {
+      synchronizeQuotaNotificationScope(
+        account: selectedAccounts[provider],
+        origin: reconciledSelectionOrigins[provider],
+        provider: provider
+      )
+    }
+    await migrateCachedClaudeProfilesToCapturedAccounts()
+    await syncCapturedCopies(of: syncCandidates)
+    refreshClaudeProfiles()
+  }
+
   func accountPreservationProviders(through request: UInt) -> Set<UsageProvider> {
     Set(accountPreservationRequests.compactMap { provider, requiredRequest in
       requiredRequest <= request ? provider : nil
