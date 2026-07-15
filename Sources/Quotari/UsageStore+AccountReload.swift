@@ -42,7 +42,7 @@ extension UsageStore {
     // A source can be replaced between capture and the verification read. Two
     // bounded passes manage both observations without letting a continuously
     // mutating external slot keep one UI reload alive forever.
-    for _ in 0 ..< 2 where automaticallyCapturesDiscoveredAccounts {
+    for _ in 0 ..< 2 where automaticallyCapturesDiscoveredAccounts && isProviderEnabled(provider) {
       let capture = await automaticallyCaptureDiscoveredAccounts(
         accounts,
         excluding: capturedCopies,

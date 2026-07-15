@@ -7,10 +7,11 @@ import Testing
 struct UsageStoreAutomaticCaptureMigrationTests {
   @Test func providerReactivationWaitsForAutomaticCapture() async throws {
     let fixture = try makeReactivationCaptureFixture()
-    fixture.store.setProviderEnabled(.claude, enabled: false)
     let reload = Task { await fixture.store.reloadAccounts() }
+    await Task.yield()
     await fixture.reader.waitUntilReadStarts()
 
+    fixture.store.setProviderEnabled(.claude, enabled: false)
     fixture.store.setProviderEnabled(.claude, enabled: true)
     try await Task.sleep(for: .milliseconds(20))
     #expect(await fixture.strategy.requestCount == 0)
@@ -199,7 +200,7 @@ private final class BlockingClaudeCaptureReader: @unchecked Sendable {
       return shouldBlock
     }
     if blocks {
-      Task { await signal.markStarted() }
+      signal.markStarted()
       release.wait()
     }
     return payload
@@ -214,19 +215,31 @@ private final class BlockingClaudeCaptureReader: @unchecked Sendable {
   }
 }
 
-private actor CaptureReadSignal {
+private final class CaptureReadSignal: @unchecked Sendable {
+  private let lock = NSLock()
   private var started = false
   private var waiters: [CheckedContinuation<Void, Never>] = []
 
   func markStarted() {
-    started = true
-    waiters.forEach { $0.resume() }
-    waiters.removeAll()
+    let pending = lock.withLock {
+      started = true
+      defer { waiters.removeAll() }
+      return waiters
+    }
+    pending.forEach { $0.resume() }
   }
 
   func waitUntilStarted() async {
-    guard !started else { return }
-    await withCheckedContinuation { waiters.append($0) }
+    await withCheckedContinuation { continuation in
+      let resumesImmediately = lock.withLock {
+        guard !started else { return true }
+        waiters.append(continuation)
+        return false
+      }
+      if resumesImmediately {
+        continuation.resume()
+      }
+    }
   }
 }
 
