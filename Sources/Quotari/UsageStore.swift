@@ -181,7 +181,9 @@ final class UsageStore {
       }
     }
   }
+}
 
+extension UsageStore {
   func beginAccountRediscovery() {
     accountRediscoveryRequest &+= 1
     startQueuedAccountRediscoveryIfNeeded()
@@ -250,39 +252,27 @@ final class UsageStore {
   }
 
   private func performAccountReload() async {
+    var gatedProviders = Set<UsageProvider>()
+    defer { automaticallyCapturingProviders.subtract(gatedProviders) }
     var next: [UsageProvider: [ProviderAccount]] = [:]
     var nextProvidersWithDiscoveredCredentials = Set<UsageProvider>()
     var refreshedSelections: [(UsageProvider, SelectionUpdate)] = []
     var alreadyCaptured: [String: ProviderAccount] = [:]
     var syncCandidates: [ProviderAccount] = []
     for descriptor in providers {
-      synchronizeQuotaNotificationScope(
-        account: selectedAccounts[descriptor.id],
-        origin: reconciledSelectionOrigins[descriptor.id],
-        provider: descriptor.id
-      )
-      let previousAccounts = accounts[descriptor.id] ?? []
-      var providerAccounts = await accountDiscovery.accounts(for: descriptor.id)
-      if !providerAccounts.isEmpty {
-        nextProvidersWithDiscoveredCredentials.insert(descriptor.id)
+      let state = await reloadProviderState(for: descriptor)
+      if state.keepsCaptureGate {
+        gatedProviders.insert(state.provider)
       }
-      if let selected = selectedAccounts[descriptor.id],
-         let update = await reconciledSelection(
-           selected,
-           origin: reconciledSelectionOrigins[descriptor.id],
-           in: &providerAccounts
-         ) {
-        refreshedSelections.append((descriptor.id, update))
+      if !state.accounts.isEmpty {
+        nextProvidersWithDiscoveredCredentials.insert(state.provider)
       }
-      reconcileAccountUsage(
-        provider: descriptor.id,
-        previousAccounts: previousAccounts,
-        currentAccounts: providerAccounts
-      )
-      let flagged = await accountDiscovery.capturedCopies(among: providerAccounts)
-      alreadyCaptured.merge(flagged) { current, _ in current }
-      syncCandidates += providerAccounts.filter { flagged.keys.contains($0.id) }
-      next[descriptor.id] = providerAccounts
+      if let selectionUpdate = state.selectionUpdate {
+        refreshedSelections.append((state.provider, selectionUpdate))
+      }
+      alreadyCaptured.merge(state.capturedCopies) { current, _ in current }
+      syncCandidates += state.accounts.filter { state.capturedCopies.keys.contains($0.id) }
+      next[state.provider] = state.accounts
     }
     accounts = next
     providersWithDiscoveredCredentials = nextProvidersWithDiscoveredCredentials
@@ -291,6 +281,7 @@ final class UsageStore {
     for (provider, update) in refreshedSelections {
       selectAccount(update.account, for: provider, standingInFor: update.origin)
     }
+    await migrateCachedClaudeProfilesToCapturedAccounts()
     await syncCapturedCopies(of: syncCandidates)
     refreshClaudeProfiles()
   }
