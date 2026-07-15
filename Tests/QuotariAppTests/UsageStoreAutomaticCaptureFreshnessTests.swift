@@ -17,6 +17,11 @@ struct UsageStoreAutomaticCaptureFreshnessTests {
     #expect(savedCredentials.refreshToken == "newer-saved-refresh")
     #expect(fixture.store.capturedEquivalents[live.id]?.credentialSource == .quotariRegistry(id: saved.id))
 
+    let savedAccount = try #require(fixture.store.accounts[.claude]?.first(where: { $0.credentialSource.isCaptured }))
+    await fixture.store.removeCapturedAccount(savedAccount)
+
+    #expect(fixture.registry.account(id: saved.id) != nil)
+    #expect(fixture.store.captureErrors[.claude] == UsageStore.activeAccountRemovalMessage)
   }
 
   @Test func scanAnchorsSelectionAfterAnInFlightClaudeRotation() async throws {

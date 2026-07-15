@@ -63,17 +63,6 @@ extension UsageStore {
     )
   }
 
-  /// Whether an account can be saved: already-captured entries, live logins
-  /// whose identity is already saved (their registry row is just hidden), and
-  /// static env tokens (no refresh token to keep them alive) are excluded.
-  func isCapturable(_ account: ProviderAccount) -> Bool {
-    guard capturedEquivalents[account.id] == nil else { return false }
-    switch account.credentialSource {
-    case .quotariRegistry, .claudeEnvironment: return false
-    case .codexAuthFile, .codexKeychain, .claudeKeychain, .claudeCredentialsFile: return true
-    }
-  }
-
   func refreshAccountUsage(for provider: UsageProvider, force: Bool = false) async {
     // A per-account fetch can rotate/persist a live token; never start one
     // while a switch is rewriting a credential slot.
