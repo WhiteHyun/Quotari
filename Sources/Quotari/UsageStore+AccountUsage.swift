@@ -63,13 +63,15 @@ extension UsageStore {
     )
   }
 
-  func refreshAccountUsage(for provider: UsageProvider, force: Bool = false) async {
+  func refreshAccountUsage(
+    for provider: UsageProvider,
+    force: Bool = false,
+    excludingCredentialScopeIDs: Set<String> = []
+  ) async {
     // A per-account fetch can rotate/persist a live token; never start one
     // while a switch is rewriting a credential slot.
     guard !isSwitching, isProviderEnabled(provider) else { return }
-    if automaticallyCapturingProviders.contains(provider) {
-      await inFlightAccountReload?.value
-    }
+    await waitForAutomaticCaptureBeforeAccountUsage(provider)
     guard !isSwitching, isProviderEnabled(provider) else { return }
     if let current = accountUsageRefreshTasks[provider] {
       await awaitAccountUsageRefresh(current, provider: provider, force: force)
@@ -77,13 +79,14 @@ extension UsageStore {
     }
     guard let descriptor = providers.first(where: { $0.id == provider }) else { return }
     let now = Date()
-    let accountsToFetch = accountsNeedingRefresh(for: provider, now: now, force: force)
+    let accountsToFetch = accountsNeedingRefresh(
+      for: provider,
+      now: now,
+      force: force,
+      excludingCredentialScopeIDs: excludingCredentialScopeIDs
+    )
     guard !accountsToFetch.isEmpty else {
-      // No usage fetch needed, but the token may have rotated since the last
-      // label attempt — relabel so the picker doesn't show a stale email.
-      if provider == .claude {
-        refreshClaudeProfiles()
-      }
+      accountUsageRefreshDidFindNoCandidates(provider)
       return
     }
 
@@ -123,6 +126,20 @@ extension UsageStore {
       credentialScopeIDs: Set(accountsToFetch.map(\.credentialScopeID))
     )
     _ = await task.value
+  }
+
+  private func accountUsageRefreshDidFindNoCandidates(_ provider: UsageProvider) {
+    // The token may have rotated since the last label attempt — relabel so the
+    // picker doesn't show a stale email even when no usage fetch is needed.
+    if provider == .claude {
+      refreshClaudeProfiles()
+    }
+  }
+
+  private func waitForAutomaticCaptureBeforeAccountUsage(_ provider: UsageProvider) async {
+    if automaticallyCapturingProviders.contains(provider) {
+      await inFlightAccountReload?.value
+    }
   }
 
   private func awaitAccountUsageRefresh(
@@ -257,9 +274,11 @@ extension UsageStore {
   private func accountsNeedingRefresh(
     for provider: UsageProvider,
     now: Date,
-    force: Bool
+    force: Bool,
+    excludingCredentialScopeIDs: Set<String>
   ) -> [ProviderAccount] {
-    (accounts[provider] ?? []).filter { account in
+    (monitoredAccounts[provider] ?? []).filter { account in
+      guard !excludingCredentialScopeIDs.contains(account.credentialScopeID) else { return false }
       guard !force,
             let snapshot = accountUsage[provider]?[account.id]?.snapshot
       else { return true }

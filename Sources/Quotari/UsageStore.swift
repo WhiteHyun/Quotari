@@ -287,6 +287,7 @@ extension UsageStore {
     var next: [UsageProvider: [ProviderAccount]] = [:]
     var nextProvidersWithDiscoveredCredentials = Set<UsageProvider>()
     var refreshedSelections: [(UsageProvider, SelectionUpdate)] = []
+    var nextMonitoredAccounts: [UsageProvider: [ProviderAccount]] = [:]
     var alreadyCaptured: [String: ProviderAccount] = [:]
     var syncCandidates: [ProviderAccount] = []
     for descriptor in providers {
@@ -300,6 +301,7 @@ extension UsageStore {
       if let selectionUpdate = state.selectionUpdate {
         refreshedSelections.append((state.provider, selectionUpdate))
       }
+      nextMonitoredAccounts[state.provider] = state.monitoredAccounts
       alreadyCaptured.merge(state.capturedCopies) { current, _ in current }
       syncCandidates += state.accounts.filter { state.capturedCopies.keys.contains($0.id) }
       next[state.provider] = state.accounts
@@ -308,9 +310,11 @@ extension UsageStore {
     providersWithDiscoveredCredentials = nextProvidersWithDiscoveredCredentials
     credentialDiscoveryCompleted = Set(providers.map(\.id))
     capturedEquivalents = alreadyCaptured
+    monitoredAccounts = nextMonitoredAccounts
     for (provider, update) in refreshedSelections {
       selectAccount(update.account, for: provider, standingInFor: update.origin)
     }
+    try? accountMonitoringStore.save(persistedMonitoredAccounts)
     await migrateCachedClaudeProfilesToCapturedAccounts()
     await syncCapturedCopies(of: syncCandidates)
     refreshClaudeProfiles()

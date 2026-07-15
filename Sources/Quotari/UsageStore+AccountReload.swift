@@ -38,6 +38,11 @@ extension UsageStore {
       reload: reload,
       accounts: &providerAccounts
     )
+    let monitoredAccounts = reloadedMonitoredAccounts(
+      provider: provider,
+      accounts: providerAccounts,
+      capturedCopies: reload.capturedCopies
+    )
     reconcileAccountUsage(
       provider: provider,
       previousAccounts: previousAccounts,
@@ -48,8 +53,30 @@ extension UsageStore {
       accounts: providerAccounts,
       capturedCopies: reload.capturedCopies,
       selectionUpdate: update,
+      monitoredAccounts: monitoredAccounts,
       keepsCaptureGate: reload.keepsCaptureGate
     )
+  }
+
+  private func reloadedMonitoredAccounts(
+    provider: UsageProvider,
+    accounts: [ProviderAccount],
+    capturedCopies: [String: ProviderAccount]
+  ) -> [ProviderAccount] {
+    guard let persisted = persistedMonitoredAccounts[provider] else {
+      let logicalAccounts = accounts.map { capturedCopies[$0.id] ?? $0 }
+      persistedMonitoredAccounts[provider] = logicalAccounts.uniquedByID()
+      return accounts
+    }
+
+    return persisted.compactMap { logicalAccount in
+      if let visible = accounts.first(where: {
+        $0.id == logicalAccount.id && $0.credentialScopeID == logicalAccount.credentialScopeID
+      }) {
+        return visible
+      }
+      return accounts.first { capturedCopies[$0.id]?.id == logicalAccount.id }
+    }.uniquedByID()
   }
 
   private func reloadProviderAccounts(
@@ -160,7 +187,15 @@ struct ProviderAccountReloadState {
   var accounts: [ProviderAccount]
   var capturedCopies: [String: ProviderAccount]
   var selectionUpdate: SelectionUpdate?
+  var monitoredAccounts: [ProviderAccount]
   var keepsCaptureGate: Bool
+}
+
+private extension [ProviderAccount] {
+  func uniquedByID() -> [ProviderAccount] {
+    var ids = Set<String>()
+    return filter { ids.insert($0.id).inserted }
+  }
 }
 
 private struct ProviderAccountReload {

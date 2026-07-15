@@ -92,6 +92,7 @@ extension UsageStore {
 
   func performRefresh() async {
     let now = Date()
+    var fetchedCredentialScopeIDs: [UsageProvider: Set<String>] = [:]
     await withTaskGroup(
       of: (UsageProvider, ProviderFetchCompletion).self
     ) { group in
@@ -110,14 +111,34 @@ extension UsageStore {
         guard isProviderEnabled(provider),
               (accountRevisions[provider] ?? 0) == completion.revision
         else { continue }
+        let fetchedAccount = completion.account ?? accounts[provider]?.first
+        if let fetchedAccount {
+          fetchedCredentialScopeIDs[provider, default: []].insert(fetchedAccount.credentialScopeID)
+        }
         apply(provider: provider, account: completion.account, result: completion.result)
       }
     }
+    await refreshMonitoredAccountUsage(excluding: fetchedCredentialScopeIDs)
     lastRefresh = Date()
     // Hidden saved copies must track live-token rotations between account
     // reloads too — a slot swapped right after a rotation would otherwise
     // strand the copy on a consumed refresh token.
     await syncCapturedCopies(of: capturedCopyCandidates.filter { isProviderEnabled($0.provider) })
+  }
+
+  private func refreshMonitoredAccountUsage(
+    excluding credentialScopeIDs: [UsageProvider: Set<String>]
+  ) async {
+    await withTaskGroup(of: Void.self) { group in
+      for descriptor in enabledProviderDescriptors where !(monitoredAccounts[descriptor.id] ?? []).isEmpty {
+        group.addTask {
+          await self.refreshAccountUsage(
+            for: descriptor.id,
+            excludingCredentialScopeIDs: credentialScopeIDs[descriptor.id] ?? []
+          )
+        }
+      }
+    }
   }
 
   func refresh(
