@@ -51,6 +51,7 @@ extension UsageStore {
       provider: provider,
       accounts: providerAccounts,
       capturedCopies: reload.capturedCopies,
+      credentialTransitions: reload.credentialTransitions,
       selectionUpdate: update,
       activeCLIAccount: activeCLIAccount,
       keepsCaptureGate: reload.keepsCaptureGate
@@ -58,10 +59,13 @@ extension UsageStore {
   }
 
   func reloadedMonitoredAccounts(
-    provider: UsageProvider,
-    accounts: [ProviderAccount],
+    _ state: ProviderAccountReloadState?,
     capturedCopies: [String: ProviderAccount]
   ) -> [ProviderAccount] {
+    guard let state else { return [] }
+    let provider = state.provider
+    let accounts = state.accounts
+    let credentialTransitions = state.credentialTransitions
     guard let persisted = persistedMonitoredAccounts[provider] else {
       // Missing means "not configured yet" while an explicit empty array means
       // the user chose none. Do not collapse those states before an account is
@@ -83,6 +87,15 @@ extension UsageStore {
         if let captured = capturedCopies[visible.id] {
           migrated[index] = captured
         }
+        return visible
+      }
+      if let targetScopeID = credentialTransitions[logicalAccount.credentialScopeID],
+         let visible = accounts.first(where: { $0.credentialScopeID == targetScopeID }) {
+        // A completed OAuth refresh proves that this new credential is the
+        // successor to the monitored live row. Persist its captured identity
+        // when available; otherwise remember the rotated scope so a later
+        // unrelated slot replacement cannot inherit monitoring.
+        migrated[index] = capturedCopies[visible.id] ?? visible
         return visible
       }
       return accounts.first { capturedCopies[$0.id]?.id == logicalAccount.id }
@@ -201,6 +214,7 @@ struct ProviderAccountReloadState {
   var provider: UsageProvider
   var accounts: [ProviderAccount]
   var capturedCopies: [String: ProviderAccount]
+  var credentialTransitions: [String: String]
   var selectionUpdate: SelectionUpdate?
   var activeCLIAccount: ProviderAccount?
   var keepsCaptureGate: Bool

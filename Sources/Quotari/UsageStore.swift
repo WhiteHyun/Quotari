@@ -301,7 +301,7 @@ extension UsageStore {
   private func performAccountReload(preserving providersForLogin: Set<UsageProvider>) async {
     var gatedProviders = Set<UsageProvider>()
     defer { automaticallyCapturingProviders.subtract(gatedProviders) }
-    var next: [UsageProvider: [ProviderAccount]] = [:]
+    var reloadStates: [UsageProvider: ProviderAccountReloadState] = [:]
     var nextProvidersWithDiscoveredCredentials = Set<UsageProvider>()
     var refreshedSelections: [(UsageProvider, SelectionUpdate)] = []
     var nextActiveCLIAccounts: [UsageProvider: ProviderAccount] = [:]
@@ -323,7 +323,7 @@ extension UsageStore {
       }
       alreadyCaptured.merge(state.capturedCopies) { current, _ in current }
       syncCandidates += state.accounts.filter { state.capturedCopies.keys.contains($0.id) }
-      next[state.provider] = state.accounts
+      reloadStates[state.provider] = state
     }
     // Reconcile monitoring only after every provider await has completed. A
     // Settings toggle can run while this main-actor reload is suspended; using
@@ -333,12 +333,11 @@ extension UsageStore {
     var nextMonitoredAccounts: [UsageProvider: [ProviderAccount]] = [:]
     for descriptor in providers {
       nextMonitoredAccounts[descriptor.id] = reloadedMonitoredAccounts(
-        provider: descriptor.id,
-        accounts: next[descriptor.id] ?? [],
+        reloadStates[descriptor.id],
         capturedCopies: alreadyCaptured
       )
     }
-    accounts = next
+    accounts = reloadStates.mapValues(\.accounts)
     providersWithDiscoveredCredentials = nextProvidersWithDiscoveredCredentials
     credentialDiscoveryCompleted = Set(providers.map(\.id))
     capturedEquivalents = alreadyCaptured
