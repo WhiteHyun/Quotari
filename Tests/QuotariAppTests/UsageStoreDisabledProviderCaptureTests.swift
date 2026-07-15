@@ -88,13 +88,6 @@ private actor SecondPassGatedDiscovery: ProviderAccountDiscovering {
     return await base.accounts(for: provider)
   }
 
-  func activeCLIAccount(
-    for provider: UsageProvider,
-    among accounts: [ProviderAccount]
-  ) async -> ProviderAccount? {
-    await base.activeCLIAccount(for: provider, among: accounts)
-  }
-
   func liveAccount(
     equivalentTo account: ProviderAccount,
     among accounts: [ProviderAccount]
