@@ -87,6 +87,22 @@ public struct CapturedAccountStore: Sendable {
     try? loadAccount(id: id)
   }
 
+  /// Strictly reads the requested provider while allowing an explicitly
+  /// provider-prefixed row from another provider to remain unavailable. Legacy
+  /// unprefixed ids are still read fail-closed because their provider cannot be
+  /// established without decoding the row.
+  public func registeredAccounts(for provider: UsageProvider) throws -> [CapturedAccount] {
+    try Self.mutationLock.withLock {
+      try (indexIDs() ?? []).compactMap { id in
+        if let indexedProvider = Self.provider(encodedIn: id), indexedProvider != provider {
+          return nil
+        }
+        let account = try strictlyLoadRegisteredAccount(id: id)
+        return account.provider == provider ? account : nil
+      }
+    }
+  }
+
   /// Capture (or re-capture): registers the id in the index first, then writes
   /// the account's own item. That ordering means a fault between the two steps
   /// leaves at worst a dangling id (load() skips it) rather than an orphaned
@@ -282,10 +298,23 @@ public struct CapturedAccountStore: Sendable {
     return try? JSONDecoder().decode(CapturedAccount.self, from: data)
   }
 
+  private func strictlyLoadRegisteredAccount(id: String) throws -> CapturedAccount {
+    guard let data = try keychain.read(service: itemService(id)),
+          let account = try? JSONDecoder().decode(CapturedAccount.self, from: data)
+    else {
+      throw RegisteredAccountReadError.unavailable(id)
+    }
+    return account
+  }
+
   private func writeIndex(_ ids: [String]) throws {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys]
     try keychain.write(encoder.encode(Index(ids: ids)), service: indexService)
+  }
+
+  private static func provider(encodedIn id: String) -> UsageProvider? {
+    UsageProvider.allCases.first { id.hasPrefix("\($0.rawValue):") }
   }
 
   private func encode(_ account: CapturedAccount) throws -> Data {
@@ -304,5 +333,16 @@ public struct CapturedAccountStore: Sendable {
 
   private struct Index: Codable {
     var ids: [String]
+  }
+
+  private enum RegisteredAccountReadError: LocalizedError {
+    case unavailable(String)
+
+    var errorDescription: String? {
+      switch self {
+      case let .unavailable(id):
+        "The saved account registry entry \(id) could not be read safely."
+      }
+    }
   }
 }
