@@ -66,9 +66,10 @@ final class UsageStore {
   /// Set by the switch flow (in a sibling extension), so not `private(set)`.
   var isSwitching = false
   var addingAccountProviders = Set<UsageProvider>()
+  var accountLoginTasks: [UsageProvider: Task<Void, Never>] = [:]
+  var accountLoginPhases: [UsageProvider: AccountLoginPhase] = [:]
   var accountLoginErrors: [UsageProvider: String] = [:]
   var accountLoginOutputs: [UsageProvider: String] = [:]
-
   var refreshInterval: TimeInterval {
     didSet {
       defaults.set(refreshInterval, forKey: Self.refreshIntervalDefaultsKey)

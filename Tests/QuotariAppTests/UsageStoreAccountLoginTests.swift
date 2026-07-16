@@ -28,6 +28,9 @@ struct UsageStoreAccountLoginTests {
     #expect(added.id == "codex:added-account")
     #expect(store.accountLoginErrors[.codex] == nil)
     #expect(store.addingAccountProviders.isEmpty)
+    #expect(store.accountLoginPhases[.codex] == nil)
+    #expect(store.selectedAccounts[.codex]?.id == added.providerAccount.id)
+    #expect(store.monitoredAccounts[.codex]?.map(\.id) == [added.providerAccount.id])
   }
 
   @Test func duplicateLoginUpdatesWithoutAddingAnotherRow() async throws {
@@ -59,6 +62,40 @@ struct UsageStoreAccountLoginTests {
     #expect(saved.count == 1)
     let credentials = try CodexCredentialsStore.parse(#require(saved.first).payload)
     #expect(credentials.accessToken == "second")
+  }
+
+  @Test func reauthenticatingSelectedCodexAccountRefreshesUsageImmediately() async throws {
+    let registry = CapturedAccountStore.inMemoryForTesting()
+    let capture = AccountCaptureService(capturedAccounts: registry)
+    let captured = try capture.captureRawPayload(
+      provider: .codex,
+      origin: .codexAuthFile(path: "/first/auth.json"),
+      payload: codexLoginPayload(accountID: "same-account", accessToken: "first"),
+      now: Date(timeIntervalSince1970: 1)
+    )
+    let selected = try #require(captured)
+    let strategy = AutomaticCaptureCountingStrategy()
+    let login = AccountLoginService { provider in
+      AccountLoginResult(
+        provider: provider,
+        origin: .codexAuthFile(path: "/isolated/auth.json"),
+        payload: codexLoginPayload(accountID: "same-account", accessToken: "second")
+      )
+    }
+    let store = UsageStore.isolatedForTesting(
+      providers: [countingCodexDescriptor(strategy: strategy)],
+      accountCapture: capture,
+      accountLogin: login,
+      startsAutomatically: false
+    )
+    store.selectAccount(selected.providerAccount, for: .codex)
+    await store.selectionRefreshTasks[.codex]?.value
+    let requestsBeforeLogin = await strategy.requestCount
+
+    await store.addAccount(for: .codex)
+    await store.selectionRefreshTasks[.codex]?.value
+
+    #expect(await strategy.requestCount == requestsBeforeLogin + 1)
   }
 
   @Test func loginFailureLeavesExistingRegistryUntouched() async throws {
