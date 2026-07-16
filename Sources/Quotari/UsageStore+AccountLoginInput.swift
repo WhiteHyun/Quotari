@@ -4,9 +4,10 @@ import QuotariCore
 extension UsageStore {
   @discardableResult
   func submitAccountLoginAuthenticationCode(_ code: String, for provider: UsageProvider) -> Bool {
-    guard accountLoginPhases[provider] == .waitingForAuthenticationCode,
-          let input = accountLoginInputs[provider]
-    else {
+    guard accountLoginPhases[provider] == .waitingForAuthenticationCode else {
+      return false
+    }
+    guard let input = accountLoginInputs[provider] else {
       accountLoginErrors[provider] = AccountLoginInputError.inputUnavailable.localizedDescription
       return false
     }
@@ -66,10 +67,16 @@ extension UsageStore {
     let combined = previous + sanitized
     accountLoginOutputs[provider] = String(combined.suffix(12000))
     let authenticationCodePrompt = "Paste code here"
-    let recentOutput = String(previous.suffix(authenticationCodePrompt.count - 1)) + sanitized
+    let loginSuccess = "Login successful"
+    let boundaryLength = max(authenticationCodePrompt.count, loginSuccess.count) - 1
+    let recentOutput = String(previous.suffix(boundaryLength)) + sanitized
     let phase = accountLoginPhases[provider]
-    if phase == .waitingForBrowser || phase == .completingLogin,
-       recentOutput.localizedCaseInsensitiveContains(authenticationCodePrompt) {
+    if phase == .waitingForBrowser || phase == .waitingForAuthenticationCode,
+       recentOutput.localizedCaseInsensitiveContains(loginSuccess) {
+      accountLoginErrors[provider] = nil
+      accountLoginPhases[provider] = .completingLogin
+    } else if phase == .waitingForBrowser || phase == .completingLogin,
+              recentOutput.localizedCaseInsensitiveContains(authenticationCodePrompt) {
       accountLoginPhases[provider] = .waitingForAuthenticationCode
     }
   }

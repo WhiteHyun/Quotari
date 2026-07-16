@@ -68,7 +68,8 @@ enum LiveClaudeAccountLogin {
         observers: AccountLoginCommandObservers(
           output: onOutput,
           didLaunch: onLoginStarted,
-          input: input
+          input: input,
+          completionOutput: "Login successful"
         )
       )
     } catch {

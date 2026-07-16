@@ -29,7 +29,7 @@ enum AccountLoginPhase: Equatable {
     case .waitingForAuthenticationCode:
       "Paste the authentication code shown in the browser to continue the Claude Code login."
     case .completingLogin:
-      "Quotari submitted the code to Claude Code and is waiting for sign-in to finish."
+      "Claude Code accepted the browser sign-in and Quotari is waiting for it to finish."
     case .savingAccount:
       "The new renewable credential is being saved to Quotari and linked to the live CLI account."
     case .restoringPreviousAccount:

@@ -5,19 +5,23 @@ struct AccountLoginCommandObservers: Sendable {
   var output: AccountLoginOutputHandler?
   var didLaunch: CredentialMutationHandler?
   var input: AccountLoginInput?
+  var completionOutput: String?
 
   init(
     output: AccountLoginOutputHandler? = nil,
     didLaunch: CredentialMutationHandler? = nil,
-    input: AccountLoginInput? = nil
+    input: AccountLoginInput? = nil,
+    completionOutput: String? = nil
   ) {
     self.output = output
     self.didLaunch = didLaunch
     self.input = input
+    self.completionOutput = completionOutput
   }
 }
 
 final class AccountLoginProcessBox: @unchecked Sendable {
+  private static let successfulOutputGraceDelay = DispatchTimeInterval.milliseconds(500)
   private static let forceKillDelay = DispatchTimeInterval.seconds(1)
 
   private let lock = NSLock()
@@ -56,6 +60,24 @@ final class AccountLoginProcessBox: @unchecked Sendable {
     }
   }
 
+  /// Give a CLI that already reported success a short window to flush its
+  /// credential and account-state writes after stdin closes. If its stale
+  /// authentication-code prompt still prevents exit, terminate it without
+  /// making the UI wait for the full login timeout.
+  func finishAfterSuccessfulOutput() {
+    let shouldSchedule = lock.withLock {
+      guard process.isRunning, !forceKillScheduled else { return false }
+      forceKillScheduled = true
+      return true
+    }
+    guard shouldSchedule else { return }
+    DispatchQueue.global(qos: .utility).asyncAfter(
+      deadline: .now() + Self.successfulOutputGraceDelay
+    ) { [self] in
+      terminateAfterSuccessfulOutputIfNeeded()
+    }
+  }
+
   func waitUntilExit() -> Int32 {
     process.waitUntilExit()
     return process.terminationStatus
@@ -65,6 +87,15 @@ final class AccountLoginProcessBox: @unchecked Sendable {
     lock.withLock {
       guard process.isRunning else { return }
       _ = Darwin.kill(process.processIdentifier, SIGKILL)
+    }
+  }
+
+  private func terminateAfterSuccessfulOutputIfNeeded() {
+    let shouldTerminate = lock.withLock { process.isRunning }
+    guard shouldTerminate else { return }
+    process.terminate()
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + Self.forceKillDelay) { [self] in
+      forceKillIfNeeded()
     }
   }
 }
