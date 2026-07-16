@@ -47,18 +47,7 @@ struct ProviderAccountPopover: View {
           .foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
       }
-      if let error = store.accountLoginErrors[descriptor.id] {
-        Text(error)
-          .font(.caption)
-          .foregroundStyle(.red)
-          .fixedSize(horizontal: false, vertical: true)
-      }
-      if let output = store.accountLoginOutputs[descriptor.id], !output.isEmpty {
-        Text(output)
-          .font(.caption.monospaced())
-          .textSelection(.enabled)
-          .fixedSize(horizontal: false, vertical: true)
-      }
+      AccountLoginStatusView(provider: descriptor.id)
       Divider()
       footer
     }
@@ -151,16 +140,16 @@ struct ProviderAccountPopover: View {
     let canAddAccount = store.canAddAccount(for: descriptor.id)
     return VStack(spacing: 2) {
       PopoverActionButton(
-        title: canAddAccount ? "Add Account" : "Add Account (Unavailable)",
+        title: canAddAccount ? accountLoginTitle : "\(accountLoginTitle) (Unavailable)",
         systemImage: "plus",
         busy: !store.addingAccountProviders.isEmpty,
         disabled: !canAddAccount
       ) {
-        Task { await store.addAccount(for: descriptor.id) }
+        store.startAddingAccount(for: descriptor.id)
       }
-      .help(store.addAccountUnavailableReason(for: descriptor.id) ?? "Add another managed account")
+      .help(store.addAccountUnavailableReason(for: descriptor.id) ?? accountLoginHelp)
       PopoverActionButton(
-        title: "Scan Accounts",
+        title: "Scan & Add Current Account",
         systemImage: "arrow.clockwise",
         busy: isReloadingAccounts || store.refreshingAccountUsageProviders.contains(descriptor.id)
       ) {
@@ -179,6 +168,16 @@ struct ProviderAccountPopover: View {
         SettingsWindowController.shared.show(store: store)
       }
     }
+  }
+
+  private var accountLoginTitle: String {
+    descriptor.id == .claude ? "Login New Account" : "Add Account"
+  }
+
+  private var accountLoginHelp: String {
+    descriptor.id == .claude
+      ? "Preserve the current Claude account, then sign in with a new one in the browser"
+      : "Add another managed account"
   }
 }
 
