@@ -3,15 +3,27 @@ import Foundation
 import Testing
 
 struct AccountLoginServiceTests {
-  @Test func productionServiceOnlyAdvertisesSafelyIsolatedProviders() throws {
+  @Test func processCompletionWaitsUntilCredentialMutationIsMarked() async throws {
+    let mutationMarked = AccountLoginMutationMarker()
+
+    let status = try await IsolatedAccountLogin.runLoginCommand(
+      executable: URL(fileURLWithPath: "/usr/bin/true"),
+      arguments: [],
+      environment: [:],
+      currentDirectory: FileManager.default.temporaryDirectory,
+      observers: AccountLoginCommandObservers(didLaunch: { mutationMarked.mark() })
+    )
+
+    #expect(status == 0)
+    #expect(mutationMarked.value)
+  }
+
+  @Test func productionServiceAdvertisesBothManagedLoginFlows() {
     let service = AccountLoginService()
 
     #expect(service.supports(provider: .codex))
-    #expect(!service.supports(provider: .claude))
-    let reason = try #require(service.unavailableReason(provider: .claude))
-    #expect(reason.contains("shared macOS Keychain"))
-    #expect(reason.contains("setup-token"))
-    #expect(reason.contains("renewable"))
+    #expect(service.supports(provider: .claude))
+    #expect(service.unavailableReason(provider: .claude) == nil)
   }
 
   @Test func codexLoginUsesAnIsolatedCodexHome() throws {
@@ -104,45 +116,6 @@ struct AccountLoginServiceTests {
     #expect(leftovers.isEmpty)
   }
 
-  @Test func claudeLoginFailsClosedBeforeLaunchingCLI() async throws {
-    let directory = FileManager.default.temporaryDirectory
-      .appendingPathComponent("quotari-login-claude-\(UUID().uuidString)", isDirectory: true)
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: directory) }
-    let marker = directory.appendingPathComponent("launched")
-    let executable = directory.appendingPathComponent("fake-claude")
-    let script = """
-    #!/bin/sh
-    touch "$QUOTARI_TEST_MARKER"
-    """
-    try Data(script.utf8).write(to: executable)
-    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
-
-    do {
-      _ = try await IsolatedAccountLogin.perform(
-        provider: .claude,
-        environment: [
-          "QUOTARI_CLAUDE_PATH": executable.path,
-          "QUOTARI_TEST_MARKER": marker.path,
-          "PATH": "/usr/bin:/bin",
-        ],
-        home: directory,
-        temporaryDirectory: directory
-      )
-      Issue.record("Claude login should fail closed")
-    } catch let error as AccountLoginError {
-      guard case .isolatedLoginUnavailable(.claude) = error else {
-        Issue.record("Unexpected login error: \(error)")
-        return
-      }
-    }
-
-    #expect(!FileManager.default.fileExists(atPath: marker.path))
-    let leftovers = try FileManager.default.contentsOfDirectory(atPath: directory.path)
-      .filter { $0.hasPrefix("Quotari-AddAccount-") }
-    #expect(leftovers.isEmpty)
-  }
-
   @Test func failedLoginDoesNotLeaveTemporaryHome() async throws {
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("quotari-login-failure-\(UUID().uuidString)", isDirectory: true)
@@ -175,7 +148,8 @@ struct AccountLoginServiceTests {
     let script = """
     #!/bin/sh
     touch "$QUOTARI_TEST_MARKER"
-    exec /bin/sleep 30
+    trap '' TERM
+    while true; do :; done
     """
     try Data(script.utf8).write(to: executable)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
@@ -244,5 +218,18 @@ struct AccountLoginServiceTests {
         return
       }
     }
+  }
+}
+
+private final class AccountLoginMutationMarker: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage = false
+
+  var value: Bool {
+    lock.withLock { storage }
+  }
+
+  func mark() {
+    lock.withLock { storage = true }
   }
 }

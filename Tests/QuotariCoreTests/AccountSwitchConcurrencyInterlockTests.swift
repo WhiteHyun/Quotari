@@ -77,6 +77,37 @@ struct CLIActivityDetectorTests {
 }
 
 struct AccountSwitchConcurrencyInterlockTests {
+  @Test func signedOutRestoreDoesNotOverwriteALoginCreatedBeforeTheFinalRead() throws {
+    let home = try switchTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let previous = claudePayload(access: "previous", refresh: "previous-ref")
+    let concurrent = claudePayload(access: "concurrent", refresh: "concurrent-ref")
+    let keychain = KeychainSlot()
+    let interlock = ActivityInterlock(check: 2) {
+      keychain.value = concurrent
+    }
+    let service = AccountSwitchService(
+      environment: [:],
+      home: home,
+      keychainRead: { _ in keychain.value },
+      keychainWrite: { data, _ in keychain.value = data },
+      activeCLIProcesses: interlock.inspect
+    )
+
+    var thrown: AccountSwitchError?
+    do {
+      try service.restoreClaudeLoginKeychain(to: previous)
+    } catch let error as AccountSwitchError {
+      thrown = error
+    }
+
+    guard case .concurrentCredentialChange = thrown else {
+      Issue.record("expected .concurrentCredentialChange, got \(String(describing: thrown))")
+      return
+    }
+    #expect(keychain.value == concurrent)
+  }
+
   @Test func activeCLIAbortsBeforeReadingOrWritingTheSlot() throws {
     let registry = makeSwitchRegistry()
     let saved = try savedCodexAccount(registry: registry)
