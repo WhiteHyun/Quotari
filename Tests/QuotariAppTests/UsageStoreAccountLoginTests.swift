@@ -254,7 +254,7 @@ private actor AccountLoginCallCounter {
   }
 }
 
-private func codexLoginPayload(
+func codexLoginPayload(
   accountID: String,
   accessToken: String = "access",
   refreshToken: String = "refresh"

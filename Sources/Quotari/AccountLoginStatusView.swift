@@ -5,8 +5,23 @@ struct AccountLoginStatusView: View {
   let provider: UsageProvider
 
   @Environment(UsageStore.self) private var store
+  @FocusState private var isAuthenticationCodeFocused: Bool
+  @State private var authenticationCode = ""
 
   var body: some View {
+    content
+      .onChange(of: store.accountLoginPhases[provider]) { _, newPhase in
+        guard newPhase != .waitingForAuthenticationCode else {
+          isAuthenticationCodeFocused = true
+          return
+        }
+        authenticationCode = ""
+        isAuthenticationCodeFocused = false
+      }
+  }
+
+  @ViewBuilder
+  private var content: some View {
     if let phase = store.accountLoginPhases[provider] {
       HStack(alignment: .top, spacing: 8) {
         ProgressView()
@@ -23,12 +38,23 @@ struct AccountLoginStatusView: View {
           }
         }
         Spacer(minLength: 8)
-        if phase == .waitingForBrowser {
+        if phase.allowsCancellation {
           Button("Cancel") {
             store.cancelAccountLogin(for: provider)
           }
           .controlSize(.small)
         }
+      }
+      if phase == .waitingForAuthenticationCode {
+        HStack(spacing: 8) {
+          SecureField("Authentication Code", text: $authenticationCode)
+            .textFieldStyle(.roundedBorder)
+            .focused($isAuthenticationCodeFocused)
+            .onSubmit(submitAuthenticationCode)
+          Button("Submit", action: submitAuthenticationCode)
+            .disabled(authenticationCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .onAppear { isAuthenticationCodeFocused = true }
       }
     }
     if let error = store.accountLoginErrors[provider] {
@@ -42,6 +68,13 @@ struct AccountLoginStatusView: View {
         .font(.caption.monospaced())
         .textSelection(.enabled)
         .fixedSize(horizontal: false, vertical: true)
+    }
+  }
+
+  private func submitAuthenticationCode() {
+    if store.submitAccountLoginAuthenticationCode(authenticationCode, for: provider) {
+      authenticationCode = ""
+      isAuthenticationCodeFocused = false
     }
   }
 }

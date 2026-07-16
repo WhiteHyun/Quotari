@@ -4,6 +4,8 @@ import QuotariCore
 enum AccountLoginPhase: Equatable {
   case preservingCurrentAccount
   case waitingForBrowser
+  case waitingForAuthenticationCode
+  case completingLogin
   case savingAccount
   case restoringPreviousAccount
 
@@ -11,6 +13,8 @@ enum AccountLoginPhase: Equatable {
     switch self {
     case .preservingCurrentAccount: "Saving current CLI account…"
     case .waitingForBrowser: "Waiting for browser login…"
+    case .waitingForAuthenticationCode: "Authentication code required"
+    case .completingLogin: "Completing sign-in…"
     case .savingAccount: "Adding the new account…"
     case .restoringPreviousAccount: "Restoring the previous CLI account…"
     }
@@ -22,10 +26,21 @@ enum AccountLoginPhase: Equatable {
       "Quotari is preserving the current renewable credential before adding another account."
     case .waitingForBrowser:
       "Finish signing in with a different account in the browser. Keep this window open."
+    case .waitingForAuthenticationCode:
+      "Paste the authentication code shown in the browser to continue the Claude Code login."
+    case .completingLogin:
+      "Quotari submitted the code to Claude Code and is waiting for sign-in to finish."
     case .savingAccount:
       "The new renewable credential is being saved to Quotari and linked to the live CLI account."
     case .restoringPreviousAccount:
       "Login did not complete, so Quotari is putting the preserved account back into the CLI slot."
+    }
+  }
+
+  var allowsCancellation: Bool {
+    switch self {
+    case .waitingForBrowser, .waitingForAuthenticationCode, .completingLogin: true
+    case .preservingCurrentAccount, .savingAccount, .restoringPreviousAccount: false
     }
   }
 }
@@ -198,34 +213,6 @@ extension UsageStore {
     return PreservedClaudeLogin(account: savedAccount, profile: profile)
   }
 
-  private func performAccountLogin(
-    for provider: UsageProvider,
-    previousClaudeLogin: PreservedClaudeLogin?,
-    registryBaseline: AccountLoginRegistryBaseline?
-  ) async throws -> AccountLoginResult {
-    accountLoginPhases[provider] = .waitingForBrowser
-    let login = accountLogin
-    return try await login.login(
-      provider: provider,
-      onOutput: { [weak self] output in
-        await self?.appendAccountLoginOutput(output, for: provider)
-      },
-      beforeCredentialOverwrite: { [weak self] provider, source, payload in
-        guard let self else { throw CancellationError() }
-        try await preserveCredentialImmediatelyBeforeLogin(
-          provider: provider,
-          source: source,
-          payload: payload,
-          previousClaudeLogin: previousClaudeLogin,
-          registryBaseline: registryBaseline
-        )
-      },
-      onCredentialMutationPossible: {
-        registryBaseline?.markCredentialMutationPossible()
-      }
-    )
-  }
-
   private func importAccountLoginResult(
     _ result: AccountLoginResult,
     previousClaudeLogin: PreservedClaudeLogin?,
@@ -389,10 +376,5 @@ extension UsageStore {
     let verified = fetched.verified(for: fingerprint)
     storeClaudeLoginProfile(verified, accountID: saved.id)
     return verified
-  }
-
-  private func appendAccountLoginOutput(_ output: String, for provider: UsageProvider) {
-    let combined = (accountLoginOutputs[provider] ?? "") + output
-    accountLoginOutputs[provider] = String(combined.suffix(12000))
   }
 }

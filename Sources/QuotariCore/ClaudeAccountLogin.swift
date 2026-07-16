@@ -9,7 +9,8 @@ enum LiveClaudeAccountLogin {
   static func perform(
     beforeCredentialOverwrite: (@Sendable (Data?) async throws -> Void)? = nil,
     onLoginStarted: CredentialMutationHandler? = nil,
-    onOutput: AccountLoginOutputHandler? = nil
+    onOutput: AccountLoginOutputHandler? = nil,
+    input: AccountLoginInput? = nil
   ) async throws -> AccountLoginResult {
     let fileManager = FileManager.default
     return try await perform(
@@ -19,7 +20,8 @@ enum LiveClaudeAccountLogin {
       keychainRead: { try KeychainItemStore.readByService($0) },
       beforeCredentialOverwrite: beforeCredentialOverwrite,
       onLoginStarted: onLoginStarted,
-      onOutput: onOutput
+      onOutput: onOutput,
+      input: input
     )
   }
 
@@ -35,7 +37,8 @@ enum LiveClaudeAccountLogin {
     loginTimeout: Duration = .seconds(600),
     beforeCredentialOverwrite: (@Sendable (Data?) async throws -> Void)? = nil,
     onLoginStarted: CredentialMutationHandler? = nil,
-    onOutput: AccountLoginOutputHandler? = nil
+    onOutput: AccountLoginOutputHandler? = nil,
+    input: AccountLoginInput? = nil
   ) async throws -> AccountLoginResult {
     let configuration = configuration(home: home)
     guard let executable = IsolatedAccountLogin.executableURL(
@@ -59,7 +62,8 @@ enum LiveClaudeAccountLogin {
       timeout: loginTimeout,
       observers: AccountLoginCommandObservers(
         output: onOutput,
-        didLaunch: onLoginStarted
+        didLaunch: onLoginStarted,
+        input: input
       )
     )
     try Task.checkCancellation()

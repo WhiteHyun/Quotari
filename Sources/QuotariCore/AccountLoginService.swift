@@ -75,6 +75,7 @@ public struct AccountLoginService: Sendable {
   private let operation: @Sendable (
     UsageProvider,
     AccountLoginOutputHandler?,
+    AccountLoginInput?,
     CredentialPreservationHandler?,
     CredentialMutationHandler?
   ) async throws -> AccountLoginResult
@@ -82,7 +83,7 @@ public struct AccountLoginService: Sendable {
 
   public init() {
     supportedProviders = Set(UsageProvider.allCases)
-    operation = { provider, onOutput, preserveCredential, credentialMutation in
+    operation = { provider, onOutput, input, preserveCredential, credentialMutation in
       switch provider {
       case .claude:
         try await LiveClaudeAccountLogin.perform(
@@ -94,10 +95,11 @@ public struct AccountLoginService: Sendable {
             )
           },
           onLoginStarted: credentialMutation,
-          onOutput: onOutput
+          onOutput: onOutput,
+          input: input
         )
       case .codex:
-        try await IsolatedAccountLogin.perform(provider: provider, onOutput: onOutput)
+        try await IsolatedAccountLogin.perform(provider: provider, onOutput: onOutput, input: input)
       }
     }
   }
@@ -106,7 +108,7 @@ public struct AccountLoginService: Sendable {
     operation: @escaping @Sendable (UsageProvider) async throws -> AccountLoginResult
   ) {
     supportedProviders = Set(UsageProvider.allCases)
-    self.operation = { provider, _, _, _ in try await operation(provider) }
+    self.operation = { provider, _, _, _, _ in try await operation(provider) }
   }
 
   public init(
@@ -116,7 +118,7 @@ public struct AccountLoginService: Sendable {
     ) async throws -> AccountLoginResult
   ) {
     supportedProviders = Set(UsageProvider.allCases)
-    operation = { provider, onOutput, _, _ in
+    operation = { provider, onOutput, _, _, _ in
       try await streamingOperation(provider, onOutput)
     }
   }
@@ -130,7 +132,22 @@ public struct AccountLoginService: Sendable {
     ) async throws -> AccountLoginResult
   ) {
     supportedProviders = Set(UsageProvider.allCases)
-    operation = managedOperation
+    operation = { provider, onOutput, _, preserveCredential, credentialMutation in
+      try await managedOperation(provider, onOutput, preserveCredential, credentialMutation)
+    }
+  }
+
+  public init(
+    interactiveOperation: @escaping @Sendable (
+      UsageProvider,
+      AccountLoginOutputHandler?,
+      AccountLoginInput?,
+      CredentialPreservationHandler?,
+      CredentialMutationHandler?
+    ) async throws -> AccountLoginResult
+  ) {
+    supportedProviders = Set(UsageProvider.allCases)
+    operation = interactiveOperation
   }
 
   public func supports(provider: UsageProvider) -> Bool {
@@ -145,6 +162,7 @@ public struct AccountLoginService: Sendable {
   public func login(
     provider: UsageProvider,
     onOutput: AccountLoginOutputHandler? = nil,
+    input: AccountLoginInput? = nil,
     beforeCredentialOverwrite: CredentialPreservationHandler? = nil,
     onCredentialMutationPossible: CredentialMutationHandler? = nil
   ) async throws -> AccountLoginResult {
@@ -154,6 +172,7 @@ public struct AccountLoginService: Sendable {
     return try await operation(
       provider,
       onOutput,
+      input,
       beforeCredentialOverwrite,
       onCredentialMutationPossible
     )
@@ -241,7 +260,8 @@ enum IsolatedAccountLogin {
 
   static func perform(
     provider: UsageProvider,
-    onOutput: AccountLoginOutputHandler? = nil
+    onOutput: AccountLoginOutputHandler? = nil,
+    input: AccountLoginInput? = nil
   ) async throws -> AccountLoginResult {
     let fileManager = FileManager.default
     return try await perform(
@@ -250,7 +270,8 @@ enum IsolatedAccountLogin {
       home: fileManager.homeDirectoryForCurrentUser,
       temporaryDirectory: fileManager.temporaryDirectory,
       fileManager: fileManager,
-      onOutput: onOutput
+      onOutput: onOutput,
+      input: input
     )
   }
 
@@ -260,7 +281,8 @@ enum IsolatedAccountLogin {
     home: URL,
     temporaryDirectory: URL,
     fileManager: FileManager = .default,
-    onOutput: AccountLoginOutputHandler? = nil
+    onOutput: AccountLoginOutputHandler? = nil,
+    input: AccountLoginInput? = nil
   ) async throws -> AccountLoginResult {
     let root = temporaryDirectory
       .appendingPathComponent("Quotari-AddAccount-\(UUID().uuidString)", isDirectory: true)
@@ -286,7 +308,7 @@ enum IsolatedAccountLogin {
         configuration: configuration,
         executable: executable,
         environment: environment,
-        onOutput: onOutput
+        observers: AccountLoginCommandObservers(output: onOutput, input: input)
       ))
     } catch {
       outcome = .failure(error)
@@ -305,7 +327,7 @@ enum IsolatedAccountLogin {
     configuration: AccountLoginConfiguration,
     executable: URL,
     environment: [String: String],
-    onOutput: AccountLoginOutputHandler?
+    observers: AccountLoginCommandObservers
   ) async throws -> AccountLoginResult {
     var loginEnvironment = environment
     configuration.isolatedEnvironment.forEach { loginEnvironment[$0.key] = $0.value }
@@ -321,7 +343,7 @@ enum IsolatedAccountLogin {
       arguments: configuration.arguments,
       environment: loginEnvironment,
       currentDirectory: configuration.authDirectory.deletingLastPathComponent(),
-      observers: AccountLoginCommandObservers(output: onOutput)
+      observers: observers
     )
     try Task.checkCancellation()
     guard status == 0 else {
@@ -335,60 +357,5 @@ enum IsolatedAccountLogin {
       origin: configuration.origin,
       payload: payload
     )
-  }
-
-  static func runLoginCommand(
-    executable: URL,
-    arguments: [String],
-    environment: [String: String],
-    currentDirectory: URL,
-    observers: AccountLoginCommandObservers
-  ) async throws -> Int32 {
-    let process = Process()
-    // Run the CLI itself so cancellation terminates the process that owns the
-    // OAuth callback and credential write, rather than only a TTY wrapper.
-    process.executableURL = executable
-    process.arguments = arguments
-    process.environment = environment
-    process.currentDirectoryURL = currentDirectory
-    process.standardInput = FileHandle.nullDevice
-    let outputPipe = observers.output.map { _ in Pipe() }
-    process.standardOutput = outputPipe?.fileHandleForWriting ?? FileHandle.nullDevice
-    process.standardError = outputPipe?.fileHandleForWriting ?? FileHandle.nullDevice
-    let box = AccountLoginProcessBox(process)
-    let outputReader = outputPipe.flatMap { pipe in
-      observers.output.map { AccountLoginOutputReader(pipe: pipe, handler: $0) }
-    }
-    outputReader?.start()
-
-    let status: Int32
-    do {
-      status = try await withTaskCancellationHandler {
-        try Task.checkCancellation()
-        return try await withCheckedThrowingContinuation { continuation in
-          do {
-            try box.run()
-            // Establish the recovery marker synchronously after launch, then
-            // observe process completion on a worker. Even an executable that
-            // exits inside `Process.run()` cannot publish its status first.
-            observers.didLaunch?()
-            try? outputPipe?.fileHandleForWriting.close()
-            Task.detached {
-              continuation.resume(returning: box.waitUntilExit())
-            }
-          } catch {
-            try? outputPipe?.fileHandleForWriting.close()
-            continuation.resume(throwing: error)
-          }
-        }
-      } onCancel: {
-        box.cancel()
-      }
-    } catch {
-      outputReader?.cancel()
-      throw error
-    }
-    await outputReader?.finish()
-    return status
   }
 }
