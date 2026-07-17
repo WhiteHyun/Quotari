@@ -8,18 +8,7 @@ struct ProviderAccountPopover: View {
   let descriptor: ProviderDescriptor
 
   @State private var isReloadingAccounts = false
-  @State private var pendingCLISwitch: ProviderAccount?
-
-  private var isConfirmingCLISwitch: Binding<Bool> {
-    Binding(
-      get: { pendingCLISwitch != nil },
-      set: { isPresented in
-        if !isPresented {
-          pendingCLISwitch = nil
-        }
-      }
-    )
-  }
+  @State private var switchCoordinator = ProviderAccountPopoverSwitchCoordinator()
 
   private var accent: Color {
     Color(
@@ -56,21 +45,6 @@ struct ProviderAccountPopover: View {
     .task {
       await store.refreshAccountUsage(for: descriptor.id)
     }
-    .alert(
-      "Close active CLI sessions first",
-      isPresented: isConfirmingCLISwitch,
-      presenting: pendingCLISwitch
-    ) { account in
-      Button("Switch Account") {
-        Task { await store.switchCLIAccount(to: account) }
-      }
-      Button("Cancel", role: .cancel) {}
-    } message: { _ in
-      Text(
-        "Quit Claude Code or Codex before switching. Quotari checks for active processes and credential changes, "
-          + "but it cannot prevent a new CLI from launching after the final check."
-      )
-    }
   }
 
   private var header: some View {
@@ -90,9 +64,9 @@ struct ProviderAccountPopover: View {
     let isCLIActive = store.activeCLIAccount(for: descriptor.id)?.id == account.id
     let isMonitored = store.isMonitoring(account)
     let usage = store.accountUsage(for: account)
+    let action = ProviderAccountPopoverAction(account: account, isCLIActive: isCLIActive)
     return Button {
-      store.selectAccount(account, for: descriptor.id)
-      dismiss()
+      perform(action, for: account)
     } label: {
       ProviderAccountUsageRow(
         account: account,
@@ -102,12 +76,37 @@ struct ProviderAccountPopover: View {
         isCLIActive: isCLIActive,
         isMonitored: isMonitored,
         isLoading: isMonitored && store.refreshingAccountUsageProviders.contains(descriptor.id) && usage == nil,
+        isSwitching: switchCoordinator.switchingAccountID == account.id,
         accent: accent
       )
     }
     .buttonStyle(.plain)
-    .accessibilityHint("Selects this account and updates the dashboard")
+    .disabled(store.isSwitching || !store.addingAccountProviders.isEmpty)
+    .accessibilityHint(action.accessibilityHint)
+    .help(action.accessibilityHint)
     .contextMenu { accountMenu(account) }
+  }
+
+  private func perform(_ action: ProviderAccountPopoverAction, for account: ProviderAccount) {
+    switch action {
+    case .selectDashboard:
+      store.selectAccount(account, for: descriptor.id)
+      dismiss()
+    case .switchCLI:
+      startSwitchingCLI(to: account)
+    }
+  }
+
+  private func startSwitchingCLI(to account: ProviderAccount) {
+    Task {
+      let shouldDismiss = await switchCoordinator.switchCLI(to: account) {
+        await store.switchCLIAccount(to: account)
+        return store.captureErrors[account.provider] == nil
+      }
+      if shouldDismiss {
+        dismiss()
+      }
+    }
   }
 
   @ViewBuilder
@@ -125,11 +124,10 @@ struct ProviderAccountPopover: View {
         .help(UsageStore.activeAccountRemovalMessage)
     }
     if account.credentialSource.isCaptured {
-      // Rewrites the CLI's credential slot after a warning about the one
-      // remaining cross-process race.
       Button("Use in CLI (Switch)") {
-        pendingCLISwitch = account
+        startSwitchingCLI(to: account)
       }
+      .disabled(store.isSwitching || !store.addingAccountProviders.isEmpty)
       Button("Remove Account", role: .destructive) {
         Task { await store.removeCapturedAccount(account) }
       }
@@ -189,13 +187,20 @@ private struct ProviderAccountUsageRow: View {
   let isCLIActive: Bool
   let isMonitored: Bool
   let isLoading: Bool
+  let isSwitching: Bool
   let accent: Color
 
   var body: some View {
     VStack(alignment: .leading, spacing: 9) {
       HStack(spacing: 8) {
-        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-          .foregroundStyle(isSelected ? accent : Color.secondary)
+        if isSwitching {
+          ProgressView()
+            .controlSize(.small)
+            .frame(width: 16, height: 16)
+        } else {
+          Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+            .foregroundStyle(isSelected ? accent : Color.secondary)
+        }
         VStack(alignment: .leading, spacing: 1) {
           Text(label)
             .font(.subheadline.weight(.semibold))
