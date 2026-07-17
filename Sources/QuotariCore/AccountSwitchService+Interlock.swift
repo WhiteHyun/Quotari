@@ -79,6 +79,12 @@ extension AccountSwitchService {
   ) throws {
     do {
       try requireCLIInactive(.claude)
+      try verifyClaudeSlots(
+        service: installation.service,
+        fileURL: installation.fileURL,
+        expectedKeychain: installation.replacement.keychain,
+        expectedFile: installation.replacement.file
+      )
       guard try readFile(accountState.url) == accountState.previous else {
         throw AccountSwitchError.concurrentCredentialChange
       }
@@ -108,17 +114,31 @@ extension AccountSwitchService {
     preparedFileRollback: URL?
   ) throws {
     try requireCLIInactive(.claude)
+    var rollbackErrors: [String] = []
     if let replacementFile = installation.replacement.file {
-      guard try readFile(installation.fileURL) == replacementFile,
-            let preparedFileRollback
-      else { throw AccountSwitchError.concurrentCredentialChange }
-      try secureFileWriter.commit(preparedFileRollback, replacing: installation.fileURL)
+      do {
+        guard try readFile(installation.fileURL) == replacementFile,
+              let preparedFileRollback
+        else { throw AccountSwitchError.concurrentCredentialChange }
+        try secureFileWriter.commit(preparedFileRollback, replacing: installation.fileURL)
+      } catch {
+        rollbackErrors.append("credentials file: \(error.localizedDescription)")
+      }
     }
-    try restoreClaudeKeychainIfNeeded(
-      installation.previous.keychain,
-      replacing: installation.replacement.keychain,
-      service: installation.service
-    )
+    do {
+      try restoreClaudeKeychainIfNeeded(
+        installation.previous.keychain,
+        replacing: installation.replacement.keychain,
+        service: installation.service
+      )
+    } catch {
+      rollbackErrors.append("Keychain: \(error.localizedDescription)")
+    }
+    if !rollbackErrors.isEmpty {
+      throw AccountSwitchError.partialSwitch(
+        underlying: rollbackErrors.joined(separator: "; ")
+      )
+    }
   }
 
   private func commitClaudeFile(

@@ -52,31 +52,31 @@ enum LiveClaudeAccountLogin {
     ) else {
       throw AccountLoginError.executableNotFound(.claude)
     }
+    let observation = ClaudeLoginObservationContext(
+      environment: environment,
+      home: home,
+      fileManager: fileManager,
+      keychainRead: keychainRead,
+      observer: onCredentialObserved
+    )
     let previousPayload = try await credentialAtOverwriteBoundary(
       keychainRead: keychainRead,
       activeCLIProcesses: activeCLIProcesses,
       beforeCredentialOverwrite: beforeCredentialOverwrite
     )
     let previousCredential = renewableCredential(from: previousPayload)
-    let status: Int32
-    do {
-      status = try await runLoginCommand(
-        configuration: configuration,
-        executable: executable,
-        environment: environment,
-        timeout: loginTimeout,
-        observers: AccountLoginCommandObservers(
-          output: onOutput,
-          didLaunch: onLoginStarted,
-          input: input,
-          completionOutput: "Login successful"
-        )
-      )
-    } catch {
-      reportCredentialObservation(keychainRead, to: onCredentialObserved)
-      throw error
-    }
-    reportCredentialObservation(keychainRead, to: onCredentialObserved)
+    let status = try await runLoginCommandReportingCredential(
+      configuration: configuration,
+      executable: executable,
+      timeout: loginTimeout,
+      observers: AccountLoginCommandObservers(
+        output: onOutput,
+        didLaunch: onLoginStarted,
+        input: input,
+        completionOutput: "Login successful"
+      ),
+      observation: observation
+    )
     try Task.checkCancellation()
     try validateLoginStatus(status)
     let payload = try await changedCredential(
@@ -85,34 +85,29 @@ enum LiveClaudeAccountLogin {
       attempts: credentialReadAttempts,
       retryDelay: retryDelay
     )
+    let finalObservation = observation.capture(matching: payload)
+    observation.report(finalObservation)
     return accountLoginResult(
       configuration: configuration,
       payload: payload,
-      environment: environment,
-      home: home,
-      fileManager: fileManager
+      observation: finalObservation
     )
   }
 
   private static func accountLoginResult(
     configuration: AccountLoginConfiguration,
     payload: Data,
-    environment: [String: String],
-    home: URL,
-    fileManager: FileManager
+    observation: ClaudeLoginCredentialObservation?
   ) -> AccountLoginResult {
-    let accountStateURL = ClaudeCodeAccountState.configurationURL(environment: environment, home: home)
-    let accountState = fileManager.fileExists(atPath: accountStateURL.path)
-      ? try? Data(contentsOf: accountStateURL)
-      : nil
-    let oauthAccount = accountState.flatMap { configuration in
+    let oauthAccount = observation?.accountState.flatMap { configuration in
       try? ClaudeCodeAccountState.oauthAccount(from: configuration)
     }
     return AccountLoginResult(
       provider: .claude,
       origin: configuration.origin,
       payload: payload,
-      claudeOAuthAccount: oauthAccount
+      claudeOAuthAccount: oauthAccount,
+      claudeLoginObservation: observation
     )
   }
 
@@ -124,25 +119,12 @@ enum LiveClaudeAccountLogin {
     }
   }
 
-  private static func reportCredentialObservation(
-    _ keychainRead: @escaping @Sendable (String) throws -> Data?,
-    to observer: CredentialObservationHandler?
-  ) {
-    guard let observer else { return }
-    do {
-      try observer(keychainRead(keychainService))
-    } catch {
-      // Without a trustworthy observation, recovery retains the existing
-      // fail-closed behavior instead of guessing which credential to replace.
-    }
-  }
-
   private enum LoginCommandOutcome {
     case status(Int32)
     case timedOut
   }
 
-  private static func runLoginCommand(
+  static func runLoginCommand(
     configuration: AccountLoginConfiguration,
     executable: URL,
     environment: [String: String],

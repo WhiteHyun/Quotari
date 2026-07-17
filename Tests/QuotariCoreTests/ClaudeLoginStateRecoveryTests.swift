@@ -106,6 +106,41 @@ struct ClaudeLoginStateRecoveryTests {
     #expect(try Data(contentsOf: stateURL) == concurrentState)
   }
 
+  @Test func exactRecoveryPreservesAccountStateChangedAfterLoginObservation() throws {
+    let home = try switchTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let stateURL = home.appendingPathComponent(".claude.json")
+    let previousState = recoveryAccountState(id: "previous", email: "previous@example.com")
+    let observedPostLoginState = recoveryAccountState(id: "post-login", email: "post-login@example.com")
+    let concurrentState = recoveryAccountState(id: "external", email: "external@example.com")
+    try concurrentState.write(to: stateURL)
+    let previousKeychain = recoveryClaudePayload(access: "previous", refresh: "previous-ref")
+    let observedPostLoginKeychain = recoveryClaudePayload(access: "post-login", refresh: "post-login-ref")
+    let keychain = KeychainSlot(observedPostLoginKeychain)
+    let registry = makeSwitchRegistry()
+    let service = recoveryService(registry: registry, home: home, keychain: keychain)
+
+    let thrown: AccountSwitchError?
+    do {
+      try service.restoreClaudeLogin(
+        keychain: previousKeychain,
+        replacing: observedPostLoginKeychain,
+        accountState: previousState,
+        replacingAccountState: observedPostLoginState
+      )
+      thrown = nil
+    } catch let error as AccountSwitchError {
+      thrown = error
+    }
+
+    guard case .concurrentCredentialChange = thrown else {
+      Issue.record("expected .concurrentCredentialChange, got \(String(describing: thrown))")
+      return
+    }
+    #expect(keychain.value == observedPostLoginKeychain)
+    #expect(try Data(contentsOf: stateURL) == concurrentState)
+  }
+
   @Test func signedOutBoundaryRemovesAccountStateCreatedByFailedLogin() throws {
     let home = try switchTemporaryHome()
     defer { try? FileManager.default.removeItem(at: home) }

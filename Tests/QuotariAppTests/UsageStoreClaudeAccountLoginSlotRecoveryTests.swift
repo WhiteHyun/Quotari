@@ -24,14 +24,15 @@ struct ClaudeLoginSlotRecoveryTests {
       accessToken: "interrupted-access",
       refreshToken: "interrupted-refresh"
     )
-    let login = AccountLoginService(managedOperation: { provider, _, preserveCredential, credentialMutation in
-      try await preserveCredential?(
+    let login = AccountLoginService(observedManagedOperation: { provider, _, preserve, mutation, observation in
+      try await preserve?(
         provider,
         .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
         context.liveCredential.value
       )
-      credentialMutation?()
+      mutation?()
       context.liveCredential.value = interruptedPayload
+      observation?(context.loginObservation(keychainPayload: interruptedPayload))
       throw AccountLoginError.commandFailed(provider, status: 9)
     })
     let store = context.makeStore(login: login, accountSwitch: context.makeSwitcher())

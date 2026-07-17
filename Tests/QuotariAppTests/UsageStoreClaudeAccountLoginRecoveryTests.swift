@@ -49,7 +49,11 @@ struct ClaudeAccountLoginRecoveryTests {
       return AccountLoginResult(
         provider: provider,
         origin: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
-        payload: rejectedPayload
+        payload: rejectedPayload,
+        claudeLoginObservation: ClaudeLoginCredentialObservation(
+          keychainPayload: rejectedPayload,
+          accountState: nil
+        )
       )
     })
     let store = context.makeStore(login: login, accountSwitch: context.makeSwitcher())
@@ -80,7 +84,11 @@ struct ClaudeAccountLoginRecoveryTests {
       return AccountLoginResult(
         provider: provider,
         origin: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
-        payload: rejectedPayload
+        payload: rejectedPayload,
+        claudeLoginObservation: ClaudeLoginCredentialObservation(
+          keychainPayload: rejectedPayload,
+          accountState: nil
+        )
       )
     })
     let store = context.makeStore(login: login, accountSwitch: context.makeSwitcher())
@@ -111,15 +119,19 @@ struct ClaudeAccountLoginRecoveryTests {
       accessToken: "interrupted-access",
       refreshToken: "interrupted-refresh"
     )
-    let login = AccountLoginService(managedOperation: { provider, _, preserveCredential, credentialMutation in
-      try await preserveCredential?(
+    let login = AccountLoginService(observedManagedOperation: { provider, _, preserve, mutation, observation in
+      try await preserve?(
         provider,
         .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
         context.liveCredential.value
       )
-      credentialMutation?()
+      mutation?()
       context.liveCredential.value = rejectedPayload
       try rejectedAccountState.write(to: accountStateURL)
+      observation?(ClaudeLoginCredentialObservation(
+        keychainPayload: rejectedPayload,
+        accountState: rejectedAccountState
+      ))
       throw AccountLoginError.commandFailed(provider, status: 9)
     })
     let store = context.makeStore(login: login, accountSwitch: context.makeSwitcher())
@@ -144,20 +156,24 @@ struct ClaudeAccountLoginRecoveryTests {
       accessToken: "interrupted-access",
       refreshToken: "interrupted-refresh"
     )
-    let login = AccountLoginService(managedOperation: { provider, _, preserveCredential, credentialMutation in
-      try await preserveCredential?(
+    let login = AccountLoginService(observedManagedOperation: { provider, _, preserve, mutation, observation in
+      try await preserve?(
         provider,
         .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
         context.liveCredential.value
       )
       context.liveCredential.value = nil
-      try await preserveCredential?(
+      try await preserve?(
         provider,
         .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
         nil
       )
-      credentialMutation?()
+      mutation?()
       context.liveCredential.value = rejectedPayload
+      observation?(ClaudeLoginCredentialObservation(
+        keychainPayload: rejectedPayload,
+        accountState: nil
+      ))
       throw AccountLoginError.commandFailed(provider, status: 9)
     })
     let store = context.makeStore(login: login, accountSwitch: context.makeSwitcher())
@@ -205,7 +221,11 @@ struct ClaudeAccountLoginRecoveryTests {
       return AccountLoginResult(
         provider: provider,
         origin: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
-        payload: incompleteIdentityPayload
+        payload: incompleteIdentityPayload,
+        claudeLoginObservation: ClaudeLoginCredentialObservation(
+          keychainPayload: incompleteIdentityPayload,
+          accountState: nil
+        )
       )
     })
     let store = context.makeStore(login: login, accountSwitch: context.makeSwitcher())

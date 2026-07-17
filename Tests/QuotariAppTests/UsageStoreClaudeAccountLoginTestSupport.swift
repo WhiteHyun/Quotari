@@ -128,6 +128,14 @@ struct ClaudeLoginContext: @unchecked Sendable {
     }
     return payload.flatMap { try? ClaudeCredentialsStore.parse($0) }
   }
+
+  func loginObservation(keychainPayload: Data?) -> ClaudeLoginCredentialObservation {
+    let accountStateURL = directory.url.appendingPathComponent(".claude.json")
+    return ClaudeLoginCredentialObservation(
+      keychainPayload: keychainPayload,
+      accountState: try? Data(contentsOf: accountStateURL)
+    )
+  }
 }
 
 final class ClaudeLoginBooleanBox: @unchecked Sendable {
@@ -166,27 +174,43 @@ func countingClaudeDescriptor(
 
 actor AccountLoginGatedClaudeProfileFetcher: ClaudeProfileFetching {
   private let gatedAccessToken: String
+  private var gatedRequest: Int?
   private let profiles: [String: ClaudeProfile]
+  private var matchingRequestCount = 0
   private var requestStarted = false
   private var isReleased = false
   private var startWaiters: [CheckedContinuation<Void, Never>] = []
   private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
 
-  init(gatedAccessToken: String, profiles: [String: ClaudeProfile]) {
+  init(
+    gatedAccessToken: String,
+    gatedRequest: Int? = 1,
+    profiles: [String: ClaudeProfile]
+  ) {
     self.gatedAccessToken = gatedAccessToken
+    self.gatedRequest = gatedRequest
     self.profiles = profiles
   }
 
   func fetchProfile(accessToken: String) async throws -> ClaudeProfile {
     if accessToken == gatedAccessToken {
-      requestStarted = true
-      startWaiters.forEach { $0.resume() }
-      startWaiters.removeAll()
-      if !isReleased {
-        await withCheckedContinuation { releaseWaiters.append($0) }
+      matchingRequestCount += 1
+      if matchingRequestCount == gatedRequest {
+        requestStarted = true
+        startWaiters.forEach { $0.resume() }
+        startWaiters.removeAll()
+        if !isReleased {
+          await withCheckedContinuation { releaseWaiters.append($0) }
+        }
       }
     }
     return profiles[accessToken] ?? ClaudeProfile()
+  }
+
+  func armNextRequest() {
+    gatedRequest = matchingRequestCount + 1
+    requestStarted = false
+    isReleased = false
   }
 
   func waitUntilRequestStarts() async {

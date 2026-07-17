@@ -10,34 +10,33 @@ extension UsageStore {
           registryBaseline.isCredentialMutationPossible,
           let keychainSnapshot = registryBaseline.claudeKeychainSnapshot
     else { return nil }
+    guard let postLoginSnapshot = registryBaseline.claudePostLoginSnapshot else {
+      beginAccountRediscovery()
+      return "Quotari couldn’t verify the post-login Claude credential and account state, so it left the current "
+        + "CLI login untouched instead of risking a newer external generation."
+    }
     return await restoreExactClaudeLoginState(
       keychainSnapshot,
-      postLoginSnapshot: registryBaseline.claudePostLoginKeychainSnapshot,
+      postLoginSnapshot: postLoginSnapshot,
       dashboardSelection: dashboardSelection
     )
   }
 
   private func restoreExactClaudeLoginState(
     _ keychainSnapshot: ClaudeKeychainLoginSnapshot,
-    postLoginSnapshot: ClaudeKeychainLoginSnapshot?,
+    postLoginSnapshot: ClaudeKeychainLoginSnapshot,
     dashboardSelection: ProviderAccount?
   ) async -> String? {
     accountLoginPhases[.claude] = .restoringPreviousAccount
     let switcher = accountSwitch
     do {
       try await Task.detached {
-        if let postLoginSnapshot {
-          try switcher.restoreClaudeLogin(
-            keychain: keychainSnapshot.payload,
-            replacing: postLoginSnapshot.payload,
-            accountState: keychainSnapshot.accountState
-          )
-        } else {
-          try switcher.restoreClaudeLogin(
-            keychain: keychainSnapshot.payload,
-            accountState: keychainSnapshot.accountState
-          )
-        }
+        try switcher.restoreClaudeLogin(
+          keychain: keychainSnapshot.payload,
+          replacing: postLoginSnapshot.payload,
+          accountState: keychainSnapshot.accountState,
+          replacingAccountState: postLoginSnapshot.accountState
+        )
       }.value
     } catch {
       beginAccountRediscovery()

@@ -5,17 +5,30 @@ public struct AccountLoginResult: Sendable {
   public let origin: ProviderCredentialSource
   public let payload: Data
   public let claudeOAuthAccount: Data?
+  public let claudeLoginObservation: ClaudeLoginCredentialObservation?
 
   public init(
     provider: UsageProvider,
     origin: ProviderCredentialSource,
     payload: Data,
-    claudeOAuthAccount: Data? = nil
+    claudeOAuthAccount: Data? = nil,
+    claudeLoginObservation: ClaudeLoginCredentialObservation? = nil
   ) {
     self.provider = provider
     self.origin = origin
     self.payload = payload
     self.claudeOAuthAccount = claudeOAuthAccount
+    self.claudeLoginObservation = claudeLoginObservation
+  }
+}
+
+public struct ClaudeLoginCredentialObservation: Sendable {
+  public let keychainPayload: Data?
+  public let accountState: Data?
+
+  public init(keychainPayload: Data?, accountState: Data?) {
+    self.keychainPayload = keychainPayload
+    self.accountState = accountState
   }
 }
 
@@ -24,7 +37,7 @@ public typealias CredentialPreservationHandler = @Sendable (
   UsageProvider, ProviderCredentialSource, Data?
 ) async throws -> Void
 public typealias CredentialMutationHandler = @Sendable () -> Void
-public typealias CredentialObservationHandler = @Sendable (Data?) -> Void
+public typealias CredentialObservationHandler = @Sendable (ClaudeLoginCredentialObservation) -> Void
 public enum AccountLoginError: LocalizedError, Sendable {
   case isolatedLoginUnavailable(UsageProvider)
   case executableNotFound(UsageProvider)
@@ -144,6 +157,27 @@ public struct AccountLoginService: Sendable {
   }
 
   public init(
+    observedManagedOperation: @escaping @Sendable (
+      UsageProvider,
+      AccountLoginOutputHandler?,
+      CredentialPreservationHandler?,
+      CredentialMutationHandler?,
+      CredentialObservationHandler?
+    ) async throws -> AccountLoginResult
+  ) {
+    supportedProviders = Set(UsageProvider.allCases)
+    operation = { provider, onOutput, _, preserveCredential, credentialMutation, credentialObservation in
+      try await observedManagedOperation(
+        provider,
+        onOutput,
+        preserveCredential,
+        credentialMutation,
+        credentialObservation
+      )
+    }
+  }
+
+  public init(
     interactiveOperation: @escaping @Sendable (
       UsageProvider,
       AccountLoginOutputHandler?,
@@ -186,15 +220,6 @@ public struct AccountLoginService: Sendable {
       onCredentialMutationPossible,
       onCredentialObserved
     )
-  }
-}
-
-private extension UsageProvider {
-  var accountLoginCLIName: String {
-    switch self {
-    case .claude: "Claude Code"
-    case .codex: "Codex"
-    }
   }
 }
 

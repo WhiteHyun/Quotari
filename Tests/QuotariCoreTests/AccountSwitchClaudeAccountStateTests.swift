@@ -140,6 +140,48 @@ struct AccountSwitchClaudeAccountStateTests {
     #expect(try Data(contentsOf: configurationURL) == concurrent)
   }
 
+  @Test func credentialRaceBeforeTerminalIdentityCommitPreservesTheExternalGeneration() throws {
+    let registry = makeSwitchRegistry()
+    let saved = try savedClaudeAccount(registry: registry)
+    let home = try switchTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let configurationURL = home.appendingPathComponent(".claude.json")
+    let previousState = accountState(id: "old", email: "old@example.com")
+    try writeAccountState(previousState, to: configurationURL)
+    let credentialsDirectory = home.appendingPathComponent(".claude", isDirectory: true)
+    try FileManager.default.createDirectory(at: credentialsDirectory, withIntermediateDirectories: true)
+    let credentialsURL = credentialsDirectory.appendingPathComponent(".credentials.json")
+    let live = claudePayload(access: "live", refresh: "live-ref")
+    try writeAccountState(live, to: credentialsURL)
+    let external = claudePayload(access: "external", refresh: "external-ref")
+    let keychain = KeychainSlot(live)
+    let interlock = AccountStateInterlock(check: 4) {
+      keychain.value = external
+    }
+    let service = switcher(
+      registry: registry,
+      home: home,
+      keychain: keychain,
+      activeCLIProcesses: interlock.inspect
+    )
+
+    let thrown: AccountSwitchError?
+    do {
+      try service.switchCLI(toRegistryAccount: saved.id, now: .distantPast)
+      thrown = nil
+    } catch let error as AccountSwitchError {
+      thrown = error
+    }
+
+    guard case .partialSwitch = thrown else {
+      Issue.record("expected .partialSwitch, got \(String(describing: thrown))")
+      return
+    }
+    #expect(keychain.value == external)
+    #expect(try Data(contentsOf: credentialsURL) == live)
+    #expect(try Data(contentsOf: configurationURL) == previousState)
+  }
+
   @Test(arguments: [2, 3])
   func preparationFailureCleansEarlierCredentialTemporaryFiles(failingPreparation: Int) throws {
     let registry = makeSwitchRegistry()

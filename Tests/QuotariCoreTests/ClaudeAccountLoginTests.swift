@@ -265,8 +265,10 @@ extension ClaudeAccountLoginTests {
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
     let previous = claudeCredential(accessToken: "previous", refreshToken: "previous-refresh")
     let failed = Data(#"{"claudeAiOauth":{"accessToken":"failed"}}"#.utf8)
+    let failedState = Data(#"{"oauthAccount":{"accountUuid":"failed"}}"#.utf8)
+    try failedState.write(to: directory.appendingPathComponent(".claude.json"))
     let credentials = CredentialSequence([previous, previous, failed])
-    let observed = ClaudePayloadRecorder()
+    let observed = ClaudeLoginObservationRecorder()
 
     do {
       _ = try await LiveClaudeAccountLogin.perform(
@@ -286,7 +288,9 @@ extension ClaudeAccountLoginTests {
       }
     }
 
-    #expect(observed.values == [failed])
+    #expect(observed.values.count == 1)
+    #expect(observed.values.first?.keychainPayload == failed)
+    #expect(observed.values.first?.accountState == failedState)
   }
 }
 
@@ -332,6 +336,7 @@ struct ClaudeAccountLoginConfigurationTests {
     )
 
     #expect(result.claudeOAuthAccount == expectedAccount)
+    #expect(result.claudeLoginObservation?.accountState == configuredState)
   }
 }
 

@@ -24,15 +24,19 @@ extension UsageStore {
     registryBaseline: AccountLoginRegistryBaseline?
   ) async throws {
     guard provider == .claude, let registryBaseline else { return }
+    let accountState = try await currentClaudeAccountState()
     if let payload {
       try await preserveClaudeCredentialAtLoginBoundary(
         payload,
         source: source,
         previousClaudeLogin: previousClaudeLogin,
-        registryBaseline: registryBaseline
+        registryBaseline: registryBaseline,
+        accountState: accountState
       )
     }
-    let accountState = try await currentClaudeAccountState()
+    guard try await currentClaudeAccountState() == accountState else {
+      throw AccountLoginError.credentialChangedDuringPreparation(.claude)
+    }
     registryBaseline.recordClaudeLogin(keychainPayload: payload, accountState: accountState)
   }
 
@@ -40,7 +44,8 @@ extension UsageStore {
     _ payload: Data,
     source: ProviderCredentialSource,
     previousClaudeLogin: PreservedClaudeLogin?,
-    registryBaseline: AccountLoginRegistryBaseline
+    registryBaseline: AccountLoginRegistryBaseline,
+    accountState: Data?
   ) async throws {
     guard let minimized = ProviderCredentialMinimizer.minimize(provider: .claude, payload: payload) else {
       if ProviderCredentialMinimizer.hasAccessToken(provider: .claude, payload: payload) {
@@ -58,7 +63,7 @@ extension UsageStore {
     let verifiedProfile = profile.verified(
       for: ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
     )
-    let oauthAccount = await currentClaudeOAuthAccount(for: profile)
+    let oauthAccount = currentClaudeOAuthAccount(for: profile, accountState: accountState)
     if let saved = try await uniquelyMatchingSavedClaudeAccount(
       for: profile,
       previousClaudeLogin: previousClaudeLogin,
@@ -98,9 +103,11 @@ extension UsageStore {
     }.value
   }
 
-  private func currentClaudeOAuthAccount(for profile: ClaudeProfile) async -> Data? {
-    let configuration = try? await currentClaudeAccountState()
-    let candidate = configuration.flatMap { try? ClaudeCodeAccountState.oauthAccount(from: $0) } ?? nil
+  private func currentClaudeOAuthAccount(
+    for profile: ClaudeProfile,
+    accountState: Data?
+  ) -> Data? {
+    let candidate = accountState.flatMap { try? ClaudeCodeAccountState.oauthAccount(from: $0) } ?? nil
     return resolvedClaudeOAuthAccount(candidate: candidate, profile: profile)
   }
 }
@@ -109,7 +116,7 @@ final class AccountLoginRegistryBaseline: @unchecked Sendable {
   private let lock = NSLock()
   private var registeredAccounts: [String: ProviderAccount]
   private var claudeKeychainSnapshotStorage: ClaudeKeychainLoginSnapshot?
-  private var claudePostLoginKeychainSnapshotStorage: ClaudeKeychainLoginSnapshot?
+  private var claudePostLoginSnapshotStorage: ClaudeKeychainLoginSnapshot?
   private var mutationPossible = false
 
   init(_ accounts: [CapturedAccount]) {
@@ -133,17 +140,17 @@ final class AccountLoginRegistryBaseline: @unchecked Sendable {
     lock.withLock { claudeKeychainSnapshotStorage }
   }
 
-  func recordClaudePostLoginKeychain(_ payload: Data?) {
+  func recordClaudePostLogin(keychainPayload: Data?, accountState: Data?) {
     lock.withLock {
-      claudePostLoginKeychainSnapshotStorage = ClaudeKeychainLoginSnapshot(
-        payload: payload,
-        accountState: nil
+      claudePostLoginSnapshotStorage = ClaudeKeychainLoginSnapshot(
+        payload: keychainPayload,
+        accountState: accountState
       )
     }
   }
 
-  var claudePostLoginKeychainSnapshot: ClaudeKeychainLoginSnapshot? {
-    lock.withLock { claudePostLoginKeychainSnapshotStorage }
+  var claudePostLoginSnapshot: ClaudeKeychainLoginSnapshot? {
+    lock.withLock { claudePostLoginSnapshotStorage }
   }
 
   func recordClaudeBoundaryAccount(_ account: CapturedAccount) {

@@ -51,11 +51,19 @@ extension UsageStore {
       onCredentialMutationPossible: {
         registryBaseline?.markCredentialMutationPossible()
       },
-      onCredentialObserved: { payload in
-        registryBaseline?.recordClaudePostLoginKeychain(payload)
+      onCredentialObserved: { observation in
+        registryBaseline?.recordClaudePostLogin(
+          keychainPayload: observation.keychainPayload,
+          accountState: observation.accountState
+        )
       }
     )
-    registryBaseline?.recordClaudePostLoginKeychain(result.payload)
+    if let observation = result.claudeLoginObservation {
+      registryBaseline?.recordClaudePostLogin(
+        keychainPayload: observation.keychainPayload,
+        accountState: observation.accountState
+      )
+    }
     return result
   }
 

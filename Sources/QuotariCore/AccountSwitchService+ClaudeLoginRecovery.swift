@@ -34,6 +34,11 @@ extension AccountSwitchService {
     }
   }
 
+  private enum ClaudeLoginAccountStateExpectation {
+    case preserveInstalledState
+    case replaceObservedState(Data?)
+  }
+
   /// Restores only the Keychain slot for callers that intentionally do not
   /// own Claude's account-state file.
   public func restoreClaudeLoginKeychain(to previous: Data?) throws {
@@ -86,40 +91,46 @@ extension AccountSwitchService {
     try restoreClaudeLogin(
       keychain: previousKeychain,
       accountState: previousAccountState,
-      expectation: .preserveInstalledCredential
+      credentialExpectation: .preserveInstalledCredential,
+      accountStateExpectation: .preserveInstalledState
     )
   }
 
-  /// Restores both shared Claude slots only while the Keychain still matches
-  /// the generation observed when Quotari's login process ended.
+  /// Restores both shared Claude slots only while the Keychain and account
+  /// state still match the generations observed when Quotari's login process
+  /// ended.
   public func restoreClaudeLogin(
     keychain previousKeychain: Data?,
     replacing observedPostLogin: Data?,
-    accountState previousAccountState: Data?
+    accountState previousAccountState: Data?,
+    replacingAccountState observedPostLoginAccountState: Data?
   ) throws {
     try restoreClaudeLogin(
       keychain: previousKeychain,
       accountState: previousAccountState,
-      expectation: .replaceObservedCredential(observedPostLogin)
+      credentialExpectation: .replaceObservedCredential(observedPostLogin),
+      accountStateExpectation: .replaceObservedState(observedPostLoginAccountState)
     )
   }
 
   private func restoreClaudeLogin(
     keychain previousKeychain: Data?,
     accountState previousAccountState: Data?,
-    expectation: ClaudeLoginRecoveryExpectation
+    credentialExpectation: ClaudeLoginRecoveryExpectation,
+    accountStateExpectation: ClaudeLoginAccountStateExpectation
   ) throws {
     let recovery = try claudeLoginRecovery(
       previousKeychain: previousKeychain,
       previousAccountState: previousAccountState,
-      expectation: expectation
+      credentialExpectation: credentialExpectation,
+      accountStateExpectation: accountStateExpectation
     )
     guard recovery.isNeeded else { return }
     if recovery.restoresKeychain {
       try backUpPostLoginCredential(
         recovery.installedKeychain,
         service: recovery.service,
-        expectation: expectation
+        expectation: credentialExpectation
       )
     }
     let preparedAccountState = try prepareCredentialFile(
@@ -141,23 +152,29 @@ extension AccountSwitchService {
   private func claudeLoginRecovery(
     previousKeychain: Data?,
     previousAccountState: Data?,
-    expectation: ClaudeLoginRecoveryExpectation
+    credentialExpectation: ClaudeLoginRecoveryExpectation,
+    accountStateExpectation: ClaudeLoginAccountStateExpectation
   ) throws -> ClaudeLoginRecovery {
     let service = ClaudeCredentialsStore.keychainService
     let accountStateURL = ClaudeCodeAccountState.configurationURL(environment: environment, home: home)
     try requireCLIInactive(.claude)
     let installedKeychain = try readKeychain(service)
-    if case let .replaceObservedCredential(observed) = expectation,
+    if case let .replaceObservedCredential(observed) = credentialExpectation,
        installedKeychain != observed {
       throw AccountSwitchError.concurrentCredentialChange
     }
-    return try ClaudeLoginRecovery(
+    let installedAccountState = try readFile(accountStateURL)
+    if case let .replaceObservedState(observed) = accountStateExpectation,
+       installedAccountState != observed {
+      throw AccountSwitchError.concurrentCredentialChange
+    }
+    return ClaudeLoginRecovery(
       service: service,
       accountStateURL: accountStateURL,
       previousKeychain: previousKeychain,
       installedKeychain: installedKeychain,
       previousAccountState: previousAccountState,
-      installedAccountState: readFile(accountStateURL)
+      installedAccountState: installedAccountState
     )
   }
 
