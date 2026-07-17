@@ -95,6 +95,49 @@ struct ClaudeAccountLoginRecoveryTests {
     #expect(store.accountLoginErrors[.claude]?.contains("recovery error") == false)
   }
 
+  @Test func failedLoginRestoresKeychainAndClaudeAccountStateTogether() async throws {
+    let context = try makeClaudeLoginContext()
+    let accountStateURL = context.directory.url.appendingPathComponent(".claude.json")
+    let previousAccountState = Data(
+      #"{"theme":"dark","oauthAccount":{"accountUuid":"account-current","emailAddress":"current@example.com"}}"#.utf8
+    )
+    try previousAccountState.write(to: accountStateURL)
+    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: accountStateURL.path)
+    let rejectedAccountState = Data(
+      #"{"theme":"light","oauthAccount":{"accountUuid":"account-interrupted","emailAddress":"interrupted@example.com"}}"#
+        .utf8
+    )
+    let rejectedPayload = claudePayload(
+      accessToken: "interrupted-access",
+      refreshToken: "interrupted-refresh"
+    )
+    let login = AccountLoginService(managedOperation: { provider, _, preserveCredential, credentialMutation in
+      try await preserveCredential?(
+        provider,
+        .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+        context.liveCredential.value
+      )
+      credentialMutation?()
+      context.liveCredential.value = rejectedPayload
+      try rejectedAccountState.write(to: accountStateURL)
+      throw AccountLoginError.commandFailed(provider, status: 9)
+    })
+    let store = context.makeStore(login: login, accountSwitch: context.makeSwitcher())
+
+    await store.addAccount(for: .claude)
+
+    let restored = try ClaudeCredentialsStore.parse(#require(context.liveCredential.value))
+    #expect(restored.accessToken == "current-access")
+    #expect(try Data(contentsOf: accountStateURL) == previousAccountState)
+    let savedRejected = try #require(context.registry.load().first(where: { account in
+      (try? ClaudeCredentialsStore.parse(account.payload).accessToken) == "interrupted-access"
+    }))
+    // The failed login never verified that the rejected Keychain token and
+    // account-state file belonged to the same account.
+    #expect(savedRejected.claudeOAuthAccount == nil)
+    #expect(store.accountLoginErrors[.claude]?.contains("status 9") == true)
+  }
+
   @Test func signedOutOverwriteBoundarySupersedesThePreflightAccount() async throws {
     let context = try makeClaudeLoginContext()
     let rejectedPayload = claudePayload(

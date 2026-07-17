@@ -24,10 +24,26 @@ extension UsageStore {
     registryBaseline: AccountLoginRegistryBaseline?
   ) async throws {
     guard provider == .claude, let registryBaseline else { return }
-    registryBaseline.recordClaudeKeychain(payload)
-    guard let payload else { return }
-    guard let minimized = ProviderCredentialMinimizer.minimize(provider: provider, payload: payload) else {
-      if ProviderCredentialMinimizer.hasAccessToken(provider: provider, payload: payload) {
+    if let payload {
+      try await preserveClaudeCredentialAtLoginBoundary(
+        payload,
+        source: source,
+        previousClaudeLogin: previousClaudeLogin,
+        registryBaseline: registryBaseline
+      )
+    }
+    let accountState = try await currentClaudeAccountState()
+    registryBaseline.recordClaudeLogin(keychainPayload: payload, accountState: accountState)
+  }
+
+  private func preserveClaudeCredentialAtLoginBoundary(
+    _ payload: Data,
+    source: ProviderCredentialSource,
+    previousClaudeLogin: PreservedClaudeLogin?,
+    registryBaseline: AccountLoginRegistryBaseline
+  ) async throws {
+    guard let minimized = ProviderCredentialMinimizer.minimize(provider: .claude, payload: payload) else {
+      if ProviderCredentialMinimizer.hasAccessToken(provider: .claude, payload: payload) {
         throw AddedAccountImportError.preservationFailed
       }
       return
@@ -42,6 +58,7 @@ extension UsageStore {
     let verifiedProfile = profile.verified(
       for: ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
     )
+    let oauthAccount = await currentClaudeOAuthAccount(for: profile)
     if let saved = try await uniquelyMatchingSavedClaudeAccount(
       for: profile,
       previousClaudeLogin: previousClaudeLogin,
@@ -51,6 +68,7 @@ extension UsageStore {
         saved,
         payload: payload,
         profile: verifiedProfile,
+        claudeOAuthAccount: oauthAccount,
         requiresNewerGenerationEvidence: true
       )
       guard refreshed.payload == minimized else {
@@ -62,14 +80,28 @@ extension UsageStore {
     let capture = accountCapture
     let captured = try await Task.detached {
       try capture.captureRawPayload(
-        provider: provider,
+        provider: .claude,
         origin: source,
         payload: payload,
-        now: Date()
+        now: Date(),
+        claudeOAuthAccount: oauthAccount
       )
     }.value
     guard let captured else { throw AddedAccountImportError.preservationFailed }
     registryBaseline.recordClaudeBoundaryAccount(captured)
+  }
+
+  private func currentClaudeAccountState() async throws -> Data? {
+    let switcher = accountSwitch
+    return try await Task.detached {
+      try switcher.claudeAccountStateSnapshot()
+    }.value
+  }
+
+  private func currentClaudeOAuthAccount(for profile: ClaudeProfile) async -> Data? {
+    let configuration = try? await currentClaudeAccountState()
+    let candidate = configuration.flatMap { try? ClaudeCodeAccountState.oauthAccount(from: $0) } ?? nil
+    return resolvedClaudeOAuthAccount(candidate: candidate, profile: profile)
   }
 }
 
@@ -88,9 +120,12 @@ final class AccountLoginRegistryBaseline: @unchecked Sendable {
     lock.withLock { Array(registeredAccounts.values) }
   }
 
-  func recordClaudeKeychain(_ payload: Data?) {
+  func recordClaudeLogin(keychainPayload: Data?, accountState: Data?) {
     lock.withLock {
-      claudeKeychainSnapshotStorage = ClaudeKeychainLoginSnapshot(payload: payload)
+      claudeKeychainSnapshotStorage = ClaudeKeychainLoginSnapshot(
+        payload: keychainPayload,
+        accountState: accountState
+      )
     }
   }
 
@@ -100,7 +135,10 @@ final class AccountLoginRegistryBaseline: @unchecked Sendable {
 
   func recordClaudePostLoginKeychain(_ payload: Data?) {
     lock.withLock {
-      claudePostLoginKeychainSnapshotStorage = ClaudeKeychainLoginSnapshot(payload: payload)
+      claudePostLoginKeychainSnapshotStorage = ClaudeKeychainLoginSnapshot(
+        payload: payload,
+        accountState: nil
+      )
     }
   }
 
@@ -126,4 +164,5 @@ final class AccountLoginRegistryBaseline: @unchecked Sendable {
 
 struct ClaudeKeychainLoginSnapshot: Sendable {
   let payload: Data?
+  let accountState: Data?
 }

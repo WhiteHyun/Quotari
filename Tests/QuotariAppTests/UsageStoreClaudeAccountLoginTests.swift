@@ -30,6 +30,13 @@ struct UsageStoreClaudeAccountLoginTests {
     #expect(store.capturedEquivalents[live.id] != nil)
     #expect(store.accountLoginErrors[.claude] == nil)
     #expect(store.accountLoginPhases[.claude] == nil)
+    let accountState = try Data(contentsOf: context.directory.url.appendingPathComponent(".claude.json"))
+    let extractedOAuthAccount = try ClaudeCodeAccountState.oauthAccount(from: accountState)
+    let oauthAccount = try #require(extractedOAuthAccount)
+    #expect(ClaudeCodeAccountState.matches(
+      oauthAccount,
+      profile: ClaudeProfile(accountID: "account-added", email: "added@example.com")
+    ))
   }
 
   @Test func reauthenticatingTheCurrentAccountRefreshesItsSavedCopy() async throws {

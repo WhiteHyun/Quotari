@@ -10,14 +10,14 @@ extension UsageStore {
           registryBaseline.isCredentialMutationPossible,
           let keychainSnapshot = registryBaseline.claudeKeychainSnapshot
     else { return nil }
-    return await restoreExactClaudeKeychainState(
+    return await restoreExactClaudeLoginState(
       keychainSnapshot,
       postLoginSnapshot: registryBaseline.claudePostLoginKeychainSnapshot,
       dashboardSelection: dashboardSelection
     )
   }
 
-  private func restoreExactClaudeKeychainState(
+  private func restoreExactClaudeLoginState(
     _ keychainSnapshot: ClaudeKeychainLoginSnapshot,
     postLoginSnapshot: ClaudeKeychainLoginSnapshot?,
     dashboardSelection: ProviderAccount?
@@ -27,12 +27,16 @@ extension UsageStore {
     do {
       try await Task.detached {
         if let postLoginSnapshot {
-          try switcher.restoreClaudeLoginKeychain(
-            to: keychainSnapshot.payload,
-            replacing: postLoginSnapshot.payload
+          try switcher.restoreClaudeLogin(
+            keychain: keychainSnapshot.payload,
+            replacing: postLoginSnapshot.payload,
+            accountState: keychainSnapshot.accountState
           )
         } else {
-          try switcher.restoreClaudeLoginKeychain(to: keychainSnapshot.payload)
+          try switcher.restoreClaudeLogin(
+            keychain: keychainSnapshot.payload,
+            accountState: keychainSnapshot.accountState
+          )
         }
       }.value
     } catch {

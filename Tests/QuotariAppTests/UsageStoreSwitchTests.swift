@@ -297,7 +297,8 @@ extension UsageStoreSwitchTests {
       detail: "Keychain",
       capturedAt: Date(timeIntervalSince1970: 0),
       origin: .claudeKeychain(service: "Claude Code-credentials"),
-      payload: Data(#"{"claudeAiOauth":{"accessToken":"s","refreshToken":"s-ref","expiresAt":9999999999999}}"#.utf8)
+      payload: Data(#"{"claudeAiOauth":{"accessToken":"s","refreshToken":"s-ref","expiresAt":9999999999999}}"#.utf8),
+      claudeOAuthAccount: Data(#"{"accountUuid":"saved","emailAddress":"saved@example.com"}"#.utf8)
     ))
     let savedAccount = ProviderAccount(
       provider: .claude, displayName: "Saved Claude", detail: "Saved in Quotari",

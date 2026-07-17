@@ -129,6 +129,13 @@ extension UsageStore {
     let knownLiveTarget = knownLiveTarget(for: account)
     let now = Date()
     do {
+      var targetClaudeProfile = provider == .claude ? verifiedClaudeProfile(for: account) : nil
+      if provider == .claude, targetClaudeProfile == nil {
+        // Legacy rows may not have an exact oauthAccount snapshot yet. Use a
+        // freshly verified profile when available, but preserve the existing
+        // token-switch behavior during a transient profile endpoint failure.
+        targetClaudeProfile = try? await resolvedClaudeLoginProfile(for: account)
+      }
       // The write runs detached (off the main actor), and `isSwitching`
       // suppresses Quotari refreshes for the window. The switch service also
       // checks separate CLI processes; the confirmation explains its residual
@@ -137,7 +144,8 @@ extension UsageStore {
         try switcher.switchCLI(
           toRegistryAccount: id,
           now: now,
-          knownLiveTarget: knownLiveTarget
+          knownLiveTarget: knownLiveTarget,
+          targetClaudeProfile: targetClaudeProfile
         )
       }.value
       await reloadAccountsDuringSwitch()

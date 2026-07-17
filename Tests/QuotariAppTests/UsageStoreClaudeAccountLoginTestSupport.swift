@@ -93,7 +93,7 @@ struct ClaudeLoginContext: @unchecked Sendable {
       accountCapture: capture,
       accountLogin: login,
       automaticallyCapturesDiscoveredAccounts: true,
-      accountSwitch: accountSwitch,
+      accountSwitch: accountSwitch ?? makeSwitcher(),
       profileFetcher: profileFetcher ?? profiles,
       claudeCredentialLoader: loadCredentials,
       startsAutomatically: false

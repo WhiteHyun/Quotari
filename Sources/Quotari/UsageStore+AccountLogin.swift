@@ -221,6 +221,7 @@ extension UsageStore {
     registryBaseline: AccountLoginRegistryBaseline?
   ) async throws -> CapturedAccount {
     let verifiedClaudeProfile: ClaudeProfile?
+    let claudeOAuthAccount: Data?
     if result.provider == .claude {
       guard let credentials = try? ClaudeCredentialsStore.parse(result.payload) else {
         throw AddedAccountImportError.notRenewable
@@ -229,38 +230,47 @@ extension UsageStore {
       guard profile.hasStableAccountIdentity else {
         throw AddedAccountImportError.identityVerificationFailed
       }
-      verifiedClaudeProfile = profile.verified(
-        for: ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
+      let credentialFingerprint = ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
+      verifiedClaudeProfile = profile.verified(for: credentialFingerprint)
+      claudeOAuthAccount = resolvedClaudeOAuthAccount(
+        candidate: result.claudeOAuthAccount,
+        profile: profile
       )
-      if let saved = try await uniquelyMatchingSavedClaudeAccount(
+      let captured: CapturedAccount = if let saved = try await uniquelyMatchingSavedClaudeAccount(
         for: profile,
         previousClaudeLogin: previousClaudeLogin,
         registryBaseline: registryBaseline
       ) {
-        return try await refreshReauthenticatedClaudeAccount(
+        try await refreshReauthenticatedClaudeAccount(
           saved,
           payload: result.payload,
-          profile: verifiedClaudeProfile
+          profile: verifiedClaudeProfile,
+          claudeOAuthAccount: claudeOAuthAccount
+        )
+      } else {
+        try await captureAccountLoginResult(
+          result,
+          verifiedClaudeProfile: verifiedClaudeProfile,
+          claudeOAuthAccount: claudeOAuthAccount
         )
       }
+      try await synchronizeClaudeLoginState(
+        captured,
+        source: result.origin,
+        credentialFingerprint: credentialFingerprint,
+        profile: verifiedClaudeProfile
+      )
+      return captured
     } else {
       verifiedClaudeProfile = nil
+      claudeOAuthAccount = nil
     }
 
-    let capture = accountCapture
-    let captured = try await Task.detached {
-      try capture.captureRawPayload(
-        provider: result.provider,
-        origin: result.origin,
-        payload: result.payload,
-        now: Date()
-      )
-    }.value
-    guard let captured else { throw AddedAccountImportError.notRenewable }
-    if let verifiedClaudeProfile {
-      storeClaudeLoginProfile(verifiedClaudeProfile, for: captured)
-    }
-    return captured
+    return try await captureAccountLoginResult(
+      result,
+      verifiedClaudeProfile: verifiedClaudeProfile,
+      claudeOAuthAccount: claudeOAuthAccount
+    )
   }
 
   func uniquelyMatchingSavedClaudeAccount(
@@ -308,6 +318,7 @@ extension UsageStore {
     _ saved: ProviderAccount,
     payload: Data,
     profile: ClaudeProfile?,
+    claudeOAuthAccount: Data? = nil,
     requiresNewerGenerationEvidence: Bool = false
   ) async throws -> CapturedAccount {
     guard case let .quotariRegistry(id) = saved.credentialSource else {
@@ -319,6 +330,7 @@ extension UsageStore {
         id: id,
         provider: .claude,
         payload: payload,
+        claudeOAuthAccount: claudeOAuthAccount,
         requiresNewerGenerationEvidence: requiresNewerGenerationEvidence
       )
     }.value
@@ -328,7 +340,7 @@ extension UsageStore {
     return captured
   }
 
-  private func storeClaudeLoginProfile(_ profile: ClaudeProfile, for captured: CapturedAccount) {
+  func storeClaudeLoginProfile(_ profile: ClaudeProfile, for captured: CapturedAccount) {
     storeClaudeLoginProfile(profile, accountID: captured.providerAccount.id)
   }
 
@@ -355,7 +367,7 @@ extension UsageStore {
     accountLoginOutputs[provider] = nil
   }
 
-  private func resolvedClaudeLoginProfile(for saved: ProviderAccount) async throws -> ClaudeProfile {
+  func resolvedClaudeLoginProfile(for saved: ProviderAccount) async throws -> ClaudeProfile {
     let loader = claudeCredentialLoader
     guard let credentials = await Task.detached(operation: {
       loader(saved.credentialSource)
