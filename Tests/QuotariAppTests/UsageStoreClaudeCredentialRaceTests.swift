@@ -5,16 +5,13 @@ import Testing
 
 @MainActor
 struct UsageStoreClaudeCredentialRaceTests {
-  @Test func lastMinuteRotationRefreshesTheExistingSavedAccount() async throws {
+  @Test func lastMinuteRotationWithoutFreshnessEvidenceBlocksLogin() async throws {
     let context = try makeClaudeLoginContext()
     let rotatedPayload = claudePayload(
       accessToken: "rotated-current-access",
       refreshToken: "rotated-current-refresh"
     )
-    let rejectedPayload = claudePayload(
-      accessToken: "interrupted-access",
-      refreshToken: "interrupted-refresh"
-    )
+    let loginMutatedCredential = ClaudeLoginBooleanBox()
     let login = AccountLoginService(managedOperation: { provider, _, preserveCredential, credentialMutation in
       context.liveCredential.value = rotatedPayload
       try await preserveCredential?(
@@ -23,8 +20,8 @@ struct UsageStoreClaudeCredentialRaceTests {
         rotatedPayload
       )
       credentialMutation?()
-      context.liveCredential.value = rejectedPayload
-      throw AccountLoginError.commandFailed(provider, status: 9)
+      loginMutatedCredential.value = true
+      throw AccountLoginError.credentialUnavailable(provider)
     })
     let store = context.makeStore(login: login, accountSwitch: context.makeSwitcher())
 
@@ -34,10 +31,11 @@ struct UsageStoreClaudeCredentialRaceTests {
       try ClaudeCredentialsStore.parse(captured.payload)
     }
     let liveCredential = try ClaudeCredentialsStore.parse(#require(context.liveCredential.value))
-    #expect(savedCredentials.count == 2)
-    #expect(savedCredentials.contains(where: { $0.accessToken == "current-access" }))
-    #expect(savedCredentials.contains(where: { $0.accessToken == "interrupted-access" }))
+    #expect(!loginMutatedCredential.value)
+    #expect(savedCredentials.count == 1)
+    #expect(savedCredentials.first?.accessToken == "current-access")
     #expect(liveCredential.accessToken == "rotated-current-access")
+    #expect(store.accountLoginErrors[.claude]?.contains("couldn’t preserve") == true)
   }
 
   @Test func credentialChangedImmediatelyBeforeLoginIsPreservedSeparately() async throws {

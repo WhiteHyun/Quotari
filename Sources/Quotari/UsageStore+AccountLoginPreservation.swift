@@ -26,7 +26,7 @@ extension UsageStore {
     guard provider == .claude, let registryBaseline else { return }
     registryBaseline.recordClaudeKeychain(payload)
     guard let payload else { return }
-    guard ProviderCredentialMinimizer.minimize(provider: provider, payload: payload) != nil else {
+    guard let minimized = ProviderCredentialMinimizer.minimize(provider: provider, payload: payload) else {
       if ProviderCredentialMinimizer.hasAccessToken(provider: provider, payload: payload) {
         throw AddedAccountImportError.preservationFailed
       }
@@ -53,6 +53,9 @@ extension UsageStore {
         profile: verifiedProfile,
         requiresNewerGenerationEvidence: true
       )
+      guard refreshed.payload == minimized else {
+        throw AddedAccountImportError.preservationFailed
+      }
       registryBaseline.recordClaudeBoundaryAccount(refreshed)
       return
     }
