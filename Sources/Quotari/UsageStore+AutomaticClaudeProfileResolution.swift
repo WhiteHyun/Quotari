@@ -87,7 +87,7 @@ extension UsageStore {
     let fingerprint = ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
     if let cached = claudeProfiles[account.id],
        cached.fingerprint == fingerprint,
-       !cached.isEmpty {
+       cached.hasStableAccountIdentity {
       return ClaudeCaptureProfileResolution(
         profile: cached,
         credentialTransition: credentialTransition
@@ -104,7 +104,7 @@ extension UsageStore {
     }
 
     guard let fetched = try? await profileFetcher.fetchProfile(accessToken: credentials.accessToken),
-          !fetched.isEmpty,
+          fetched.hasStableAccountIdentity,
           let current = await Task.detached(operation: {
             loader(account.credentialSource)
           }).value,
