@@ -78,7 +78,7 @@ extension UsageStore {
 
   private func currentVerifiedClaudeProfile(for account: ProviderAccount) async -> ClaudeProfile? {
     guard let profile = claudeProfiles[account.id],
-          !profile.isEmpty,
+          profile.hasStableAccountIdentity,
           let expectedFingerprint = profile.fingerprint
     else { return nil }
     let loader = claudeCredentialLoader
@@ -203,6 +203,7 @@ extension UsageStore {
 
   private func verifiedClaudeProfile(for account: ProviderAccount) -> ClaudeProfile? {
     guard let profile = claudeProfiles[account.id],
+          profile.hasStableAccountIdentity,
           let expectedFingerprint = profile.fingerprint,
           let credentials = claudeCredentialLoader(account.credentialSource),
           ProviderCredentialIdentity.fingerprint(of: credentials.accessToken) == expectedFingerprint

@@ -250,12 +250,14 @@ private extension AccountSwitchService {
         underlying: "A pending Claude token grant changed during the account switch."
       )
     }
+    let currentOAuthAccount = try stableClaudeOAuthAccount(matching: current.slots, service: service, fileURL: fileURL)
     _ = try backUpResolvedClaudeSlots(
       current.resolvedSlots,
       verification: current.slots,
       keychainSource: keychainSource,
       fileSource: fileSource,
-      context: context
+      context: context,
+      claudeOAuthAccount: currentOAuthAccount
     )
     let pendingGrants = try recordDurableClaudeLivePendingGrantBackups(current.pendingGrants)
     return ClaudeSlots(
@@ -297,8 +299,12 @@ private extension AccountSwitchService {
     verification: ResolvedClaudeLivePayloads,
     keychainSource: ProviderCredentialSource,
     fileSource: ProviderCredentialSource,
-    context: ClaudeBackupContext
+    context: ClaudeBackupContext,
+    claudeOAuthAccount: Data? = nil
   ) throws -> ResolvedClaudeLivePayloads {
+    let keychainIsCanonical = verification.keychain.flatMap {
+      try? ClaudeCredentialsStore.parse($0)
+    } != nil
     // Refresh the explicitly verified row before capturing a matching mirror.
     // Its newly rotated identity then makes the mirror converge on that row
     // instead of creating a duplicate under the refresh-token fingerprint.
@@ -307,13 +313,15 @@ private extension AccountSwitchService {
         slots.file,
         verificationPayload: verification.file,
         source: fileSource,
-        context: context
+        context: context,
+        claudeOAuthAccount: keychainIsCanonical ? nil : claudeOAuthAccount
       )
       let keychain = try backedUpClaudeSlot(
         slots.keychain,
         verificationPayload: verification.keychain,
         source: keychainSource,
-        context: context
+        context: context,
+        claudeOAuthAccount: keychainIsCanonical ? claudeOAuthAccount : nil
       )
       return ResolvedClaudeLivePayloads(keychain: keychain, file: file)
     }
@@ -321,13 +329,15 @@ private extension AccountSwitchService {
       slots.keychain,
       verificationPayload: verification.keychain,
       source: keychainSource,
-      context: context
+      context: context,
+      claudeOAuthAccount: keychainIsCanonical ? claudeOAuthAccount : nil
     )
     let file = try backedUpClaudeSlot(
       slots.file,
       verificationPayload: verification.file,
       source: fileSource,
-      context: context
+      context: context,
+      claudeOAuthAccount: keychainIsCanonical ? nil : claudeOAuthAccount
     )
     return ResolvedClaudeLivePayloads(keychain: keychain, file: file)
   }
@@ -336,7 +346,8 @@ private extension AccountSwitchService {
     _ payload: Data?,
     verificationPayload: Data?,
     source: ProviderCredentialSource,
-    context: ClaudeBackupContext
+    context: ClaudeBackupContext,
+    claudeOAuthAccount: Data? = nil
   ) throws -> Data? {
     try backedUpSlot(
       payload,
@@ -347,7 +358,8 @@ private extension AccountSwitchService {
         payload: verificationPayload,
         source: source,
         knownLiveTarget: context.knownLiveTarget
-      )
+      ),
+      claudeOAuthAccount: claudeOAuthAccount
     )
   }
 

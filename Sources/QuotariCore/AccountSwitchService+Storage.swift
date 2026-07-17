@@ -44,14 +44,16 @@ extension AccountSwitchService {
     _ payload: Data?,
     origin: ProviderCredentialSource,
     now: Date,
-    refreshingTargetID: String?
+    refreshingTargetID: String?,
+    claudeOAuthAccount: Data? = nil
   ) throws -> Data? {
     try backUp(
       provider: .claude,
       payload: payload,
       origin: origin,
       now: now,
-      refreshingTargetID: refreshingTargetID
+      refreshingTargetID: refreshingTargetID,
+      claudeOAuthAccount: claudeOAuthAccount
     )
     return payload
   }

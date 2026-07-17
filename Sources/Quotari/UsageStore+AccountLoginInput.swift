@@ -70,7 +70,6 @@ extension UsageStore {
   private func appendAccountLoginOutput(_ output: String, for provider: UsageProvider) {
     var sanitizer = accountLoginOutputSanitizers[provider] ?? AccountLoginOutputSanitizer()
     let sanitized = sanitizer.append(output)
-    accountLoginOutputSanitizers[provider] = sanitizer
     let previous = accountLoginOutputs[provider] ?? ""
     let combined = previous + sanitized
     accountLoginOutputs[provider] = String(combined.suffix(12000))
@@ -79,14 +78,20 @@ extension UsageStore {
     let boundaryLength = max(authenticationCodePrompt.count, loginSuccess.count) - 1
     let recentOutput = String(previous.suffix(boundaryLength)) + sanitized
     let phase = accountLoginPhases[provider]
-    if phase == .waitingForBrowser || phase == .waitingForAuthenticationCode,
+    let canObserveLoginSuccess = phase == .waitingForBrowser
+      || phase == .waitingForAuthenticationCode
+      || phase == .completingLogin
+    if canObserveLoginSuccess,
        recentOutput.localizedCaseInsensitiveContains(loginSuccess) {
       accountLoginErrors[provider] = nil
+      sanitizer.didObserveLoginSuccess = true
       accountLoginPhases[provider] = .completingLogin
-    } else if phase == .waitingForBrowser || phase == .completingLogin,
+    } else if !sanitizer.didObserveLoginSuccess,
+              phase == .waitingForBrowser || phase == .completingLogin,
               recentOutput.localizedCaseInsensitiveContains(authenticationCodePrompt) {
       accountLoginPhases[provider] = .waitingForAuthenticationCode
     }
+    accountLoginOutputSanitizers[provider] = sanitizer
   }
 }
 
@@ -101,6 +106,7 @@ struct AccountLoginOutputSanitizer {
 
   private var state = State.text
   private var lastOutputWasNewline = false
+  var didObserveLoginSuccess = false
 
   mutating func append(_ output: String) -> String {
     var sanitized = String.UnicodeScalarView()
