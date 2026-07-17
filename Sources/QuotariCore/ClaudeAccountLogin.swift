@@ -78,16 +78,30 @@ enum LiveClaudeAccountLogin {
     }
     reportCredentialObservation(keychainRead, to: onCredentialObserved)
     try Task.checkCancellation()
-    guard status == 0 else {
-      throw AccountLoginError.commandFailed(.claude, status: status)
-    }
+    try validateLoginStatus(status)
     let payload = try await changedCredential(
       after: previousCredential,
       keychainRead: keychainRead,
       attempts: credentialReadAttempts,
       retryDelay: retryDelay
     )
-    let accountStateURL = home.appendingPathComponent(".claude.json")
+    return accountLoginResult(
+      configuration: configuration,
+      payload: payload,
+      environment: environment,
+      home: home,
+      fileManager: fileManager
+    )
+  }
+
+  private static func accountLoginResult(
+    configuration: AccountLoginConfiguration,
+    payload: Data,
+    environment: [String: String],
+    home: URL,
+    fileManager: FileManager
+  ) -> AccountLoginResult {
+    let accountStateURL = ClaudeCodeAccountState.configurationURL(environment: environment, home: home)
     let accountState = fileManager.fileExists(atPath: accountStateURL.path)
       ? try? Data(contentsOf: accountStateURL)
       : nil
@@ -103,6 +117,12 @@ enum LiveClaudeAccountLogin {
   }
 
   private static let keychainService = ClaudeCredentialsStore.keychainService
+
+  private static func validateLoginStatus(_ status: Int32) throws {
+    guard status == 0 else {
+      throw AccountLoginError.commandFailed(.claude, status: status)
+    }
+  }
 
   private static func reportCredentialObservation(
     _ keychainRead: @escaping @Sendable (String) throws -> Data?,

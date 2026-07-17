@@ -3,6 +3,35 @@ import Foundation
 import Testing
 
 struct ClaudeLoginStateRecoveryTests {
+  @Test func customConfigDirectoryAccountStateIsRestoredWithTheKeychain() throws {
+    let home = try switchTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let defaultURL = home.appendingPathComponent(".claude.json")
+    let defaultState = recoveryAccountState(id: "default", email: "default@example.com")
+    try defaultState.write(to: defaultURL)
+    let configDirectory = home.appendingPathComponent("work-config", isDirectory: true)
+    try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
+    let configuredURL = configDirectory.appendingPathComponent(".claude.json")
+    let previousState = recoveryAccountState(id: "previous", email: "previous@example.com")
+    let installedState = recoveryAccountState(id: "installed", email: "installed@example.com")
+    try installedState.write(to: configuredURL)
+    let previousKeychain = recoveryClaudePayload(access: "previous", refresh: "previous-ref")
+    let keychain = KeychainSlot(recoveryClaudePayload(access: "installed", refresh: "installed-ref"))
+    let registry = makeSwitchRegistry()
+    let service = recoveryService(
+      registry: registry,
+      environment: ["CLAUDE_CONFIG_DIR": configDirectory.path],
+      home: home,
+      keychain: keychain
+    )
+
+    try service.restoreClaudeLogin(keychain: previousKeychain, accountState: previousState)
+
+    #expect(keychain.value == previousKeychain)
+    #expect(try Data(contentsOf: configuredURL) == previousState)
+    #expect(try Data(contentsOf: defaultURL) == defaultState)
+  }
+
   @Test func restoresKeychainAndAccountStateFromTheSameBoundary() throws {
     let home = try switchTemporaryHome()
     defer { try? FileManager.default.removeItem(at: home) }
@@ -96,6 +125,7 @@ struct ClaudeLoginStateRecoveryTests {
 
 private func recoveryService(
   registry: CapturedAccountStore,
+  environment: [String: String] = [:],
   home: URL,
   keychain: KeychainSlot,
   activeCLIProcesses: @escaping @Sendable (UsageProvider) throws -> [String] = { _ in [] }
@@ -106,7 +136,7 @@ private func recoveryService(
       capturedAccounts: registry,
       claudeKeychainRead: { _ in keychain.value }
     ),
-    environment: [:],
+    environment: environment,
     home: home,
     keychainRead: { _ in keychain.value },
     keychainWrite: { data, _ in keychain.value = data },

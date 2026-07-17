@@ -11,7 +11,7 @@ extension AccountSwitchService {
     guard saved.claudeOAuthAccount != nil || targetProfile != nil else {
       throw AccountSwitchError.claudeAccountIdentityUnavailable
     }
-    let url = home.appendingPathComponent(".claude.json")
+    let url = ClaudeCodeAccountState.configurationURL(environment: environment, home: home)
     let previous = try readFile(url)
     let template: Data?
     do {

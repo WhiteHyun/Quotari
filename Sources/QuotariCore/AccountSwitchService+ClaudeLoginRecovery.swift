@@ -73,7 +73,7 @@ extension AccountSwitchService {
   }
 
   public func claudeAccountStateSnapshot() throws -> Data? {
-    try readFile(home.appendingPathComponent(".claude.json"))
+    try readFile(ClaudeCodeAccountState.configurationURL(environment: environment, home: home))
   }
 
   /// Restores the exact shared Claude login state observed immediately before
@@ -144,7 +144,7 @@ extension AccountSwitchService {
     expectation: ClaudeLoginRecoveryExpectation
   ) throws -> ClaudeLoginRecovery {
     let service = ClaudeCredentialsStore.keychainService
-    let accountStateURL = home.appendingPathComponent(".claude.json")
+    let accountStateURL = ClaudeCodeAccountState.configurationURL(environment: environment, home: home)
     try requireCLIInactive(.claude)
     let installedKeychain = try readKeychain(service)
     if case let .replaceObservedCredential(observed) = expectation,

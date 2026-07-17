@@ -1,11 +1,22 @@
 import Foundation
 
 /// Reads and replaces Claude Code's non-secret account identity snapshot in
-/// `~/.claude.json`. Claude authenticates with the Keychain credential, but
+/// `~/.claude.json` or `$CLAUDE_CONFIG_DIR/.claude.json`. Claude authenticates with the Keychain credential, but
 /// `claude auth status` and new terminal sessions label that credential from
 /// this separate `oauthAccount` object, so an account switch must keep both in
 /// sync.
 public enum ClaudeCodeAccountState {
+  static func configurationURL(environment: [String: String], home: URL) -> URL {
+    let configuredDirectory = environment["CLAUDE_CONFIG_DIR"]?
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let directory = if let configuredDirectory, !configuredDirectory.isEmpty {
+      URL(fileURLWithPath: configuredDirectory, isDirectory: true)
+    } else {
+      home
+    }
+    return directory.appendingPathComponent(".claude.json")
+  }
+
   public static func oauthAccount(from configuration: Data?) throws -> Data? {
     guard let configuration else { return nil }
     let root = try jsonObject(configuration)

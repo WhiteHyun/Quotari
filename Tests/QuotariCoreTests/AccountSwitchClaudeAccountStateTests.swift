@@ -3,6 +3,38 @@ import Foundation
 import Testing
 
 struct AccountSwitchClaudeAccountStateTests {
+  @Test func customConfigDirectoryReceivesTheSwitchedTerminalIdentity() throws {
+    let registry = makeSwitchRegistry()
+    let saved = try savedClaudeAccount(registry: registry)
+    let home = try switchTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let defaultURL = home.appendingPathComponent(".claude.json")
+    let defaultState = accountState(id: "default", email: "default@example.com")
+    try writeAccountState(defaultState, to: defaultURL)
+    let configDirectory = home.appendingPathComponent("work-config", isDirectory: true)
+    try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
+    let configuredURL = configDirectory.appendingPathComponent(".claude.json")
+    try writeAccountState(accountState(id: "old", email: "old@example.com"), to: configuredURL)
+    let slot = KeychainSlot(claudePayload(access: "live", refresh: "live-ref"))
+    let service = switcher(
+      registry: registry,
+      environment: ["CLAUDE_CONFIG_DIR": configDirectory.path],
+      home: home,
+      keychain: slot
+    )
+
+    try service.switchCLI(toRegistryAccount: saved.id, now: .distantPast)
+
+    let configured = try #require(
+      try ClaudeCodeAccountState.oauthAccount(from: Data(contentsOf: configuredURL))
+    )
+    #expect(ClaudeCodeAccountState.matches(
+      configured,
+      profile: ClaudeProfile(accountID: "saved-id", email: "saved@example.com")
+    ))
+    #expect(try Data(contentsOf: defaultURL) == defaultState)
+  }
+
   @Test func legacyAccountWithoutAVerifiedIdentityFailsBeforeCredentialWrites() throws {
     let registry = makeSwitchRegistry()
     let saved = try savedClaudeAccount(registry: registry, claudeOAuthAccount: nil)
@@ -146,6 +178,7 @@ struct AccountSwitchClaudeAccountStateTests {
 
   private func switcher(
     registry: CapturedAccountStore,
+    environment: [String: String] = [:],
     home: URL,
     keychain: KeychainSlot,
     activeCLIProcesses: @escaping @Sendable (UsageProvider) throws -> [String] = { _ in [] },
@@ -157,7 +190,7 @@ struct AccountSwitchClaudeAccountStateTests {
         capturedAccounts: registry,
         claudeKeychainRead: { _ in keychain.value }
       ),
-      environment: [:],
+      environment: environment,
       home: home,
       keychainRead: { _ in keychain.value },
       keychainWrite: { data, _ in keychain.value = data },

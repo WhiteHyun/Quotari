@@ -290,6 +290,51 @@ extension ClaudeAccountLoginTests {
   }
 }
 
+struct ClaudeAccountLoginConfigurationTests {
+  @Test func loginCapturesAccountStateFromTheCustomConfigDirectory() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("quotari-login-claude-config-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let executable = directory.appendingPathComponent("fake-claude")
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let configDirectory = directory.appendingPathComponent("work-config", isDirectory: true)
+    try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true)
+    let expectedAccount = try ClaudeCodeAccountState.synthesizedOAuthAccount(
+      for: ClaudeProfile(accountID: "work", email: "work@example.com")
+    )
+    let configuredState = try ClaudeCodeAccountState.replacingOAuthAccount(
+      in: nil,
+      with: expectedAccount
+    )
+    try configuredState.write(to: configDirectory.appendingPathComponent(".claude.json"))
+    let defaultAccount = try ClaudeCodeAccountState.synthesizedOAuthAccount(
+      for: ClaudeProfile(accountID: "default", email: "default@example.com")
+    )
+    try ClaudeCodeAccountState.replacingOAuthAccount(in: nil, with: defaultAccount)
+      .write(to: directory.appendingPathComponent(".claude.json"))
+    let oldCredential = claudeCredential(accessToken: "old", refreshToken: "old-ref")
+    let newCredential = claudeCredential(accessToken: "new", refreshToken: "new-ref")
+    let credentials = CredentialSequence([oldCredential, oldCredential, newCredential])
+
+    let result = try await LiveClaudeAccountLogin.perform(
+      environment: [
+        "CLAUDE_CONFIG_DIR": configDirectory.path,
+        "QUOTARI_CLAUDE_PATH": executable.path,
+        "PATH": "/usr/bin:/bin",
+      ],
+      home: directory,
+      keychainRead: { _ in credentials.next() },
+      activeCLIProcesses: { _ in [] },
+      credentialReadAttempts: 1,
+      retryDelay: .zero
+    )
+
+    #expect(result.claudeOAuthAccount == expectedAccount)
+  }
+}
+
 private final class CredentialSequence: @unchecked Sendable {
   private let lock = NSLock()
   private var values: [Data]
