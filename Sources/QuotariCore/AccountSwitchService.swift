@@ -16,8 +16,9 @@ public struct KnownLiveClaudeTarget: Equatable, Sendable {
 
 /// Switches the account a CLI actually uses: writes a saved (registry)
 /// account's credentials into the CLI's own credential slot — the Claude Code
-/// keychain item AND `~/.claude/.credentials.json` when present (both, so the
-/// CLI's read-precedence can't resurrect the old login), or the effective
+/// keychain item, `~/.claude/.credentials.json` when present, AND the matching
+/// `~/.claude.json.oauthAccount` identity (so new terminals label the switched
+/// credential correctly), or the effective
 /// Codex's configured file/keyring/auto credential backend (scoped by the
 /// effective `CODEX_HOME`).
 ///
@@ -123,7 +124,8 @@ public extension AccountSwitchService {
   func switchCLI(
     toRegistryAccount id: String,
     now: Date,
-    knownLiveTarget: KnownLiveClaudeTarget? = nil
+    knownLiveTarget: KnownLiveClaudeTarget? = nil,
+    targetClaudeProfile: ClaudeProfile? = nil
   ) throws -> ProviderCredentialSource {
     let provider = capturedAccounts.account(id: id)?.provider
     if let provider {
@@ -134,7 +136,8 @@ public extension AccountSwitchService {
       return try switchClaude(
         registryID: id,
         now: now,
-        knownLiveTarget: knownLiveTarget
+        knownLiveTarget: knownLiveTarget,
+        targetProfile: targetClaudeProfile
       )
     case .codex:
       return try switchCodex(registryID: id, now: now)
@@ -150,7 +153,8 @@ private extension AccountSwitchService {
   private func switchClaude(
     registryID: String,
     now: Date,
-    knownLiveTarget: KnownLiveClaudeTarget?
+    knownLiveTarget: KnownLiveClaudeTarget?,
+    targetProfile: ClaudeProfile?
   ) throws -> ProviderCredentialSource {
     let current = try backedUpClaudeSlots(
       registryID: registryID,
@@ -166,6 +170,10 @@ private extension AccountSwitchService {
     // Re-read the target AFTER backups: a backup may have refreshed the same
     // registry id with a fresher copy of the target account.
     let savedPayload = try targetPayload(registryID: registryID)
+    let accountState = try claudeAccountStateInstallation(
+      registryID: registryID,
+      targetProfile: targetProfile
+    )
 
     // Write only the stores that already existed, so the switch never leaves
     // an orphaned credential in a store the user wasn't using. If NEITHER
@@ -188,7 +196,8 @@ private extension AccountSwitchService {
       service: service,
       fileURL: fileURL,
       previous: ResolvedClaudeLivePayloads(keychain: keychainNow, file: fileNow),
-      replacement: ResolvedClaudeLivePayloads(keychain: mergedKeychain, file: mergedFile)
+      replacement: ResolvedClaudeLivePayloads(keychain: mergedKeychain, file: mergedFile),
+      accountState: accountState
     ))
     discardClaudeLivePendingGrantsAfterSuccessfulSwitch(current.pendingGrants)
     // The CLI reads the keychain first when both exist; that's the store the

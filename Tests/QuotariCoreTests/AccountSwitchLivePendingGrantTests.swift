@@ -198,7 +198,10 @@ private extension AccountSwitchLivePendingGrantTests {
       detail: nil,
       capturedAt: Date(timeIntervalSince1970: 0),
       origin: origin,
-      payload: payload
+      payload: payload,
+      claudeOAuthAccount: Data(
+        #"{"accountUuid":"verified-target","emailAddress":"verified@example.com"}"#.utf8
+      )
     )
     try registry.save(target)
     return target

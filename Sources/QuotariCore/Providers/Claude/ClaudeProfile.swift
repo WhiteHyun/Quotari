@@ -8,6 +8,7 @@ public struct ClaudeProfile: Codable, Equatable, Sendable {
   /// token fingerprints, this survives ordinary access/refresh rotation.
   public var accountID: String?
   public var email: String?
+  public var organizationID: String?
   public var organizationName: String?
   /// The access-token fingerprint this profile was fetched for. Drives retry
   /// eligibility (any token change re-enables one fetch) and recognizing a
@@ -17,11 +18,13 @@ public struct ClaudeProfile: Codable, Equatable, Sendable {
   public init(
     accountID: String? = nil,
     email: String? = nil,
+    organizationID: String? = nil,
     organizationName: String? = nil,
     fingerprint: String? = nil
   ) {
     self.accountID = accountID
     self.email = email
+    self.organizationID = organizationID
     self.organizationName = organizationName
     self.fingerprint = fingerprint
   }
@@ -29,6 +32,7 @@ public struct ClaudeProfile: Codable, Equatable, Sendable {
   public var isEmpty: Bool {
     (accountID?.isEmpty ?? true)
       && (email?.isEmpty ?? true)
+      && (organizationID?.isEmpty ?? true)
       && (organizationName?.isEmpty ?? true)
   }
 }
@@ -67,6 +71,7 @@ public struct ClaudeProfileFetcher: ClaudeProfileFetching {
     return ClaudeProfile(
       accountID: string(account?["uuid"]),
       email: string(account?["email"]) ?? string(root["account_email"]),
+      organizationID: string(organization?["uuid"]),
       organizationName: string(organization?["name"]) ?? string(root["organization_name"])
     )
   }

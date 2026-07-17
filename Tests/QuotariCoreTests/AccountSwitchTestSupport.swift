@@ -37,6 +37,18 @@ func savedCodexAccount(registry: CapturedAccountStore) throws -> CapturedAccount
 }
 
 func savedClaudeAccount(registry: CapturedAccountStore) throws -> CapturedAccount {
+  try savedClaudeAccount(
+    registry: registry,
+    claudeOAuthAccount: Data(
+      #"{"accountUuid":"saved-id","emailAddress":"saved@example.com"}"#.utf8
+    )
+  )
+}
+
+func savedClaudeAccount(
+  registry: CapturedAccountStore,
+  claudeOAuthAccount: Data?
+) throws -> CapturedAccount {
   let saved = CapturedAccount(
     id: "claude:fp-saved",
     provider: .claude,
@@ -45,7 +57,8 @@ func savedClaudeAccount(registry: CapturedAccountStore) throws -> CapturedAccoun
     capturedAt: Date(timeIntervalSince1970: 0),
     origin: .claudeKeychain(service: "Claude Code-credentials"),
     payload: Data(#"{"claudeAiOauth":{"accessToken":"saved-tok","refreshToken":"saved-ref","expiresAt":9999999999999}}"#
-      .utf8)
+      .utf8),
+    claudeOAuthAccount: claudeOAuthAccount
   )
   try registry.save(saved)
   return saved

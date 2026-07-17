@@ -57,6 +57,12 @@ struct SecureCredentialFileWriter: Sendable {
     }
   }
 
+  func remove(_ destination: URL) throws {
+    guard unlink(destination.path) == 0 || errno == ENOENT else {
+      throw Self.posixError()
+    }
+  }
+
   func discard(_ temporary: URL?) {
     guard let temporary else { return }
     try? FileManager.default.removeItem(at: temporary)

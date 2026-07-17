@@ -23,7 +23,11 @@ struct ProviderAccountDiscoveryTests {
     let discovery = ProviderAccountDiscovery(
       environment: ["CODEX_HOME": customCodexHome.path],
       home: home.url,
-      keychainData: { nil }
+      keychainData: { nil },
+      capturedAccounts: CapturedAccountStore(
+        keychain: InMemoryKeychain().store,
+        service: "Discovery-Codex-\(UUID().uuidString)"
+      )
     )
 
     let accounts = await discovery.accounts(for: .codex)
@@ -45,7 +49,11 @@ struct ProviderAccountDiscoveryTests {
     let discovery = ProviderAccountDiscovery(
       environment: [ClaudeCredentialsStore.tokenEnvKey: "env-token"],
       home: home.url,
-      keychainData: { keychainData }
+      keychainData: { keychainData },
+      capturedAccounts: CapturedAccountStore(
+        keychain: InMemoryKeychain().store,
+        service: "Discovery-Claude-\(UUID().uuidString)"
+      )
     )
 
     let accounts = await discovery.accounts(for: .claude)

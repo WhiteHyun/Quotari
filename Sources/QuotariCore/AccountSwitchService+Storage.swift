@@ -61,7 +61,8 @@ extension AccountSwitchService {
     payload: Data?,
     origin: ProviderCredentialSource,
     now: Date,
-    refreshingTargetID: String? = nil
+    refreshingTargetID: String? = nil,
+    claudeOAuthAccount: Data? = nil
   ) throws {
     guard let payload else { return }
     // Renewability — not a resolvable identity — is the bar: a renewable
@@ -81,9 +82,20 @@ extension AccountSwitchService {
     }
     do {
       if let refreshingTargetID {
-        try capture.refreshCapturedAccount(id: refreshingTargetID, provider: provider, payload: payload)
+        try capture.refreshCapturedAccount(
+          id: refreshingTargetID,
+          provider: provider,
+          payload: payload,
+          claudeOAuthAccount: claudeOAuthAccount
+        )
       } else {
-        try capture.captureRawPayload(provider: provider, origin: origin, payload: payload, now: now)
+        try capture.captureRawPayload(
+          provider: provider,
+          origin: origin,
+          payload: payload,
+          now: now,
+          claudeOAuthAccount: claudeOAuthAccount
+        )
       }
     } catch {
       throw AccountSwitchError.backupFailed(underlying: error.localizedDescription)

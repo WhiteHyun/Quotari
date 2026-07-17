@@ -4,15 +4,18 @@ public struct AccountLoginResult: Sendable {
   public let provider: UsageProvider
   public let origin: ProviderCredentialSource
   public let payload: Data
+  public let claudeOAuthAccount: Data?
 
   public init(
     provider: UsageProvider,
     origin: ProviderCredentialSource,
-    payload: Data
+    payload: Data,
+    claudeOAuthAccount: Data? = nil
   ) {
     self.provider = provider
     self.origin = origin
     self.payload = payload
+    self.claudeOAuthAccount = claudeOAuthAccount
   }
 }
 

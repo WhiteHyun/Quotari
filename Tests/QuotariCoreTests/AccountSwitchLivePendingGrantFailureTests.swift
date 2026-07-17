@@ -54,6 +54,9 @@ struct AccountSwitchPendingFailureTests {
         accessToken: "saved-second",
         refreshToken: "saved-second-ref",
         expiresAt: 200_000
+      ),
+      claudeOAuthAccount: Data(
+        #"{"accountUuid":"second","emailAddress":"second@example.com"}"#.utf8
       )
     )
     try fixture.registry.save(second)

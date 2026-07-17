@@ -87,7 +87,19 @@ enum LiveClaudeAccountLogin {
       attempts: credentialReadAttempts,
       retryDelay: retryDelay
     )
-    return AccountLoginResult(provider: .claude, origin: configuration.origin, payload: payload)
+    let accountStateURL = home.appendingPathComponent(".claude.json")
+    let accountState = fileManager.fileExists(atPath: accountStateURL.path)
+      ? try? Data(contentsOf: accountStateURL)
+      : nil
+    let oauthAccount = accountState.flatMap { configuration in
+      try? ClaudeCodeAccountState.oauthAccount(from: configuration)
+    }
+    return AccountLoginResult(
+      provider: .claude,
+      origin: configuration.origin,
+      payload: payload,
+      claudeOAuthAccount: oauthAccount
+    )
   }
 
   private static let keychainService = ClaudeCredentialsStore.keychainService
