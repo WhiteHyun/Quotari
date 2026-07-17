@@ -17,30 +17,50 @@ public struct AccountLoginResult: Sendable {
 }
 
 public typealias AccountLoginOutputHandler = @Sendable (String) async -> Void
-
+public typealias CredentialPreservationHandler = @Sendable (
+  UsageProvider, ProviderCredentialSource, Data?
+) async throws -> Void
+public typealias CredentialMutationHandler = @Sendable () -> Void
+public typealias CredentialObservationHandler = @Sendable (Data?) -> Void
 public enum AccountLoginError: LocalizedError, Sendable {
   case isolatedLoginUnavailable(UsageProvider)
   case executableNotFound(UsageProvider)
   case commandFailed(UsageProvider, status: Int32)
+  case cliActivityCheckFailed(UsageProvider, underlying: String)
+  case cliStillRunning(UsageProvider, processes: [String])
+  case credentialReadFailed(UsageProvider, underlying: String)
+  case credentialChangedDuringPreparation(UsageProvider)
+  case loginTimedOut(UsageProvider)
   case credentialUnavailable(UsageProvider)
+  case credentialUnchanged(UsageProvider)
   case temporaryCredentialCleanupFailed(UsageProvider)
 
   public var errorDescription: String? {
     switch self {
     case let .isolatedLoginUnavailable(provider):
-      if provider == .claude {
-        "Claude Code uses one shared macOS Keychain login. Its safe setup-token flow doesn’t provide a renewable "
-          + "credential, so Quotari keeps Add Account disabled instead of replacing your active CLI account."
-      } else {
-        "Quotari can’t safely isolate \(provider.accountLoginCLIName) login yet, so it won’t risk replacing your "
-          + "current CLI account."
-      }
+      "Quotari can’t safely start \(provider.accountLoginCLIName) login with this configuration, so it won’t risk "
+        + "replacing your current CLI account."
     case let .executableNotFound(provider):
       "Couldn’t find the \(provider.accountLoginCLIName) CLI. Install it or add it to PATH, then try again."
     case let .commandFailed(provider, status):
       "\(provider.accountLoginCLIName) login didn’t finish successfully (status \(status))."
+    case let .cliActivityCheckFailed(provider, underlying):
+      "Quotari couldn’t verify whether \(provider.accountLoginCLIName) is running, so it did not start login: "
+        + underlying
+    case let .cliStillRunning(provider, processes):
+      "Close \(provider.accountLoginCLIName) before adding another account. Running: \(processes.joined(separator: ", "))."
+    case let .credentialReadFailed(provider, underlying):
+      "Quotari couldn’t read the current \(provider.accountLoginCLIName) credential, so it did not start login: "
+        + underlying
+    case let .credentialChangedDuringPreparation(provider):
+      "The active \(provider.accountLoginCLIName) account kept changing while Quotari prepared login. Try again."
+    case let .loginTimedOut(provider):
+      "\(provider.accountLoginCLIName) login timed out. Start it again when you’re ready to finish in the browser."
     case let .credentialUnavailable(provider):
       "\(provider.accountLoginCLIName) login finished without a reusable account credential."
+    case let .credentialUnchanged(provider):
+      "\(provider.accountLoginCLIName) login finished, but the active account did not change. Choose a different "
+        + "account in the browser and try again."
     case let .temporaryCredentialCleanupFailed(provider):
       "Quotari couldn’t securely remove the temporary \(provider.accountLoginCLIName) login credential."
     }
@@ -55,14 +75,35 @@ public enum AccountLoginError: LocalizedError, Sendable {
 public struct AccountLoginService: Sendable {
   private let operation: @Sendable (
     UsageProvider,
-    AccountLoginOutputHandler?
+    AccountLoginOutputHandler?,
+    AccountLoginInput?,
+    CredentialPreservationHandler?,
+    CredentialMutationHandler?,
+    CredentialObservationHandler?
   ) async throws -> AccountLoginResult
   private let supportedProviders: Set<UsageProvider>
 
   public init() {
-    supportedProviders = [.codex]
-    operation = { provider, onOutput in
-      try await IsolatedAccountLogin.perform(provider: provider, onOutput: onOutput)
+    supportedProviders = Set(UsageProvider.allCases)
+    operation = { provider, onOutput, input, preserveCredential, credentialMutation, credentialObservation in
+      switch provider {
+      case .claude:
+        try await LiveClaudeAccountLogin.perform(
+          beforeCredentialOverwrite: { payload in
+            try await preserveCredential?(
+              .claude,
+              .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+              payload
+            )
+          },
+          onLoginStarted: credentialMutation,
+          onCredentialObserved: credentialObservation,
+          onOutput: onOutput,
+          input: input
+        )
+      case .codex:
+        try await IsolatedAccountLogin.perform(provider: provider, onOutput: onOutput, input: input)
+      }
     }
   }
 
@@ -70,7 +111,7 @@ public struct AccountLoginService: Sendable {
     operation: @escaping @Sendable (UsageProvider) async throws -> AccountLoginResult
   ) {
     supportedProviders = Set(UsageProvider.allCases)
-    self.operation = { provider, _ in try await operation(provider) }
+    self.operation = { provider, _, _, _, _, _ in try await operation(provider) }
   }
 
   public init(
@@ -80,7 +121,38 @@ public struct AccountLoginService: Sendable {
     ) async throws -> AccountLoginResult
   ) {
     supportedProviders = Set(UsageProvider.allCases)
-    operation = streamingOperation
+    operation = { provider, onOutput, _, _, _, _ in
+      try await streamingOperation(provider, onOutput)
+    }
+  }
+
+  public init(
+    managedOperation: @escaping @Sendable (
+      UsageProvider,
+      AccountLoginOutputHandler?,
+      CredentialPreservationHandler?,
+      CredentialMutationHandler?
+    ) async throws -> AccountLoginResult
+  ) {
+    supportedProviders = Set(UsageProvider.allCases)
+    operation = { provider, onOutput, _, preserveCredential, credentialMutation, _ in
+      try await managedOperation(provider, onOutput, preserveCredential, credentialMutation)
+    }
+  }
+
+  public init(
+    interactiveOperation: @escaping @Sendable (
+      UsageProvider,
+      AccountLoginOutputHandler?,
+      AccountLoginInput?,
+      CredentialPreservationHandler?,
+      CredentialMutationHandler?
+    ) async throws -> AccountLoginResult
+  ) {
+    supportedProviders = Set(UsageProvider.allCases)
+    operation = { provider, onOutput, input, preserveCredential, credentialMutation, _ in
+      try await interactiveOperation(provider, onOutput, input, preserveCredential, credentialMutation)
+    }
   }
 
   public func supports(provider: UsageProvider) -> Bool {
@@ -94,12 +166,23 @@ public struct AccountLoginService: Sendable {
 
   public func login(
     provider: UsageProvider,
-    onOutput: AccountLoginOutputHandler? = nil
+    onOutput: AccountLoginOutputHandler? = nil,
+    input: AccountLoginInput? = nil,
+    beforeCredentialOverwrite: CredentialPreservationHandler? = nil,
+    onCredentialMutationPossible: CredentialMutationHandler? = nil,
+    onCredentialObserved: CredentialObservationHandler? = nil
   ) async throws -> AccountLoginResult {
     guard supports(provider: provider) else {
       throw AccountLoginError.isolatedLoginUnavailable(provider)
     }
-    return try await operation(provider, onOutput)
+    return try await operation(
+      provider,
+      onOutput,
+      input,
+      beforeCredentialOverwrite,
+      onCredentialMutationPossible,
+      onCredentialObserved
+    )
   }
 }
 
@@ -184,7 +267,8 @@ enum IsolatedAccountLogin {
 
   static func perform(
     provider: UsageProvider,
-    onOutput: AccountLoginOutputHandler? = nil
+    onOutput: AccountLoginOutputHandler? = nil,
+    input: AccountLoginInput? = nil
   ) async throws -> AccountLoginResult {
     let fileManager = FileManager.default
     return try await perform(
@@ -193,7 +277,8 @@ enum IsolatedAccountLogin {
       home: fileManager.homeDirectoryForCurrentUser,
       temporaryDirectory: fileManager.temporaryDirectory,
       fileManager: fileManager,
-      onOutput: onOutput
+      onOutput: onOutput,
+      input: input
     )
   }
 
@@ -203,7 +288,8 @@ enum IsolatedAccountLogin {
     home: URL,
     temporaryDirectory: URL,
     fileManager: FileManager = .default,
-    onOutput: AccountLoginOutputHandler? = nil
+    onOutput: AccountLoginOutputHandler? = nil,
+    input: AccountLoginInput? = nil
   ) async throws -> AccountLoginResult {
     let root = temporaryDirectory
       .appendingPathComponent("Quotari-AddAccount-\(UUID().uuidString)", isDirectory: true)
@@ -229,7 +315,7 @@ enum IsolatedAccountLogin {
         configuration: configuration,
         executable: executable,
         environment: environment,
-        onOutput: onOutput
+        observers: AccountLoginCommandObservers(output: onOutput, input: input)
       ))
     } catch {
       outcome = .failure(error)
@@ -248,7 +334,7 @@ enum IsolatedAccountLogin {
     configuration: AccountLoginConfiguration,
     executable: URL,
     environment: [String: String],
-    onOutput: AccountLoginOutputHandler?
+    observers: AccountLoginCommandObservers
   ) async throws -> AccountLoginResult {
     var loginEnvironment = environment
     configuration.isolatedEnvironment.forEach { loginEnvironment[$0.key] = $0.value }
@@ -264,7 +350,7 @@ enum IsolatedAccountLogin {
       arguments: configuration.arguments,
       environment: loginEnvironment,
       currentDirectory: configuration.authDirectory.deletingLastPathComponent(),
-      onOutput: onOutput
+      observers: observers
     )
     try Task.checkCancellation()
     guard status == 0 else {
@@ -278,86 +364,5 @@ enum IsolatedAccountLogin {
       origin: configuration.origin,
       payload: payload
     )
-  }
-
-  private static func runLoginCommand(
-    executable: URL,
-    arguments: [String],
-    environment: [String: String],
-    currentDirectory: URL,
-    onOutput: AccountLoginOutputHandler?
-  ) async throws -> Int32 {
-    let process = Process()
-    // Run the CLI itself so cancellation terminates the process that owns the
-    // OAuth callback and credential write, rather than only a TTY wrapper.
-    process.executableURL = executable
-    process.arguments = arguments
-    process.environment = environment
-    process.currentDirectoryURL = currentDirectory
-    process.standardInput = FileHandle.nullDevice
-    let outputPipe = onOutput.map { _ in Pipe() }
-    process.standardOutput = outputPipe?.fileHandleForWriting ?? FileHandle.nullDevice
-    process.standardError = outputPipe?.fileHandleForWriting ?? FileHandle.nullDevice
-    let box = AccountLoginProcessBox(process)
-    let outputReader = outputPipe.flatMap { pipe in
-      onOutput.map { AccountLoginOutputReader(pipe: pipe, handler: $0) }
-    }
-    outputReader?.start()
-
-    let status: Int32
-    do {
-      status = try await withTaskCancellationHandler {
-        try Task.checkCancellation()
-        return try await withCheckedThrowingContinuation { continuation in
-          process.terminationHandler = { finished in
-            continuation.resume(returning: finished.terminationStatus)
-          }
-          do {
-            try box.run()
-            try? outputPipe?.fileHandleForWriting.close()
-          } catch {
-            process.terminationHandler = nil
-            try? outputPipe?.fileHandleForWriting.close()
-            continuation.resume(throwing: error)
-          }
-        }
-      } onCancel: {
-        box.cancel()
-      }
-    } catch {
-      outputReader?.cancel()
-      throw error
-    }
-    await outputReader?.finish()
-    return status
-  }
-}
-
-private final class AccountLoginProcessBox: @unchecked Sendable {
-  private let lock = NSLock()
-  private let process: Process
-  private var cancelled = false
-
-  init(_ process: Process) {
-    self.process = process
-  }
-
-  func run() throws {
-    try lock.withLock {
-      if cancelled {
-        throw CancellationError()
-      }
-      try process.run()
-    }
-  }
-
-  func cancel() {
-    let shouldTerminate = lock.withLock {
-      cancelled = true
-      return process.isRunning
-    }
-    if shouldTerminate {
-      process.terminate()
-    }
   }
 }

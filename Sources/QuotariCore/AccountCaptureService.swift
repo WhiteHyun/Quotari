@@ -26,7 +26,7 @@ public enum AccountCaptureError: LocalizedError, Sendable {
 /// login. This is the "save" half of multi-account support; switching the
 /// live credential back is a separate concern.
 public struct AccountCaptureService: Sendable {
-  private let capturedAccounts: CapturedAccountStore
+  let capturedAccounts: CapturedAccountStore
   private let claudeKeychainRead: @Sendable (String) -> Data?
   private let codexKeychainRead: @Sendable (String, String) -> Data?
 
@@ -105,8 +105,7 @@ public struct AccountCaptureService: Sendable {
 
   /// Saves an already-read raw payload into the registry (minimizing it
   /// first), for callers that must back up the exact bytes they are about to
-  /// overwrite — the switch reads the slot once, throwing, then hands those
-  /// bytes here. Returns nil (nothing durable to preserve) for an
+  /// overwrite — the switch hands those exact bytes here. Returns nil for an
   /// unrenewable or wrong-shaped payload; throws only on a keychain fault.
   @discardableResult
   public func captureRawPayload(

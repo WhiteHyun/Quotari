@@ -20,6 +20,81 @@ extension AccountSwitchService {
     }
   }
 
+  /// Restores the exact Keychain state observed immediately before Claude's
+  /// browser login started. Before replacing a different renewable credential,
+  /// it saves that credential to Quotari: a cancelled or failed CLI command can
+  /// still have completed a token rotation, and that pair may be the account's
+  /// only usable generation. The compare-before-write helpers leave a
+  /// concurrently changed credential untouched.
+  public func restoreClaudeLoginKeychain(to previous: Data?) throws {
+    try restoreClaudeLoginKeychain(to: previous, expectation: .preserveInstalledCredential)
+  }
+
+  /// Restores only when the keychain still contains the exact generation
+  /// observed when Quotari's login attempt ended. This permits rollback of an
+  /// unrenewable failed-login payload without discarding a later external login.
+  public func restoreClaudeLoginKeychain(
+    to previous: Data?,
+    replacing observedPostLogin: Data?
+  ) throws {
+    try restoreClaudeLoginKeychain(
+      to: previous,
+      expectation: .replaceObservedCredential(observedPostLogin)
+    )
+  }
+
+  private func restoreClaudeLoginKeychain(
+    to previous: Data?,
+    expectation: ClaudeLoginRecoveryExpectation
+  ) throws {
+    let service = ClaudeCredentialsStore.keychainService
+    try requireCLIInactive(.claude)
+    let installed = try readKeychain(service)
+    guard installed != previous else { return }
+    if case let .replaceObservedCredential(observed) = expectation,
+       installed != observed {
+      throw AccountSwitchError.concurrentCredentialChange
+    }
+    let canSkipUnrenewableBackup = if case .replaceObservedCredential = expectation {
+      true
+    } else {
+      false
+    }
+    if !canSkipUnrenewableBackup
+      || installed.map({
+        ProviderCredentialMinimizer.minimize(provider: .claude, payload: $0) != nil
+      }) == true {
+      try backUp(
+        provider: .claude,
+        payload: installed,
+        origin: .claudeKeychain(service: service),
+        now: Date()
+      )
+    }
+    switch (previous, installed) {
+    case let (previous?, installed?):
+      try restoreClaudeKeychain(previous, replacing: installed, service: service)
+    case let (previous?, nil):
+      // The CLI is a separate process and Keychain has no compare-and-swap.
+      // Narrow the empty-slot race with the same activity/read interlock used
+      // by normal switches immediately before recreating the item.
+      try requireCLIInactive(.claude)
+      guard try readKeychain(service) == nil else {
+        throw AccountSwitchError.concurrentCredentialChange
+      }
+      try writeClaudeKeychain(previous, replacing: nil, service: service)
+    case let (nil, installed?):
+      try removeCreatedClaudeKeychain(replacing: installed, service: service)
+    case (nil, nil):
+      return
+    }
+  }
+
+  private enum ClaudeLoginRecoveryExpectation {
+    case preserveInstalledCredential
+    case replaceObservedCredential(Data?)
+  }
+
   func installClaudeCredentials(_ installation: ClaudeCredentialInstallation) throws {
     let preparedFile = try prepareCredentialFile(
       installation.replacement.file,

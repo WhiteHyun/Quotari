@@ -137,6 +137,46 @@ struct CapturedAccountStoreTests {
     #expect(makeStore(InMemoryKeychain()).load().isEmpty)
   }
 
+  @Test func authoritativeRegistrySnapshotFailsWhenTheIndexCannotBeRead() throws {
+    let keychain = InMemoryKeychain()
+    let store = CapturedAccountStore(keychain: keychain.store, service: "SnapshotTest")
+    try store.save(Self.account(id: "a", capturedAt: Date(timeIntervalSince1970: 100)))
+    keychain.failReads(of: "SnapshotTest-Index")
+
+    #expect(throws: (any Error).self) {
+      try store.registeredAccounts(for: .claude)
+    }
+  }
+
+  @Test func strictRegistrySnapshotFailsWhenAnyIndexedAccountCannotBeRead() throws {
+    let keychain = InMemoryKeychain()
+    let store = CapturedAccountStore(keychain: keychain.store, service: "StrictSnapshotTest")
+    try store.save(Self.account(id: "a", capturedAt: Date(timeIntervalSince1970: 100)))
+    keychain.failReads(of: "StrictSnapshotTest.a")
+
+    #expect(throws: (any Error).self) {
+      try store.registeredAccounts(for: .claude)
+    }
+  }
+
+  @Test func providerScopedSnapshotIgnoresAnUnavailablePrefixedOtherProvider() throws {
+    let keychain = InMemoryKeychain()
+    let store = CapturedAccountStore(keychain: keychain.store, service: "ProviderSnapshotTest")
+    try store.save(Self.account(id: "codex:broken", capturedAt: Date(timeIntervalSince1970: 100)))
+    try store.save(CapturedAccount(
+      id: "claude:available",
+      provider: .claude,
+      displayName: "Claude",
+      detail: "Keychain",
+      capturedAt: Date(timeIntervalSince1970: 200),
+      origin: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+      payload: Data(#"{"claudeAiOauth":{"accessToken":"access","refreshToken":"refresh"}}"#.utf8)
+    ))
+    keychain.failReads(of: "ProviderSnapshotTest.codex:broken")
+
+    #expect(try store.registeredAccounts(for: .claude).map(\.id) == ["claude:available"])
+  }
+
   @Test func saveFailsClosedWhenIndexReadFailsInsteadOfErasingAccounts() throws {
     let keychain = InMemoryKeychain()
     let store = CapturedAccountStore(keychain: keychain.store, service: "FailTest")

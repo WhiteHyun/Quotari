@@ -3,6 +3,7 @@ import SwiftUI
 
 struct AccountsPreferencesView: View {
   @Environment(UsageStore.self) private var store
+  @State private var confirmation: AccountManagementConfirmation?
 
   var body: some View {
     @Bindable var store = store
@@ -37,43 +38,74 @@ struct AccountsPreferencesView: View {
                 selection: $store[selectedAccountID: descriptor.id]
               )
               Button {
-                Task { await store.addAccount(for: descriptor.id) }
+                store.startAddingAccount(for: descriptor.id)
               } label: {
                 if store.addingAccountProviders.contains(descriptor.id) {
                   ProgressView()
                     .controlSize(.small)
                 } else {
-                  Label("Add Account", systemImage: "plus")
+                  Label(accountLoginTitle(for: descriptor.id), systemImage: "plus")
                 }
               }
               .disabled(!store.addingAccountProviders.isEmpty || !canAddAccount)
-              .help(store.addAccountUnavailableReason(for: descriptor.id) ?? "Add another managed account")
+              .help(store.addAccountUnavailableReason(for: descriptor.id) ?? accountLoginHelp(for: descriptor.id))
             }
             monitoringSelection(for: descriptor)
+            if descriptor.id == .claude {
+              Text(
+                "Claude keeps one shared CLI login. Quotari saves the current account before browser login, "
+                  + "then adds the new account automatically."
+              )
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+            }
             if let reason = store.addAccountUnavailableReason(for: descriptor.id) {
               Text(reason)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
-            if let error = store.accountLoginErrors[descriptor.id] {
+            AccountLoginStatusView(provider: descriptor.id)
+            if let error = store.captureErrors[descriptor.id] {
               Text(error)
                 .font(.caption)
                 .foregroundStyle(.red)
                 .fixedSize(horizontal: false, vertical: true)
             }
-            if let output = store.accountLoginOutputs[descriptor.id], !output.isEmpty {
-              Text(output)
-                .font(.caption.monospaced())
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-            }
           }
         }
-        Button("Scan Accounts") { Task { await scanAccountsButtonTapped() } }
+        Button("Scan & Add Current Accounts") { Task { await scanAccountsButtonTapped() } }
       }
     }
     .formStyle(.grouped)
+    .alert(item: $confirmation) { confirmation in
+      switch confirmation {
+      case let .switchCLI(account):
+        Alert(
+          title: Text("Switch CLI account?"),
+          message: Text(
+            "Quit active Claude Code or Codex sessions first. Quotari will preserve the current login, then put "
+              + "\(store.accountLabel(for: account)) into the shared CLI slot."
+          ),
+          primaryButton: .default(Text("Switch Account")) {
+            Task { await store.switchCLIAccount(to: account) }
+          },
+          secondaryButton: .cancel()
+        )
+      case let .remove(account):
+        Alert(
+          title: Text("Remove saved account?"),
+          message: Text(
+            "This removes \(store.accountLabel(for: account)) from Quotari. The provider account remains intact."
+          ),
+          primaryButton: .destructive(Text("Remove")) {
+            Task { await store.removeCapturedAccount(account) }
+          },
+          secondaryButton: .cancel()
+        )
+      }
+    }
   }
 
   private func accountPicker(
@@ -108,18 +140,35 @@ struct AccountsPreferencesView: View {
           .foregroundStyle(.secondary)
       } else {
         ForEach(accounts) { account in
-          Toggle(isOn: monitoringBinding(for: account)) {
-            HStack(spacing: 6) {
-              Text(accountLabel(account))
-                .lineLimit(1)
-              if account.id == activeCLIID {
-                Text("CLI Active")
-                  .font(.caption2.weight(.medium))
-                  .foregroundStyle(.secondary)
+          HStack(spacing: 8) {
+            Toggle(isOn: monitoringBinding(for: account)) {
+              HStack(spacing: 6) {
+                Text(accountLabel(account))
+                  .lineLimit(1)
+                if account.id == activeCLIID {
+                  Text("CLI Active")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                }
               }
             }
+            .toggleStyle(.checkbox)
+            if account.credentialSource.isCaptured {
+              Button("Switch") {
+                confirmation = .switchCLI(account)
+              }
+              .controlSize(.small)
+              .disabled(store.isSwitching || !store.addingAccountProviders.isEmpty)
+              Button {
+                confirmation = .remove(account)
+              } label: {
+                Image(systemName: "minus.circle")
+              }
+              .buttonStyle(.borderless)
+              .help("Remove saved account")
+              .disabled(store.isSwitching || !store.addingAccountProviders.isEmpty)
+            }
           }
-          .toggleStyle(.checkbox)
         }
       }
       Text(
@@ -161,5 +210,27 @@ struct AccountsPreferencesView: View {
       return name
     }
     return "\(name) (\(detail))"
+  }
+
+  private func accountLoginTitle(for provider: UsageProvider) -> String {
+    provider == .claude ? "Login New Account" : "Add Account"
+  }
+
+  private func accountLoginHelp(for provider: UsageProvider) -> String {
+    provider == .claude
+      ? "Preserve the current Claude account, then sign in with a new one in the browser"
+      : "Add another managed account"
+  }
+}
+
+private enum AccountManagementConfirmation: Identifiable {
+  case switchCLI(ProviderAccount)
+  case remove(ProviderAccount)
+
+  var id: String {
+    switch self {
+    case let .switchCLI(account): "switch-\(account.id)"
+    case let .remove(account): "remove-\(account.id)"
+    }
   }
 }

@@ -18,10 +18,10 @@ remaining quota, reset times, and estimated local API cost at a glance.
   the credential slot used by each CLI after preserving the current login.
   Close active Claude Code or Codex sessions before switching so their separate
   credential refresh loops cannot race Quotari's write.
-- Adds Codex accounts through an isolated `CODEX_HOME`. Claude Add Account stays
-  disabled on macOS because Claude Code stores `/login` in one shared Keychain
-  item, while its non-destructive `setup-token` command returns a long-lived
-  token rather than the renewable credential pair required by the registry.
+- Adds Codex accounts through an isolated `CODEX_HOME`. For Claude, Quotari
+  preserves the current renewable login, opens Claude Code's browser login,
+  automatically registers the changed account, and restores the previous CLI
+  account when login or identity verification fails.
 - Estimates costs from local Claude and Codex usage logs. For observed models,
   a cached remote LiteLLM catalog supplies the preferred current rates; the
   bundled catalog fills missing data and provides an offline fallback.

@@ -2,6 +2,10 @@ import Foundation
 import QuotariCore
 
 extension ClaudeProfile {
+  var hasStableAccountIdentity: Bool {
+    normalizedAccountID != nil || normalizedEmail != nil
+  }
+
   func identifiesSameAccount(as other: ClaudeProfile) -> Bool {
     if let leftID = normalizedAccountID,
        let rightID = other.normalizedAccountID {

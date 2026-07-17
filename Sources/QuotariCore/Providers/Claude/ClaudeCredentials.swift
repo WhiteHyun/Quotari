@@ -125,7 +125,7 @@ public enum ClaudeCredentialsStore {
     }
   }
 
-  static func parse(_ data: Data) throws -> ClaudeCredentials {
+  public static func parse(_ data: Data) throws -> ClaudeCredentials {
     guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let oauth = root["claudeAiOauth"] as? [String: Any],
           let accessToken = oauth["accessToken"] as? String,
