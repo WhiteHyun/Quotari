@@ -113,7 +113,8 @@ public struct AccountCaptureService: Sendable {
     origin: ProviderCredentialSource,
     payload: Data,
     now: Date,
-    claudeOAuthAccount: Data? = nil
+    claudeOAuthAccount: Data? = nil,
+    preserveExistingClaudeOAuthAccount: Bool = false
   ) throws -> CapturedAccount? {
     // Renewability is the bar; an identity-less (but renewable) login is
     // still saved, under a UUID, exactly as normal Save would.
@@ -134,7 +135,12 @@ public struct AccountCaptureService: Sendable {
       claudeOAuthAccount: provider == .claude ? claudeOAuthAccount : nil
     )
     return try capturedAccounts.upsert(captured) { existing, candidate in
-      Self.preferredCredentialSnapshot(existing: existing, candidate: candidate)
+      var resolved = Self.preferredCredentialSnapshot(existing: existing, candidate: candidate)
+      if provider == .claude, preserveExistingClaudeOAuthAccount,
+         let existingOAuthAccount = existing.claudeOAuthAccount {
+        resolved.claudeOAuthAccount = existingOAuthAccount
+      }
+      return resolved
     }
   }
 

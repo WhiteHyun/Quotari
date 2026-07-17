@@ -96,7 +96,8 @@ extension AccountSwitchService {
           origin: origin,
           payload: payload,
           now: now,
-          claudeOAuthAccount: claudeOAuthAccount
+          claudeOAuthAccount: claudeOAuthAccount,
+          preserveExistingClaudeOAuthAccount: provider == .claude
         )
       }
     } catch {

@@ -349,17 +349,20 @@ private extension AccountSwitchService {
     context: ClaudeBackupContext,
     claudeOAuthAccount: Data? = nil
   ) throws -> Data? {
-    try backedUpSlot(
+    let refreshingTargetID = verifiedTargetID(
+      registryID: context.registryID,
+      payload: verificationPayload,
+      source: source,
+      knownLiveTarget: context.knownLiveTarget
+    )
+    return try backedUpSlot(
       payload,
       origin: source,
       now: context.now,
-      refreshingTargetID: verifiedTargetID(
-        registryID: context.registryID,
-        payload: verificationPayload,
-        source: source,
-        knownLiveTarget: context.knownLiveTarget
-      ),
-      claudeOAuthAccount: claudeOAuthAccount
+      refreshingTargetID: refreshingTargetID,
+      // A known target proves the credential generation, not that the
+      // terminal state beside it is current. Keep its trusted saved identity.
+      claudeOAuthAccount: refreshingTargetID == nil ? claudeOAuthAccount : nil
     )
   }
 
