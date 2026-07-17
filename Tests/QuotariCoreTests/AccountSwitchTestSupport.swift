@@ -70,3 +70,84 @@ func switchTemporaryHome() throws -> URL {
   try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
   return home
 }
+
+func verifiedClaudeLiveIdentity(
+  source: ProviderCredentialSource,
+  accessToken: String,
+  accountID: String,
+  email: String
+) -> VerifiedLiveClaudeIdentity {
+  let fingerprint = ProviderCredentialIdentity.fingerprint(of: accessToken)
+  return VerifiedLiveClaudeIdentity(
+    source: source,
+    accessTokenFingerprint: fingerprint,
+    profile: ClaudeProfile(
+      accountID: accountID,
+      email: email,
+      fingerprint: fingerprint
+    )
+  )
+}
+
+func switchClaudeWithVerifiedLiveIdentity(
+  _ service: AccountSwitchService,
+  to id: String,
+  source: ProviderCredentialSource,
+  accessToken: String,
+  profile: ClaudeProfile
+) throws {
+  let fingerprint = ProviderCredentialIdentity.fingerprint(of: accessToken)
+  try service.switchCLI(
+    toRegistryAccount: id,
+    now: Date(timeIntervalSince1970: 5000),
+    verifiedLiveClaudeIdentity: VerifiedLiveClaudeIdentity(
+      source: source,
+      accessTokenFingerprint: fingerprint,
+      profile: ClaudeProfile(
+        accountID: profile.accountID,
+        email: profile.email,
+        fingerprint: fingerprint
+      )
+    )
+  )
+}
+
+func claudeSwitchPayload(accessToken: String, refreshToken: String) -> Data {
+  Data(
+    #"{"claudeAiOauth":{"accessToken":"\#(accessToken)","refreshToken":"\#(refreshToken)"}}"#.utf8
+  )
+}
+
+func claudeSwitchRegistryID(accessToken: String, refreshToken: String) -> String {
+  let fingerprint = ProviderCredentialIdentity.claudeIdentity(
+    refreshToken: refreshToken,
+    accessToken: accessToken
+  )
+  return "claude:\(fingerprint ?? "")"
+}
+
+func expectClaudeIdentity(
+  _ identity: Data?,
+  accountID: String,
+  email: String
+) throws {
+  #expect(try ClaudeCodeAccountState.matches(
+    #require(identity),
+    profile: ClaudeProfile(accountID: accountID, email: email)
+  ))
+}
+
+func makeClaudeBackupSwitchService(
+  registry: CapturedAccountStore,
+  home: URL,
+  keychain: KeychainSlot
+) -> AccountSwitchService {
+  AccountSwitchService(
+    capturedAccounts: registry,
+    capture: AccountCaptureService(capturedAccounts: registry, claudeKeychainRead: { _ in keychain.value }),
+    environment: [:],
+    home: home,
+    keychainRead: { _ in keychain.value },
+    keychainWrite: { data, _ in keychain.value = data }
+  )
+}

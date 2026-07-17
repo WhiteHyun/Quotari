@@ -31,29 +31,29 @@ struct AccountSwitchClaudeBackupIdentityTests {
       keychainWrite: { data, _ in keychain.value = data }
     )
 
-    try service.switchCLI(toRegistryAccount: saved.id, now: Date(timeIntervalSince1970: 5000))
+    try switchClaudeWithVerifiedLiveIdentity(
+      service,
+      to: saved.id,
+      source: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+      accessToken: "live-tok",
+      profile: ClaudeProfile(accountID: "live-id", email: "live@example.com")
+    )
 
     let fingerprint = ProviderCredentialIdentity.claudeIdentity(
       refreshToken: "live-ref",
       accessToken: "live-tok"
     )
     let backedUp = try #require(registry.load().first { $0.id == "claude:\(fingerprint ?? "")" })
-    let backedUpOAuthAccount = try #require(backedUp.claudeOAuthAccount)
-    #expect(ClaudeCodeAccountState.matches(
-      backedUpOAuthAccount,
-      profile: ClaudeProfile(accountID: "live-id", email: "live@example.com")
-    ))
+    try expectClaudeIdentity(backedUp.claudeOAuthAccount, accountID: "live-id", email: "live@example.com")
 
     // No profile is supplied for the reverse switch: the exact identity must
     // survive with the credential so a profile endpoint outage cannot strand it.
     try service.switchCLI(toRegistryAccount: backedUp.id, now: Date(timeIntervalSince1970: 6000))
-    let restoredOAuthAccount = try #require(
-      try ClaudeCodeAccountState.oauthAccount(from: Data(contentsOf: stateURL))
+    try expectClaudeIdentity(
+      ClaudeCodeAccountState.oauthAccount(from: Data(contentsOf: stateURL)),
+      accountID: "live-id",
+      email: "live@example.com"
     )
-    #expect(ClaudeCodeAccountState.matches(
-      restoredOAuthAccount,
-      profile: ClaudeProfile(accountID: "live-id", email: "live@example.com")
-    ))
   }
 
   @Test func invalidKeychainBacksUpTheFileAsCanonicalTerminalIdentity() throws {
@@ -84,27 +84,27 @@ struct AccountSwitchClaudeBackupIdentityTests {
       keychainWrite: { data, _ in keychain.value = data }
     )
 
-    try service.switchCLI(toRegistryAccount: saved.id, now: Date(timeIntervalSince1970: 5000))
+    try switchClaudeWithVerifiedLiveIdentity(
+      service,
+      to: saved.id,
+      source: .claudeCredentialsFile(path: fileURL.standardizedFileURL.path),
+      accessToken: "file-tok",
+      profile: ClaudeProfile(accountID: "file-id", email: "file@example.com")
+    )
 
     let fingerprint = ProviderCredentialIdentity.claudeIdentity(
       refreshToken: "file-ref",
       accessToken: "file-tok"
     )
     let backedUp = try #require(registry.load().first { $0.id == "claude:\(fingerprint ?? "")" })
-    let backedUpOAuthAccount = try #require(backedUp.claudeOAuthAccount)
-    #expect(ClaudeCodeAccountState.matches(
-      backedUpOAuthAccount,
-      profile: ClaudeProfile(accountID: "file-id", email: "file@example.com")
-    ))
+    try expectClaudeIdentity(backedUp.claudeOAuthAccount, accountID: "file-id", email: "file@example.com")
 
     try service.switchCLI(toRegistryAccount: backedUp.id, now: Date(timeIntervalSince1970: 6000))
-    let restoredOAuthAccount = try #require(
-      try ClaudeCodeAccountState.oauthAccount(from: Data(contentsOf: stateURL))
+    try expectClaudeIdentity(
+      ClaudeCodeAccountState.oauthAccount(from: Data(contentsOf: stateURL)),
+      accountID: "file-id",
+      email: "file@example.com"
     )
-    #expect(ClaudeCodeAccountState.matches(
-      restoredOAuthAccount,
-      profile: ClaudeProfile(accountID: "file-id", email: "file@example.com")
-    ))
   }
 
   @Test func verifiedLiveTargetKeepsItsTrustedIdentityWhenTerminalStateIsStale() throws {
@@ -217,13 +217,9 @@ struct AccountSwitchClaudeBackupIdentityTests {
       at: fileURL.deletingLastPathComponent(),
       withIntermediateDirectories: true
     )
-    let targetPayload = Data(
-      #"{"claudeAiOauth":{"accessToken":"rotated-target","refreshToken":"rotated-target-ref"}}"#.utf8
-    )
+    let targetPayload = claudeSwitchPayload(accessToken: "rotated-target", refreshToken: "rotated-target-ref")
     try targetPayload.write(to: fileURL)
-    let otherPayload = Data(
-      #"{"claudeAiOauth":{"accessToken":"other-tok","refreshToken":"other-ref"}}"#.utf8
-    )
+    let otherPayload = claudeSwitchPayload(accessToken: "other-tok", refreshToken: "other-ref")
     let stateURL = home.appendingPathComponent(".claude.json")
     try Data(
       #"{"oauthAccount":{"accountUuid":"other-id","emailAddress":"other@example.com"}}"#.utf8
@@ -240,14 +236,16 @@ struct AccountSwitchClaudeBackupIdentityTests {
       knownLiveTarget: KnownLiveClaudeTarget(
         source: fileSource,
         accessTokenFingerprint: ProviderCredentialIdentity.fingerprint(of: "rotated-target")
+      ),
+      verifiedLiveClaudeIdentity: verifiedClaudeLiveIdentity(
+        source: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+        accessToken: "other-tok",
+        accountID: "other-id",
+        email: "other@example.com"
       )
     )
 
-    let otherFingerprint = ProviderCredentialIdentity.claudeIdentity(
-      refreshToken: "other-ref",
-      accessToken: "other-tok"
-    )
-    let otherID = "claude:\(otherFingerprint ?? "")"
+    let otherID = claudeSwitchRegistryID(accessToken: "other-tok", refreshToken: "other-ref")
     try expectClaudeIdentity(
       registry.account(id: otherID)?.claudeOAuthAccount,
       accountID: "other-id",
@@ -260,30 +258,4 @@ struct AccountSwitchClaudeBackupIdentityTests {
       email: "other@example.com"
     )
   }
-}
-
-private func expectClaudeIdentity(
-  _ identity: Data?,
-  accountID: String,
-  email: String
-) throws {
-  #expect(try ClaudeCodeAccountState.matches(
-    #require(identity),
-    profile: ClaudeProfile(accountID: accountID, email: email)
-  ))
-}
-
-private func makeClaudeBackupSwitchService(
-  registry: CapturedAccountStore,
-  home: URL,
-  keychain: KeychainSlot
-) -> AccountSwitchService {
-  AccountSwitchService(
-    capturedAccounts: registry,
-    capture: AccountCaptureService(capturedAccounts: registry, claudeKeychainRead: { _ in keychain.value }),
-    environment: [:],
-    home: home,
-    keychainRead: { _ in keychain.value },
-    keychainWrite: { data, _ in keychain.value = data }
-  )
 }

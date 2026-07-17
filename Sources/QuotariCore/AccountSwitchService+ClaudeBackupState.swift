@@ -1,14 +1,16 @@
 import Foundation
 
 extension AccountSwitchService {
-  /// Associates `.claude.json.oauthAccount` only with the exact canonical
-  /// credential generation observed beside it. Claude Code reads the
-  /// Keychain before the credentials file, so a divergent lower-precedence
-  /// file must not inherit the active terminal identity.
+  /// Associates `.claude.json.oauthAccount` only with a canonical credential
+  /// whose exact access-token generation was independently profile-verified.
+  /// Merely observing stable credential and state bytes is insufficient: an
+  /// external login can replace the credential before Claude Code refreshes
+  /// its terminal identity file.
   func stableClaudeOAuthAccount(
     matching slots: ResolvedClaudeLivePayloads,
     service: String,
-    fileURL: URL
+    fileURL: URL,
+    verifiedLiveIdentity: VerifiedLiveClaudeIdentity?
   ) throws -> Data? {
     let stateURL = ClaudeCodeAccountState.configurationURL(environment: environment, home: home)
     let state = try readFile(stateURL)
@@ -22,6 +24,38 @@ extension AccountSwitchService {
           try readFile(fileURL) == slots.file,
           try readFile(stateURL) == state
     else { throw AccountSwitchError.concurrentCredentialChange }
+    guard let oauthAccount,
+          let verifiedLiveIdentity,
+          let canonical = canonicalClaudeCredential(
+            in: slots,
+            service: service,
+            fileURL: fileURL
+          ),
+          canonical.source == verifiedLiveIdentity.source,
+          ProviderCredentialIdentity.fingerprint(of: canonical.credentials.accessToken)
+          == verifiedLiveIdentity.accessTokenFingerprint,
+          verifiedLiveIdentity.profile.fingerprint == verifiedLiveIdentity.accessTokenFingerprint,
+          ClaudeCodeAccountState.matches(oauthAccount, profile: verifiedLiveIdentity.profile)
+    else { return nil }
     return oauthAccount
+  }
+
+  private func canonicalClaudeCredential(
+    in slots: ResolvedClaudeLivePayloads,
+    service: String,
+    fileURL: URL
+  ) -> (source: ProviderCredentialSource, credentials: ClaudeCredentials)? {
+    if let keychain = slots.keychain,
+       let credentials = try? ClaudeCredentialsStore.parse(keychain) {
+      return (.claudeKeychain(service: service), credentials)
+    }
+    if let file = slots.file,
+       let credentials = try? ClaudeCredentialsStore.parse(file) {
+      return (
+        .claudeCredentialsFile(path: fileURL.standardizedFileURL.path),
+        credentials
+      )
+    }
+    return nil
   }
 }

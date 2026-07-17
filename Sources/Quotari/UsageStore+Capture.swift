@@ -127,6 +127,7 @@ extension UsageStore {
     await selectionRefreshTasks[provider]?.value
     let switcher = accountSwitch
     let knownLiveTarget = knownLiveTarget(for: account)
+    let verifiedLiveIdentity = verifiedCanonicalLiveClaudeIdentity()
     let now = Date()
     do {
       var targetClaudeProfile = provider == .claude ? verifiedClaudeProfile(for: account) : nil
@@ -145,7 +146,8 @@ extension UsageStore {
           toRegistryAccount: id,
           now: now,
           knownLiveTarget: knownLiveTarget,
-          targetClaudeProfile: targetClaudeProfile
+          targetClaudeProfile: targetClaudeProfile,
+          verifiedLiveClaudeIdentity: verifiedLiveIdentity
         )
       }.value
       await reloadAccountsDuringSwitch()
@@ -198,6 +200,33 @@ extension UsageStore {
     return KnownLiveClaudeTarget(
       source: match.0.credentialSource,
       accessTokenFingerprint: fingerprint
+    )
+  }
+
+  /// Binds the terminal identity snapshot to the exact live credential whose
+  /// profile Quotari already verified. Keychain is canonical when present;
+  /// the credentials file is used only when no valid Keychain row exists.
+  private func verifiedCanonicalLiveClaudeIdentity() -> VerifiedLiveClaudeIdentity? {
+    let live = (accounts[.claude] ?? []).filter { !$0.credentialSource.isCaptured }
+    let canonical = live.first(where: { account in
+      if case .claudeKeychain = account.credentialSource {
+        return true
+      }
+      return false
+    }) ?? live.first(where: { account in
+      if case .claudeCredentialsFile = account.credentialSource {
+        return true
+      }
+      return false
+    })
+    guard let canonical,
+          let profile = verifiedClaudeProfile(for: canonical),
+          let fingerprint = profile.fingerprint
+    else { return nil }
+    return VerifiedLiveClaudeIdentity(
+      source: canonical.credentialSource,
+      accessTokenFingerprint: fingerprint,
+      profile: profile
     )
   }
 
