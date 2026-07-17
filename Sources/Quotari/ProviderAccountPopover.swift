@@ -155,7 +155,11 @@ struct ProviderAccountPopover: View {
           isReloadingAccounts = true
           defer { isReloadingAccounts = false }
           await store.reloadAccounts()
-          await store.refreshAccountUsage(for: descriptor.id, force: true)
+          await store.refreshAccountUsage(
+            for: descriptor.id,
+            force: true,
+            interaction: .userInitiated
+          )
         }
       }
       PopoverActionButton(

@@ -80,7 +80,8 @@ extension UsageStore {
         force: request.force,
         notifiesQuota: request.notifiesQuota,
         includingLogicalAccountIDs: request.includingLogicalAccountIDs,
-        excludingCredentialScopeIDs: request.excludingCredentialScopeIDs
+        excludingCredentialScopeIDs: request.excludingCredentialScopeIDs,
+        interaction: request.interaction
       )
       return
     }
@@ -98,30 +99,52 @@ extension UsageStore {
     // closure finishes. If the provider was re-enabled while that fetch was
     // draining, replace the cancelled generation instead of treating it as
     // a successful coalesced request and leaving the cleared cache empty.
-    if request.force, !current.force {
+    if request.force, shouldReplayAccountUsageRefresh(current, for: request) {
       await refreshAccountUsage(
         for: provider,
         force: true,
         notifiesQuota: request.notifiesQuota,
         includingLogicalAccountIDs: request.includingLogicalAccountIDs,
-        excludingCredentialScopeIDs: request.excludingCredentialScopeIDs
+        excludingCredentialScopeIDs: request.excludingCredentialScopeIDs,
+        interaction: request.interaction
       )
-    } else {
-      let requestedScopeIDs = Set(accountsNeedingRefresh(
-        provider,
-        at: Date(),
-        forced: request.force,
-        including: request.includingLogicalAccountIDs,
-        excluding: request.excludingCredentialScopeIDs
-      ).map(\.credentialScopeID))
-      guard !requestedScopeIDs.isSubset(of: current.credentialScopeIDs) else { return }
-      await refreshAccountUsage(
-        for: provider,
-        force: request.force,
-        notifiesQuota: request.notifiesQuota,
-        includingLogicalAccountIDs: request.includingLogicalAccountIDs,
-        excludingCredentialScopeIDs: request.excludingCredentialScopeIDs.union(current.credentialScopeIDs)
-      )
+      return
     }
+    await refreshAdditionalAccountUsage(current, provider: provider, request: request)
+  }
+
+  private func shouldReplayAccountUsageRefresh(
+    _ current: AccountUsageRefreshTask,
+    for request: AccountUsageRefreshRequest
+  ) -> Bool {
+    guard current.force else { return true }
+    if case .userInitiated = request.interaction,
+       case .background = current.interaction {
+      return true
+    }
+    return false
+  }
+
+  private func refreshAdditionalAccountUsage(
+    _ current: AccountUsageRefreshTask,
+    provider: UsageProvider,
+    request: AccountUsageRefreshRequest
+  ) async {
+    let requestedScopeIDs = Set(accountsNeedingRefresh(
+      provider,
+      at: Date(),
+      forced: request.force,
+      including: request.includingLogicalAccountIDs,
+      excluding: request.excludingCredentialScopeIDs
+    ).map(\.credentialScopeID))
+    guard !requestedScopeIDs.isSubset(of: current.credentialScopeIDs) else { return }
+    await refreshAccountUsage(
+      for: provider,
+      force: request.force,
+      notifiesQuota: request.notifiesQuota,
+      includingLogicalAccountIDs: request.includingLogicalAccountIDs,
+      excludingCredentialScopeIDs: request.excludingCredentialScopeIDs.union(current.credentialScopeIDs),
+      interaction: request.interaction
+    )
   }
 }

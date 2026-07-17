@@ -2,6 +2,30 @@ import Foundation
 import QuotariCore
 
 extension UsageStore {
+  func accountUsageRefreshTask(
+    provider: UsageProvider,
+    execution: AccountUsageRefreshExecution
+  ) -> Task<AccountUsageRefreshOutcome, Never> {
+    Task { [weak self] in
+      guard let self else { return AccountUsageRefreshOutcome() }
+      let outcome = await performAndCompleteAccountUsageRefresh(
+        provider: provider,
+        execution: execution
+      )
+      guard !Task.isCancelled,
+            isProviderEnabled(provider),
+            (accountRevisions[provider] ?? 0) == execution.revision
+      else { return outcome }
+      // Per-account fetches can rotate/persist a live token too; keep hidden
+      // saved copies and their profile labels in step with that rotation.
+      await syncCapturedCopies(of: capturedCopyCandidates.filter { $0.provider == provider })
+      if provider == .claude {
+        refreshClaudeProfiles()
+      }
+      return outcome
+    }
+  }
+
   func retryNotifyingAccountUsageRefreshIfNeeded(
     provider: UsageProvider,
     revision: UInt,
@@ -20,7 +44,8 @@ extension UsageStore {
       force: request.force,
       notifiesQuota: true,
       includingLogicalAccountIDs: request.includingLogicalAccountIDs,
-      excludingCredentialScopeIDs: request.excludingCredentialScopeIDs
+      excludingCredentialScopeIDs: request.excludingCredentialScopeIDs,
+      interaction: request.interaction
     )
   }
 
@@ -74,18 +99,68 @@ extension UsageStore {
     provider: UsageProvider,
     execution: AccountUsageRefreshExecution
   ) async -> AccountUsageRefreshOutcome {
-    let outcome = await performAccountUsageRefresh(
-      provider: provider,
-      descriptor: execution.descriptor,
-      accounts: execution.accounts,
-      now: execution.now,
-      revision: execution.revision
-    )
+    let outcome = await performAccountUsageRefresh(provider: provider, execution: execution)
     let canNotifyQuota = execution.notifiesQuota && accountUsageRefreshCanNotify(
       provider, revision: execution.revision, isCancelled: Task.isCancelled
     )
     completeAccountUsageRefresh(outcome, provider: provider, canNotifyQuota: canNotifyQuota)
     return outcome
+  }
+
+  func performAccountUsageRefresh(
+    provider: UsageProvider,
+    execution: AccountUsageRefreshExecution
+  ) async -> AccountUsageRefreshOutcome {
+    await withTaskGroup(
+      of: (ProviderAccount, Result<ProviderFetchResult, Error>).self,
+      returning: AccountUsageRefreshOutcome.self
+    ) { group in
+      for account in execution.accounts {
+        let capturedRegistryID = capturedRegistryID(for: account)
+        group.addTask {
+          await (
+            account,
+            execution.descriptor.fetch(
+              now: execution.now,
+              account: account,
+              capturedRegistryID: capturedRegistryID,
+              interaction: execution.interaction
+            )
+          )
+        }
+      }
+      var credentialTransitions: [String: Set<String>] = [:]
+      var notificationCandidates: [AccountUsageNotificationCandidate] = []
+      for await (account, result) in group {
+        if let transition = result.credentialTransitionEvidence {
+          for sourceScopeID in transition.sourceScopeIDs {
+            credentialTransitions[sourceScopeID, default: []].insert(transition.targetScopeID)
+          }
+        }
+        guard !Task.isCancelled,
+              isProviderEnabled(provider),
+              (accountRevisions[provider] ?? 0) == execution.revision,
+              accounts[provider]?.contains(account) == true
+        else { continue }
+        if case let .success(value) = result,
+           !fetchResult(value, belongsTo: account) {
+          // A mutable credential source can be replaced after discovery but
+          // before its fetch reads the file/keychain. Never publish account B's
+          // usage under the stale row for account A.
+          continue
+        }
+        applyAccountUsageResult(result, account: account)
+        if case let .success(value) = result {
+          notificationCandidates.append(
+            AccountUsageNotificationCandidate(account: account, result: value)
+          )
+        }
+      }
+      return AccountUsageRefreshOutcome(
+        credentialTransitions: credentialTransitions,
+        notificationCandidates: notificationCandidates
+      )
+    }
   }
 
   func accountUsageRefreshCanNotify(

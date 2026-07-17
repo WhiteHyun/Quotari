@@ -22,6 +22,7 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
   let persister: any ClaudeCredentialPersisting
   let capturedAccounts: CapturedAccountStore
   let refreshCoordinator: ClaudeTokenRefreshCoordinator
+  let rateLimitGate: ClaudeUsageRateLimitGate
 
   public init(
     transport: any ProviderHTTPTransport = URLSession.shared,
@@ -34,7 +35,8 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
     persister: (any ClaudeCredentialPersisting)? = nil,
     capturedAccounts: CapturedAccountStore = CapturedAccountStore(),
     mirroredCredentialsFileURL: URL? = nil,
-    refreshCoordinator: ClaudeTokenRefreshCoordinator = .shared
+    refreshCoordinator: ClaudeTokenRefreshCoordinator = .shared,
+    rateLimitGate: ClaudeUsageRateLimitGate = .shared
   ) {
     self.transport = transport
     self.usageURL = usageURL
@@ -49,6 +51,7 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
     )
     self.capturedAccounts = capturedAccounts
     self.refreshCoordinator = refreshCoordinator
+    self.rateLimitGate = rateLimitGate
   }
 
   public func isAvailable(_ context: ProviderFetchContext) async -> Bool {
@@ -59,6 +62,10 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
   }
 
   public func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
+    if context.interaction == .background,
+       let blockedUntil = await rateLimitGate.blockedUntil() {
+      throw ProviderHTTPError.rateLimited(retryAfter: blockedUntil)
+    }
     if let capturedRegistryID = context.capturedRegistryID {
       try recoverLinkedRegistryGrant(id: capturedRegistryID)
     }
@@ -133,12 +140,19 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
     credentialTransitionSourceScopeIDs: Set<String> = []
   ) async throws -> ProviderFetchResult {
     let credentials = resolved.credentials
-    let data = try await transport.getJSON(
-      url: usageURL,
-      bearer: credentials.accessToken,
-      headers: ["anthropic-beta": "oauth-2025-04-20"]
-    )
+    let data: Data
+    do {
+      data = try await transport.getJSON(
+        url: usageURL,
+        bearer: credentials.accessToken,
+        headers: ["anthropic-beta": "oauth-2025-04-20"]
+      )
+    } catch let ProviderHTTPError.rateLimited(retryAfter) {
+      await rateLimitGate.recordRateLimit(retryAfter: retryAfter)
+      throw ProviderHTTPError.rateLimited(retryAfter: retryAfter)
+    }
     var usage = try ClaudeUsageParser.parse(data, provider: context.provider, now: context.now)
+    await rateLimitGate.recordSuccess()
     if usage.plan == nil {
       usage.plan = PlanLabel.claude(
         subscriptionType: credentials.subscriptionType,

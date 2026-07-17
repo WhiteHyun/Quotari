@@ -5,31 +5,40 @@ extension UsageStore {
   /// Spawns a tracked dashboard refresh. UI and the timer go through this so
   /// `inFlightRefresh` always reflects the actually-running refresh an account
   /// switch may need to await. A second call while one is in flight coalesces
-  /// through `refreshRequested` instead of replacing the handle with a task
+  /// through `pendingRefreshInteraction` instead of replacing the handle with a task
   /// that would return immediately via the `isRefreshing` guard — otherwise a
   /// switch could await a no-op and race the real refresh's slot write.
-  func beginRefresh(reusesLatestAccountReload: Bool = false) {
+  func beginRefresh(
+    reusesLatestAccountReload: Bool = false,
+    interaction: ProviderFetchInteraction = .userInitiated
+  ) {
     // Don't start a fetch while a switch is rewriting a credential slot.
     guard !isSwitching else { return }
     guard inFlightRefresh == nil else {
-      refreshRequested = true
+      queueRefresh(interaction: interaction)
       return
     }
     inFlightRefresh = Task { [weak self] in
       await self?.refresh(
         clearsInFlightRefresh: true,
-        reusesLatestAccountReload: reusesLatestAccountReload
+        reusesLatestAccountReload: reusesLatestAccountReload,
+        interaction: interaction
       )
     }
   }
 
   func refresh() async {
-    await refresh(clearsInFlightRefresh: false, reusesLatestAccountReload: false)
+    await refresh(
+      clearsInFlightRefresh: false,
+      reusesLatestAccountReload: false,
+      interaction: .userInitiated
+    )
   }
 
   private func refresh(
     clearsInFlightRefresh: Bool,
-    reusesLatestAccountReload: Bool
+    reusesLatestAccountReload: Bool,
+    interaction: ProviderFetchInteraction
   ) async {
     // Clear the tracked handle before this actor-isolated operation returns.
     // Doing it in the spawning task leaves an executor hop where a new request
@@ -41,11 +50,14 @@ extension UsageStore {
       }
     }
     guard !isRefreshing else {
-      refreshRequested = true
+      queueRefresh(interaction: interaction)
       return
     }
     isRefreshing = true
-    defer { isRefreshing = false }
+    defer {
+      isRefreshing = false
+      pendingRefreshInteraction = nil
+    }
 
     // A live stand-in can silently start pointing at a different login when
     // its CLI slot is reused; rediscover first so the timer path reconciles
@@ -53,17 +65,29 @@ extension UsageStore {
     guard await prepareReconciledAccountsForRefresh(
       reusesLatestAccountReload: reusesLatestAccountReload
     ) else { return }
-    repeat {
-      refreshRequested = false
+    var currentInteraction = interaction
+    while true {
       // A switch can close the gate after the discovery await above, or while
       // draining a previous pass. Never begin another provider fetch inside
       // that protected write window.
       guard !isSwitching else { return }
-      await performRefresh()
-    } while refreshRequested
+      await performRefresh(interaction: currentInteraction)
+      guard let queuedInteraction = pendingRefreshInteraction else { break }
+      pendingRefreshInteraction = nil
+      currentInteraction = queuedInteraction
+    }
     // Self-heal email labels after a usage refresh may have rotated a token:
     // the access-token fingerprint changes, so this re-fetches exactly once.
     refreshClaudeProfiles()
+  }
+
+  private func queueRefresh(interaction: ProviderFetchInteraction) {
+    switch (pendingRefreshInteraction, interaction) {
+    case (.userInitiated, _), (_, .userInitiated):
+      pendingRefreshInteraction = .userInitiated
+    default:
+      pendingRefreshInteraction = .background
+    }
   }
 
   func startTimer(reusesLatestAccountReloadForFirstRefresh: Bool = false) {
@@ -72,7 +96,10 @@ extension UsageStore {
       var reusesLatestAccountReload = reusesLatestAccountReloadForFirstRefresh
       while !Task.isCancelled {
         guard let self else { break }
-        beginRefresh(reusesLatestAccountReload: reusesLatestAccountReload)
+        beginRefresh(
+          reusesLatestAccountReload: reusesLatestAccountReload,
+          interaction: .background
+        )
         reusesLatestAccountReload = false
         await inFlightRefresh?.value
         let interval = refreshInterval
@@ -130,7 +157,7 @@ extension UsageStore {
     return true
   }
 
-  func performRefresh() async {
+  func performRefresh(interaction: ProviderFetchInteraction) async {
     let now = Date()
     var fetchedCredentialScopeIDs: [UsageProvider: Set<String>] = [:]
     await withTaskGroup(
@@ -142,7 +169,8 @@ extension UsageStore {
             descriptor.id,
             self.coordinatedProviderFetch(
               descriptor: descriptor,
-              now: now
+              now: now,
+              interaction: interaction
             )
           )
         }
@@ -222,7 +250,8 @@ extension UsageStore {
 
   func refresh(
     provider: UsageProvider,
-    serializesProviderFetch: Bool = false
+    serializesProviderFetch: Bool = false,
+    interaction: ProviderFetchInteraction = .userInitiated
   ) async {
     // A superseded selection fetch (cancelled when the selection changed) or a
     // fetch that a switch has since started must not hit the network and
@@ -238,10 +267,15 @@ extension UsageStore {
     let completion: ProviderFetchCompletion = if serializesProviderFetch {
       await coordinatedSerializedProviderFetch(
         descriptor: descriptor,
-        now: now
+        now: now,
+        interaction: interaction
       )
     } else {
-      await selectionProviderFetch(descriptor: descriptor, now: now)
+      await selectionProviderFetch(
+        descriptor: descriptor,
+        now: now,
+        interaction: interaction
+      )
     }
     guard !Task.isCancelled,
           isProviderEnabled(provider),

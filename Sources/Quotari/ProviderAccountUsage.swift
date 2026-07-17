@@ -41,6 +41,21 @@ struct AccountUsageRefreshRequest {
   let notifiesQuota: Bool
   let includingLogicalAccountIDs: Set<String>?
   let excludingCredentialScopeIDs: Set<String>
+  let interaction: ProviderFetchInteraction
+
+  init(
+    force: Bool,
+    notifiesQuota: Bool,
+    includingLogicalAccountIDs: Set<String>?,
+    excludingCredentialScopeIDs: Set<String>,
+    interaction: ProviderFetchInteraction = .background
+  ) {
+    self.force = force
+    self.notifiesQuota = notifiesQuota
+    self.includingLogicalAccountIDs = includingLogicalAccountIDs
+    self.excludingCredentialScopeIDs = excludingCredentialScopeIDs
+    self.interaction = interaction
+  }
 }
 
 struct AccountUsageRefreshExecution {
@@ -49,6 +64,7 @@ struct AccountUsageRefreshExecution {
   let now: Date
   let revision: UInt
   let notifiesQuota: Bool
+  let interaction: ProviderFetchInteraction
 }
 
 struct AccountUsageRefreshTask {
@@ -57,19 +73,22 @@ struct AccountUsageRefreshTask {
   let notifiesQuota: Bool
   let revision: UInt?
   let credentialScopeIDs: Set<String>
+  let interaction: ProviderFetchInteraction
 
   init(
     task: Task<AccountUsageRefreshOutcome, Never>,
     force: Bool,
     notifiesQuota: Bool,
     revision: UInt,
-    credentialScopeIDs: Set<String> = []
+    credentialScopeIDs: Set<String> = [],
+    interaction: ProviderFetchInteraction = .background
   ) {
     self.task = task
     self.force = force
     self.notifiesQuota = notifiesQuota
     self.revision = revision
     self.credentialScopeIDs = credentialScopeIDs
+    self.interaction = interaction
   }
 
   init(
@@ -77,7 +96,8 @@ struct AccountUsageRefreshTask {
     force: Bool,
     notifiesQuota: Bool = false,
     revision: UInt? = nil,
-    credentialScopeIDs: Set<String> = []
+    credentialScopeIDs: Set<String> = [],
+    interaction: ProviderFetchInteraction = .background
   ) {
     self.task = Task {
       await task.value
@@ -87,6 +107,7 @@ struct AccountUsageRefreshTask {
     self.notifiesQuota = notifiesQuota
     self.revision = revision
     self.credentialScopeIDs = credentialScopeIDs
+    self.interaction = interaction
   }
 }
 
