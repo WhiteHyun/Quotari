@@ -34,14 +34,16 @@ public struct ProviderDescriptor: Sendable {
     now: Date,
     credential: String? = nil,
     account: ProviderAccount? = nil,
-    capturedRegistryID: String? = nil
+    capturedRegistryID: String? = nil,
+    interaction: ProviderFetchInteraction = .background
   ) async -> Result<ProviderFetchResult, Error> {
     await pipeline.fetch(ProviderFetchContext(
       provider: id,
       now: now,
       credential: credential,
       account: account,
-      capturedRegistryID: capturedRegistryID
+      capturedRegistryID: capturedRegistryID,
+      interaction: interaction
     ))
   }
 }

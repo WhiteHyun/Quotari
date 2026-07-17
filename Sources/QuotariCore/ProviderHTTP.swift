@@ -9,12 +9,15 @@ public protocol ProviderHTTPTransport: Sendable {
 public enum ProviderHTTPError: LocalizedError, Sendable {
   case nonHTTPResponse
   case unauthorized
+  case rateLimited(retryAfter: Date?)
   case status(Int)
 
   public var errorDescription: String? {
     switch self {
     case .nonHTTPResponse: "The server returned a non-HTTP response."
     case .unauthorized: "Authentication failed (401/403)."
+    case .rateLimited:
+      "Usage data is temporarily rate limited. Quotari will retry automatically, or click Refresh to try now."
     case let .status(code): "The server returned HTTP \(code)."
     }
   }
@@ -70,7 +73,31 @@ public extension ProviderHTTPTransport {
     switch response.statusCode {
     case 200 ..< 300: return data
     case 401, 403: throw ProviderHTTPError.unauthorized
+    case 429:
+      throw ProviderHTTPError.rateLimited(
+        retryAfter: retryAfterDate(from: response)
+      )
     default: throw ProviderHTTPError.status(response.statusCode)
     }
+  }
+
+  private func retryAfterDate(
+    from response: HTTPURLResponse,
+    now: Date = Date()
+  ) -> Date? {
+    guard let raw = response.value(forHTTPHeaderField: "Retry-After")?
+      .trimmingCharacters(in: .whitespacesAndNewlines),
+      !raw.isEmpty
+    else { return nil }
+
+    if let seconds = TimeInterval(raw), seconds >= 0 {
+      return now.addingTimeInterval(seconds)
+    }
+
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    formatter.dateFormat = "EEE',' dd MMM yyyy HH':'mm':'ss zzz"
+    return formatter.date(from: raw)
   }
 }

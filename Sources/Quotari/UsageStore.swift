@@ -114,7 +114,7 @@ final class UsageStore {
   var emptyClaudeProfileFingerprints: [String: String] = [:]
 
   var timerTask: Task<Void, Never>?
-  var refreshRequested = false
+  var pendingRefreshInteraction: ProviderFetchInteraction?
   var accountRevisions: [UsageProvider: UInt] = [:]
   var costTasks: [UsageProvider: CostRefreshTask] = [:]
   var lastCostScans: [UsageProvider: Date] = [:]

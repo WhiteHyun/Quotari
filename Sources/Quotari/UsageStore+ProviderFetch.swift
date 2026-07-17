@@ -68,7 +68,8 @@ extension UsageStore {
     now: Date,
     account: ProviderAccount?,
     capturedRegistryID: String?,
-    expectedRevision: UInt
+    expectedRevision: UInt,
+    interaction: ProviderFetchInteraction = .background
   ) async -> Result<ProviderFetchResult, Error> {
     let provider = descriptor.id
     guard isProviderEnabled(provider),
@@ -90,7 +91,8 @@ extension UsageStore {
       let result = await descriptor.fetch(
         now: now,
         account: account,
-        capturedRegistryID: capturedRegistryID
+        capturedRegistryID: capturedRegistryID,
+        interaction: interaction
       )
       recordCompletedCredentialTransition(result, provider: provider)
       return result
@@ -113,7 +115,8 @@ extension UsageStore {
   /// intervening suspension, so a capture that starts later will drain it.
   func coordinatedProviderFetch(
     descriptor: ProviderDescriptor,
-    now: Date
+    now: Date,
+    interaction: ProviderFetchInteraction
   ) async -> ProviderFetchCompletion {
     let provider = descriptor.id
     if automaticallyCapturingProviders.contains(provider) {
@@ -154,7 +157,8 @@ extension UsageStore {
       now: now,
       account: account,
       capturedRegistryID: capturedRegistryID,
-      expectedRevision: revision
+      expectedRevision: revision,
+      interaction: interaction
     )
     return ProviderFetchCompletion(account: account, revision: revision, result: result)
   }
@@ -165,7 +169,8 @@ extension UsageStore {
   /// a capture starting afterward can see and drain this task.
   func coordinatedSerializedProviderFetch(
     descriptor: ProviderDescriptor,
-    now: Date
+    now: Date,
+    interaction: ProviderFetchInteraction
   ) async -> ProviderFetchCompletion {
     let provider = descriptor.id
     if automaticallyCapturingProviders.contains(provider) {
@@ -181,7 +186,8 @@ extension UsageStore {
         provider: provider,
         selectedAccount: account
       ),
-      expectedRevision: revision
+      expectedRevision: revision,
+      interaction: interaction
     )
     return ProviderFetchCompletion(account: account, revision: revision, result: result)
   }
@@ -192,7 +198,8 @@ extension UsageStore {
   /// so automatic capture and account switching can drain a started rotation.
   func selectionProviderFetch(
     descriptor: ProviderDescriptor,
-    now: Date
+    now: Date,
+    interaction: ProviderFetchInteraction = .userInitiated
   ) async -> ProviderFetchCompletion {
     let provider = descriptor.id
     if automaticallyCapturingProviders.contains(provider) {
@@ -223,7 +230,8 @@ extension UsageStore {
       let result = await descriptor.fetch(
         now: now,
         account: account,
-        capturedRegistryID: capturedRegistryID
+        capturedRegistryID: capturedRegistryID,
+        interaction: interaction
       )
       self?.recordCompletedCredentialTransition(result, provider: provider)
       return result

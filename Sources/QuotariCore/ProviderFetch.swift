@@ -4,11 +4,20 @@ public enum ProviderFetchKind: String, Sendable {
   case api, oauth, web, cli, mock
 }
 
+public enum ProviderFetchInteraction: Sendable {
+  case background
+  case userInitiated
+}
+
 public struct ProviderFetchContext: Sendable {
   public let provider: UsageProvider
   public let now: Date
   public let credential: String?
   public let account: ProviderAccount?
+  /// User actions can explicitly retry a provider while an automatic
+  /// rate-limit cooldown is active. Timer and account maintenance fetches
+  /// remain background work and respect that cooldown.
+  public let interaction: ProviderFetchInteraction
   /// Saved registry row proven equivalent to the live account at discovery
   /// time. Claude refresh uses this explicit id to mirror a rotated grant
   /// without deriving identity from the newly-rotated refresh token.
@@ -19,13 +28,15 @@ public struct ProviderFetchContext: Sendable {
     now: Date,
     credential: String? = nil,
     account: ProviderAccount? = nil,
-    capturedRegistryID: String? = nil
+    capturedRegistryID: String? = nil,
+    interaction: ProviderFetchInteraction = .background
   ) {
     self.provider = provider
     self.now = now
     self.credential = credential
     self.account = account
     self.capturedRegistryID = capturedRegistryID
+    self.interaction = interaction
   }
 }
 
