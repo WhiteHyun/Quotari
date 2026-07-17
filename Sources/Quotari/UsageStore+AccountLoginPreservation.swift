@@ -74,6 +74,7 @@ final class AccountLoginRegistryBaseline: @unchecked Sendable {
   private let lock = NSLock()
   private var registeredAccounts: [String: ProviderAccount]
   private var claudeKeychainSnapshotStorage: ClaudeKeychainLoginSnapshot?
+  private var claudePostLoginKeychainSnapshotStorage: ClaudeKeychainLoginSnapshot?
   private var mutationPossible = false
 
   init(_ accounts: [CapturedAccount]) {
@@ -92,6 +93,16 @@ final class AccountLoginRegistryBaseline: @unchecked Sendable {
 
   var claudeKeychainSnapshot: ClaudeKeychainLoginSnapshot? {
     lock.withLock { claudeKeychainSnapshotStorage }
+  }
+
+  func recordClaudePostLoginKeychain(_ payload: Data?) {
+    lock.withLock {
+      claudePostLoginKeychainSnapshotStorage = ClaudeKeychainLoginSnapshot(payload: payload)
+    }
+  }
+
+  var claudePostLoginKeychainSnapshot: ClaudeKeychainLoginSnapshot? {
+    lock.withLock { claudePostLoginKeychainSnapshotStorage }
   }
 
   func recordClaudeBoundaryAccount(_ account: CapturedAccount) {

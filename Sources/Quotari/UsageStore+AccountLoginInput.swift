@@ -31,7 +31,7 @@ extension UsageStore {
     accountLoginInputs[provider] = input
     defer { accountLoginInputs[provider] = nil }
     let login = accountLogin
-    return try await login.login(
+    let result = try await login.login(
       provider: provider,
       onOutput: { [weak self] output in
         await self?.appendAccountLoginOutput(output, for: provider)
@@ -49,18 +49,27 @@ extension UsageStore {
       },
       onCredentialMutationPossible: {
         registryBaseline?.markCredentialMutationPossible()
+      },
+      onCredentialObserved: { payload in
+        registryBaseline?.recordClaudePostLoginKeychain(payload)
       }
     )
+    registryBaseline?.recordClaudePostLoginKeychain(result.payload)
+    return result
   }
 
   private func appendAccountLoginOutput(_ output: String, for provider: UsageProvider) {
     var sanitizer = accountLoginOutputSanitizers[provider] ?? AccountLoginOutputSanitizer()
     let sanitized = sanitizer.append(output)
     accountLoginOutputSanitizers[provider] = sanitizer
-    let combined = (accountLoginOutputs[provider] ?? "") + sanitized
+    let previous = accountLoginOutputs[provider] ?? ""
+    let combined = previous + sanitized
     accountLoginOutputs[provider] = String(combined.suffix(12000))
-    if accountLoginPhases[provider] == .waitingForBrowser,
-       combined.localizedCaseInsensitiveContains("Paste code here") {
+    let authenticationCodePrompt = "Paste code here"
+    let recentOutput = String(previous.suffix(authenticationCodePrompt.count - 1)) + sanitized
+    let phase = accountLoginPhases[provider]
+    if phase == .waitingForBrowser || phase == .completingLogin,
+       recentOutput.localizedCaseInsensitiveContains(authenticationCodePrompt) {
       accountLoginPhases[provider] = .waitingForAuthenticationCode
     }
   }

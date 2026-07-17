@@ -27,16 +27,50 @@ extension AccountSwitchService {
   /// only usable generation. The compare-before-write helpers leave a
   /// concurrently changed credential untouched.
   public func restoreClaudeLoginKeychain(to previous: Data?) throws {
+    try restoreClaudeLoginKeychain(to: previous, expectation: .preserveInstalledCredential)
+  }
+
+  /// Restores only when the keychain still contains the exact generation
+  /// observed when Quotari's login attempt ended. This permits rollback of an
+  /// unrenewable failed-login payload without discarding a later external login.
+  public func restoreClaudeLoginKeychain(
+    to previous: Data?,
+    replacing observedPostLogin: Data?
+  ) throws {
+    try restoreClaudeLoginKeychain(
+      to: previous,
+      expectation: .replaceObservedCredential(observedPostLogin)
+    )
+  }
+
+  private func restoreClaudeLoginKeychain(
+    to previous: Data?,
+    expectation: ClaudeLoginRecoveryExpectation
+  ) throws {
     let service = ClaudeCredentialsStore.keychainService
     try requireCLIInactive(.claude)
     let installed = try readKeychain(service)
     guard installed != previous else { return }
-    try backUp(
-      provider: .claude,
-      payload: installed,
-      origin: .claudeKeychain(service: service),
-      now: Date()
-    )
+    if case let .replaceObservedCredential(observed) = expectation,
+       installed != observed {
+      throw AccountSwitchError.concurrentCredentialChange
+    }
+    let canSkipUnrenewableBackup = if case .replaceObservedCredential = expectation {
+      true
+    } else {
+      false
+    }
+    if !canSkipUnrenewableBackup
+      || installed.map({
+        ProviderCredentialMinimizer.minimize(provider: .claude, payload: $0) != nil
+      }) == true {
+      try backUp(
+        provider: .claude,
+        payload: installed,
+        origin: .claudeKeychain(service: service),
+        now: Date()
+      )
+    }
     switch (previous, installed) {
     case let (previous?, installed?):
       try restoreClaudeKeychain(previous, replacing: installed, service: service)
@@ -54,6 +88,11 @@ extension AccountSwitchService {
     case (nil, nil):
       return
     }
+  }
+
+  private enum ClaudeLoginRecoveryExpectation {
+    case preserveInstalledCredential
+    case replaceObservedCredential(Data?)
   }
 
   func installClaudeCredentials(_ installation: ClaudeCredentialInstallation) throws {

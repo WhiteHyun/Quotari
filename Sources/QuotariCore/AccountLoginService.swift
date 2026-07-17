@@ -21,6 +21,7 @@ public typealias CredentialPreservationHandler = @Sendable (
   UsageProvider, ProviderCredentialSource, Data?
 ) async throws -> Void
 public typealias CredentialMutationHandler = @Sendable () -> Void
+public typealias CredentialObservationHandler = @Sendable (Data?) -> Void
 public enum AccountLoginError: LocalizedError, Sendable {
   case isolatedLoginUnavailable(UsageProvider)
   case executableNotFound(UsageProvider)
@@ -77,13 +78,14 @@ public struct AccountLoginService: Sendable {
     AccountLoginOutputHandler?,
     AccountLoginInput?,
     CredentialPreservationHandler?,
-    CredentialMutationHandler?
+    CredentialMutationHandler?,
+    CredentialObservationHandler?
   ) async throws -> AccountLoginResult
   private let supportedProviders: Set<UsageProvider>
 
   public init() {
     supportedProviders = Set(UsageProvider.allCases)
-    operation = { provider, onOutput, input, preserveCredential, credentialMutation in
+    operation = { provider, onOutput, input, preserveCredential, credentialMutation, credentialObservation in
       switch provider {
       case .claude:
         try await LiveClaudeAccountLogin.perform(
@@ -95,6 +97,7 @@ public struct AccountLoginService: Sendable {
             )
           },
           onLoginStarted: credentialMutation,
+          onCredentialObserved: credentialObservation,
           onOutput: onOutput,
           input: input
         )
@@ -108,7 +111,7 @@ public struct AccountLoginService: Sendable {
     operation: @escaping @Sendable (UsageProvider) async throws -> AccountLoginResult
   ) {
     supportedProviders = Set(UsageProvider.allCases)
-    self.operation = { provider, _, _, _, _ in try await operation(provider) }
+    self.operation = { provider, _, _, _, _, _ in try await operation(provider) }
   }
 
   public init(
@@ -118,7 +121,7 @@ public struct AccountLoginService: Sendable {
     ) async throws -> AccountLoginResult
   ) {
     supportedProviders = Set(UsageProvider.allCases)
-    operation = { provider, onOutput, _, _, _ in
+    operation = { provider, onOutput, _, _, _, _ in
       try await streamingOperation(provider, onOutput)
     }
   }
@@ -132,7 +135,7 @@ public struct AccountLoginService: Sendable {
     ) async throws -> AccountLoginResult
   ) {
     supportedProviders = Set(UsageProvider.allCases)
-    operation = { provider, onOutput, _, preserveCredential, credentialMutation in
+    operation = { provider, onOutput, _, preserveCredential, credentialMutation, _ in
       try await managedOperation(provider, onOutput, preserveCredential, credentialMutation)
     }
   }
@@ -147,7 +150,9 @@ public struct AccountLoginService: Sendable {
     ) async throws -> AccountLoginResult
   ) {
     supportedProviders = Set(UsageProvider.allCases)
-    operation = interactiveOperation
+    operation = { provider, onOutput, input, preserveCredential, credentialMutation, _ in
+      try await interactiveOperation(provider, onOutput, input, preserveCredential, credentialMutation)
+    }
   }
 
   public func supports(provider: UsageProvider) -> Bool {
@@ -164,7 +169,8 @@ public struct AccountLoginService: Sendable {
     onOutput: AccountLoginOutputHandler? = nil,
     input: AccountLoginInput? = nil,
     beforeCredentialOverwrite: CredentialPreservationHandler? = nil,
-    onCredentialMutationPossible: CredentialMutationHandler? = nil
+    onCredentialMutationPossible: CredentialMutationHandler? = nil,
+    onCredentialObserved: CredentialObservationHandler? = nil
   ) async throws -> AccountLoginResult {
     guard supports(provider: provider) else {
       throw AccountLoginError.isolatedLoginUnavailable(provider)
@@ -174,7 +180,8 @@ public struct AccountLoginService: Sendable {
       onOutput,
       input,
       beforeCredentialOverwrite,
-      onCredentialMutationPossible
+      onCredentialMutationPossible,
+      onCredentialObserved
     )
   }
 }

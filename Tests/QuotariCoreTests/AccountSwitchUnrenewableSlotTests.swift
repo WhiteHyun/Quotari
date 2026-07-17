@@ -32,6 +32,86 @@ struct AccountSwitchUnrenewableSlotTests {
     #expect(registry.load().count == 1)
   }
 
+  @Test func failedClaudeAccessOnlyLoginDoesNotBlockRestoringPreviousCredential() throws {
+    let registry = makeSwitchRegistry()
+    let home = try switchTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let previous = claudePayload(
+      accessToken: "previous",
+      refreshToken: "previous-ref",
+      expiresAt: 9_999_999_999
+    )
+    let failed = Data(#"{"claudeAiOauth":{"accessToken":"failed"}}"#.utf8)
+    let slot = KeychainSlot(failed)
+    let service = AccountSwitchService(
+      capturedAccounts: registry,
+      environment: [:],
+      home: home,
+      keychainRead: { _ in slot.value },
+      keychainWrite: { data, _ in slot.value = data }
+    )
+
+    try service.restoreClaudeLoginKeychain(to: previous, replacing: failed)
+
+    #expect(slot.value == previous)
+    #expect(registry.load().isEmpty)
+  }
+
+  @Test func failedClaudeAccessOnlyFirstLoginCanRestoreSignedOutState() throws {
+    let registry = makeSwitchRegistry()
+    let home = try switchTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let failed = Data(#"{"claudeAiOauth":{"accessToken":"failed"}}"#.utf8)
+    let slot = KeychainSlot(failed)
+    let service = AccountSwitchService(
+      capturedAccounts: registry,
+      environment: [:],
+      home: home,
+      keychainRead: { _ in slot.value },
+      keychainDelete: { _ in slot.value = nil }
+    )
+
+    try service.restoreClaudeLoginKeychain(to: nil, replacing: failed)
+
+    #expect(slot.value == nil)
+    #expect(registry.load().isEmpty)
+  }
+
+  @Test func laterClaudeAccessOnlyLoginIsNotMistakenForTheFailedLogin() throws {
+    let registry = makeSwitchRegistry()
+    let home = try switchTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let previous = claudePayload(
+      accessToken: "previous",
+      refreshToken: "previous-ref",
+      expiresAt: 9_999_999_999
+    )
+    let failed = Data(#"{"claudeAiOauth":{"accessToken":"failed"}}"#.utf8)
+    let laterLogin = Data(#"{"claudeAiOauth":{"accessToken":"later"}}"#.utf8)
+    let slot = KeychainSlot(laterLogin)
+    let service = AccountSwitchService(
+      capturedAccounts: registry,
+      environment: [:],
+      home: home,
+      keychainRead: { _ in slot.value },
+      keychainWrite: { data, _ in slot.value = data }
+    )
+
+    var thrown: AccountSwitchError?
+    do {
+      try service.restoreClaudeLoginKeychain(to: previous, replacing: failed)
+    } catch let error as AccountSwitchError {
+      thrown = error
+    }
+    guard case .concurrentCredentialChange = thrown else {
+      Issue.record("expected concurrent credential change, got \(String(describing: thrown))")
+      return
+    }
+
+    #expect(slot.value == laterLogin)
+    #expect(registry.load().isEmpty)
+  }
+
   @Test func codexAccessOnlyLoginIsNotOverwritten() throws {
     let registry = makeSwitchRegistry()
     let saved = try savedCodexAccount(registry: registry)

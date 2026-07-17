@@ -9,6 +9,7 @@ enum LiveClaudeAccountLogin {
   static func perform(
     beforeCredentialOverwrite: (@Sendable (Data?) async throws -> Void)? = nil,
     onLoginStarted: CredentialMutationHandler? = nil,
+    onCredentialObserved: CredentialObservationHandler? = nil,
     onOutput: AccountLoginOutputHandler? = nil,
     input: AccountLoginInput? = nil
   ) async throws -> AccountLoginResult {
@@ -20,6 +21,7 @@ enum LiveClaudeAccountLogin {
       keychainRead: { try KeychainItemStore.readByService($0) },
       beforeCredentialOverwrite: beforeCredentialOverwrite,
       onLoginStarted: onLoginStarted,
+      onCredentialObserved: onCredentialObserved,
       onOutput: onOutput,
       input: input
     )
@@ -37,6 +39,7 @@ enum LiveClaudeAccountLogin {
     loginTimeout: Duration = .seconds(600),
     beforeCredentialOverwrite: (@Sendable (Data?) async throws -> Void)? = nil,
     onLoginStarted: CredentialMutationHandler? = nil,
+    onCredentialObserved: CredentialObservationHandler? = nil,
     onOutput: AccountLoginOutputHandler? = nil,
     input: AccountLoginInput? = nil
   ) async throws -> AccountLoginResult {
@@ -55,17 +58,24 @@ enum LiveClaudeAccountLogin {
       beforeCredentialOverwrite: beforeCredentialOverwrite
     )
     let previousCredential = renewableCredential(from: previousPayload)
-    let status = try await runLoginCommand(
-      configuration: configuration,
-      executable: executable,
-      environment: environment,
-      timeout: loginTimeout,
-      observers: AccountLoginCommandObservers(
-        output: onOutput,
-        didLaunch: onLoginStarted,
-        input: input
+    let status: Int32
+    do {
+      status = try await runLoginCommand(
+        configuration: configuration,
+        executable: executable,
+        environment: environment,
+        timeout: loginTimeout,
+        observers: AccountLoginCommandObservers(
+          output: onOutput,
+          didLaunch: onLoginStarted,
+          input: input
+        )
       )
-    )
+    } catch {
+      reportCredentialObservation(keychainRead, to: onCredentialObserved)
+      throw error
+    }
+    reportCredentialObservation(keychainRead, to: onCredentialObserved)
     try Task.checkCancellation()
     guard status == 0 else {
       throw AccountLoginError.commandFailed(.claude, status: status)
@@ -80,6 +90,19 @@ enum LiveClaudeAccountLogin {
   }
 
   private static let keychainService = ClaudeCredentialsStore.keychainService
+
+  private static func reportCredentialObservation(
+    _ keychainRead: @escaping @Sendable (String) throws -> Data?,
+    to observer: CredentialObservationHandler?
+  ) {
+    guard let observer else { return }
+    do {
+      try observer(keychainRead(keychainService))
+    } catch {
+      // Without a trustworthy observation, recovery retains the existing
+      // fail-closed behavior instead of guessing which credential to replace.
+    }
+  }
 
   private enum LoginCommandOutcome {
     case status(Int32)

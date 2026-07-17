@@ -66,6 +66,35 @@ struct ClaudeAccountLoginRecoveryTests {
     #expect(store.accountLoginErrors[.claude]?.contains("couldn’t verify the new Claude account") == true)
   }
 
+  @Test func unrenewableLoginResultRestoresThePreviousCredentialGeneration() async throws {
+    let context = try makeClaudeLoginContext()
+    let rejectedPayload = Data(#"{"claudeAiOauth":{"accessToken":"unrenewable"}}"#.utf8)
+    let login = AccountLoginService(managedOperation: { provider, _, preserveCredential, credentialMutation in
+      try await preserveCredential?(
+        provider,
+        .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+        context.liveCredential.value
+      )
+      credentialMutation?()
+      context.liveCredential.value = rejectedPayload
+      return AccountLoginResult(
+        provider: provider,
+        origin: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+        payload: rejectedPayload
+      )
+    })
+    let store = context.makeStore(login: login, accountSwitch: context.makeSwitcher())
+
+    await store.addAccount(for: .claude)
+
+    let restoredPayload = try #require(context.liveCredential.value)
+    let restored = try ClaudeCredentialsStore.parse(restoredPayload)
+    #expect(restored.accessToken == "current-access")
+    #expect(context.registry.load().count == 1)
+    #expect(store.accountLoginErrors[.claude] != nil)
+    #expect(store.accountLoginErrors[.claude]?.contains("recovery error") == false)
+  }
+
   @Test func signedOutOverwriteBoundarySupersedesThePreflightAccount() async throws {
     let context = try makeClaudeLoginContext()
     let rejectedPayload = claudePayload(

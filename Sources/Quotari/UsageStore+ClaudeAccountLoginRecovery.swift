@@ -12,19 +12,28 @@ extension UsageStore {
     else { return nil }
     return await restoreExactClaudeKeychainState(
       keychainSnapshot,
+      postLoginSnapshot: registryBaseline.claudePostLoginKeychainSnapshot,
       dashboardSelection: dashboardSelection
     )
   }
 
   private func restoreExactClaudeKeychainState(
     _ keychainSnapshot: ClaudeKeychainLoginSnapshot,
+    postLoginSnapshot: ClaudeKeychainLoginSnapshot?,
     dashboardSelection: ProviderAccount?
   ) async -> String? {
     accountLoginPhases[.claude] = .restoringPreviousAccount
     let switcher = accountSwitch
     do {
       try await Task.detached {
-        try switcher.restoreClaudeLoginKeychain(to: keychainSnapshot.payload)
+        if let postLoginSnapshot {
+          try switcher.restoreClaudeLoginKeychain(
+            to: keychainSnapshot.payload,
+            replacing: postLoginSnapshot.payload
+          )
+        } else {
+          try switcher.restoreClaudeLoginKeychain(to: keychainSnapshot.payload)
+        }
       }.value
     } catch {
       beginAccountRediscovery()

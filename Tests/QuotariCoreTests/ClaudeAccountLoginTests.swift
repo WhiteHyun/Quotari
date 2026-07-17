@@ -254,6 +254,42 @@ struct ClaudeAccountLoginTests {
   }
 }
 
+extension ClaudeAccountLoginTests {
+  @Test func failedLoginReportsTheCredentialGenerationObservedAfterExit() async throws {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("quotari-login-claude-failed-observation-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let executable = directory.appendingPathComponent("fake-claude")
+    try Data("#!/bin/sh\nexit 9\n".utf8).write(to: executable)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+    let previous = claudeCredential(accessToken: "previous", refreshToken: "previous-refresh")
+    let failed = Data(#"{"claudeAiOauth":{"accessToken":"failed"}}"#.utf8)
+    let credentials = CredentialSequence([previous, previous, failed])
+    let observed = ClaudePayloadRecorder()
+
+    do {
+      _ = try await LiveClaudeAccountLogin.perform(
+        environment: ["QUOTARI_CLAUDE_PATH": executable.path, "PATH": "/usr/bin:/bin"],
+        home: directory,
+        keychainRead: { _ in credentials.next() },
+        activeCLIProcesses: { _ in [] },
+        credentialReadAttempts: 1,
+        retryDelay: .zero,
+        onCredentialObserved: { observed.append($0) }
+      )
+      Issue.record("A failed Claude command should not return an account")
+    } catch let error as AccountLoginError {
+      guard case .commandFailed(.claude, status: 9) = error else {
+        Issue.record("Unexpected login error: \(error)")
+        return
+      }
+    }
+
+    #expect(observed.values == [failed])
+  }
+}
+
 private final class CredentialSequence: @unchecked Sendable {
   private let lock = NSLock()
   private var values: [Data]
