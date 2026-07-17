@@ -112,6 +112,85 @@ struct UsageStoreAccountLoginInputTests {
     }
     Issue.record("authentication code prompt did not appear")
   }
+
+  @Test func successfulBrowserLoginLeavesAuthenticationCodePhaseWithoutSubmitting() async throws {
+    let completion = AccountLoginCompletionGate()
+    let registry = CapturedAccountStore.inMemoryForTesting()
+    let login = AccountLoginService(interactiveOperation: { provider, onOutput, input, _, _ in
+      await onOutput?("Paste code here if prompted > ")
+      await onOutput?("Login successful.\n")
+      await onOutput?("Paste code here if prompted > ")
+      await completion.wait()
+      input?.finish()
+      return AccountLoginResult(
+        provider: provider,
+        origin: .codexAuthFile(path: "/isolated/auth.json"),
+        payload: codexLoginPayload(accountID: "browser-account")
+      )
+    })
+    let store = UsageStore.isolatedForTesting(
+      providers: [codexDescriptor()],
+      accountCapture: AccountCaptureService(capturedAccounts: registry),
+      accountLogin: login,
+      startsAutomatically: false
+    )
+    let loginTask = Task { await store.addAccount(for: .codex) }
+
+    for _ in 0 ..< 100 {
+      guard store.accountLoginPhases[.codex] != .completingLogin else { break }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+
+    #expect(store.accountLoginPhases[.codex] == .completingLogin)
+    #expect(!store.submitAccountLoginAuthenticationCode("stale-code", for: .codex))
+    #expect(store.accountLoginErrors[.codex] == nil)
+
+    await completion.release()
+    await loginTask.value
+    #expect(registry.load().map(\.id) == ["codex:browser-account"])
+  }
+
+  @Test func successfulLoginAfterCodeSubmissionIgnoresAStalePrompt() async throws {
+    let outputDelivered = AccountLoginCompletionGate()
+    let loginCompletion = AccountLoginCompletionGate()
+    let registry = CapturedAccountStore.inMemoryForTesting()
+    let login = AccountLoginService(interactiveOperation: { provider, onOutput, input, _, _ in
+      let input = try #require(input)
+      let pipe = Pipe()
+      try input.connect(pipe.fileHandleForWriting)
+      await onOutput?("Paste code here if prompted > ")
+      _ = await Task.detached {
+        pipe.fileHandleForReading.availableData
+      }.value
+      await onOutput?("Login successful.\n")
+      await onOutput?("Paste code here if prompted > ")
+      await outputDelivered.release()
+      await loginCompletion.wait()
+      input.finish()
+      return AccountLoginResult(
+        provider: provider,
+        origin: .codexAuthFile(path: "/isolated/auth.json"),
+        payload: codexLoginPayload(accountID: "submitted-account")
+      )
+    })
+    let store = UsageStore.isolatedForTesting(
+      providers: [codexDescriptor()],
+      accountCapture: AccountCaptureService(capturedAccounts: registry),
+      accountLogin: login,
+      startsAutomatically: false
+    )
+    let loginTask = Task { await store.addAccount(for: .codex) }
+    try await waitForAuthenticationCodePrompt(in: store)
+
+    #expect(store.submitAccountLoginAuthenticationCode("submitted-code", for: .codex))
+    await outputDelivered.wait()
+    #expect(store.accountLoginPhases[.codex] == .completingLogin)
+    #expect(!store.submitAccountLoginAuthenticationCode("stale-code", for: .codex))
+
+    await loginCompletion.release()
+    await loginTask.value
+    #expect(registry.load().map(\.id) == ["codex:submitted-account"])
+  }
 }
 
 private actor AuthenticationCodeRecorder {
@@ -127,5 +206,21 @@ private actor AuthenticationCodesRecorder {
 
   func record(_ value: String) {
     values.append(value)
+  }
+}
+
+private actor AccountLoginCompletionGate {
+  private var continuation: CheckedContinuation<Void, Never>?
+  private var isReleased = false
+
+  func wait() async {
+    guard !isReleased else { return }
+    await withCheckedContinuation { continuation = $0 }
+  }
+
+  func release() {
+    isReleased = true
+    continuation?.resume()
+    continuation = nil
   }
 }

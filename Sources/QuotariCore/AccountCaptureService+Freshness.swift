@@ -19,6 +19,9 @@ extension AccountCaptureService {
        candidateExpiry < storedExpiry {
       return existing
     }
-    return candidate
+    guard candidate.claudeOAuthAccount == nil else { return candidate }
+    var resolved = candidate
+    resolved.claudeOAuthAccount = existing.claudeOAuthAccount
+    return resolved
   }
 }

@@ -2,6 +2,7 @@ import Foundation
 
 public enum AccountSwitchError: LocalizedError, Sendable {
   case accountNotFound
+  case claudeAccountIdentityUnavailable
   case cliActivityCheckFailed(underlying: String)
   case cliStillRunning(processes: [String])
   case concurrentCredentialChange
@@ -17,6 +18,9 @@ public enum AccountSwitchError: LocalizedError, Sendable {
     switch self {
     case .accountNotFound:
       "The saved account could not be found in the registry."
+    case .claudeAccountIdentityUnavailable:
+      "Quotari couldn’t verify the saved Claude account identity, so it left the CLI login unchanged. "
+        + "Scan accounts while this login is active or sign in to it again, then retry."
     case let .cliActivityCheckFailed(underlying):
       "Couldn't verify that the CLI is inactive: \(underlying)"
     case let .cliStillRunning(processes):

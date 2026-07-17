@@ -78,7 +78,7 @@ extension UsageStore {
 
   private func currentVerifiedClaudeProfile(for account: ProviderAccount) async -> ClaudeProfile? {
     guard let profile = claudeProfiles[account.id],
-          !profile.isEmpty,
+          profile.hasStableAccountIdentity,
           let expectedFingerprint = profile.fingerprint
     else { return nil }
     let loader = claudeCredentialLoader
@@ -127,8 +127,16 @@ extension UsageStore {
     await selectionRefreshTasks[provider]?.value
     let switcher = accountSwitch
     let knownLiveTarget = knownLiveTarget(for: account)
+    let verifiedLiveIdentity = verifiedCanonicalLiveClaudeIdentity()
     let now = Date()
     do {
+      var targetClaudeProfile = provider == .claude ? verifiedClaudeProfile(for: account) : nil
+      if provider == .claude, targetClaudeProfile == nil {
+        // Legacy rows may not have an exact oauthAccount snapshot yet. Use a
+        // freshly verified profile when available, but preserve the existing
+        // token-switch behavior during a transient profile endpoint failure.
+        targetClaudeProfile = try? await resolvedClaudeLoginProfile(for: account)
+      }
       // The write runs detached (off the main actor), and `isSwitching`
       // suppresses Quotari refreshes for the window. The switch service also
       // checks separate CLI processes; the confirmation explains its residual
@@ -137,7 +145,9 @@ extension UsageStore {
         try switcher.switchCLI(
           toRegistryAccount: id,
           now: now,
-          knownLiveTarget: knownLiveTarget
+          knownLiveTarget: knownLiveTarget,
+          targetClaudeProfile: targetClaudeProfile,
+          verifiedLiveClaudeIdentity: verifiedLiveIdentity
         )
       }.value
       await reloadAccountsDuringSwitch()
@@ -193,8 +203,36 @@ extension UsageStore {
     )
   }
 
+  /// Binds the terminal identity snapshot to the exact live credential whose
+  /// profile Quotari already verified. Keychain is canonical when present;
+  /// the credentials file is used only when no valid Keychain row exists.
+  private func verifiedCanonicalLiveClaudeIdentity() -> VerifiedLiveClaudeIdentity? {
+    let live = (accounts[.claude] ?? []).filter { !$0.credentialSource.isCaptured }
+    let canonical = live.first(where: { account in
+      if case .claudeKeychain = account.credentialSource {
+        return true
+      }
+      return false
+    }) ?? live.first(where: { account in
+      if case .claudeCredentialsFile = account.credentialSource {
+        return true
+      }
+      return false
+    })
+    guard let canonical,
+          let profile = verifiedClaudeProfile(for: canonical),
+          let fingerprint = profile.fingerprint
+    else { return nil }
+    return VerifiedLiveClaudeIdentity(
+      source: canonical.credentialSource,
+      accessTokenFingerprint: fingerprint,
+      profile: profile
+    )
+  }
+
   private func verifiedClaudeProfile(for account: ProviderAccount) -> ClaudeProfile? {
     guard let profile = claudeProfiles[account.id],
+          profile.hasStableAccountIdentity,
           let expectedFingerprint = profile.fingerprint,
           let credentials = claudeCredentialLoader(account.credentialSource),
           ProviderCredentialIdentity.fingerprint(of: credentials.accessToken) == expectedFingerprint

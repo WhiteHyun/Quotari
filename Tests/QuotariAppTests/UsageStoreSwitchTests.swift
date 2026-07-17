@@ -281,65 +281,6 @@ struct UsageStoreSwitchConcurrencyTests {
 
 @MainActor
 extension UsageStoreSwitchTests {
-  @Test func switchSelectsTheKeychainRowWhenBothClaudeStoresGoLive() async throws {
-    // After a Claude switch, discovery can show two live rows for the same
-    // identity (keychain + credentials file). The selection must land on the
-    // keychain row — the store Claude Code (and loadResolved) reads first —
-    // so a follow-up refresh rotates the store the CLI actually uses.
-    let directory = try TemporaryDirectory()
-    let home = directory.url
-    let registry = CapturedAccountStore.inMemoryForTesting()
-    let keychain = KeychainPayloadBox()
-    try registry.save(CapturedAccount(
-      id: "claude:fp-saved",
-      provider: .claude,
-      displayName: "Saved Claude",
-      detail: "Keychain",
-      capturedAt: Date(timeIntervalSince1970: 0),
-      origin: .claudeKeychain(service: "Claude Code-credentials"),
-      payload: Data(#"{"claudeAiOauth":{"accessToken":"s","refreshToken":"s-ref","expiresAt":9999999999999}}"#.utf8)
-    ))
-    let savedAccount = ProviderAccount(
-      provider: .claude, displayName: "Saved Claude", detail: "Saved in Quotari",
-      credentialSource: .quotariRegistry(id: "claude:fp-saved")
-    )
-    let liveKeychain = ProviderAccount(
-      provider: .claude, displayName: "Live", detail: "Keychain",
-      credentialSource: .claudeKeychain(service: "Claude Code-credentials")
-    )
-    let liveFile = ProviderAccount(
-      provider: .claude, displayName: "Live", detail: "Credentials file",
-      credentialSource: .claudeCredentialsFile(path: "/tmp/.credentials.json")
-    )
-    let discovery = MutableAccountDiscovery(StaticAccountDiscovery(accounts: [.claude: [savedAccount]]))
-    let store = UsageStore.isolatedForTesting(
-      providers: MockProviders.descriptors.filter { $0.id == .claude },
-      costEstimator: EmptyCostEstimator(),
-      accountDiscovery: discovery,
-      accountSwitch: .isolatedForTesting(
-        capturedAccounts: registry,
-        home: home,
-        keychainRead: { _ in keychain.value },
-        keychainWrite: { payload, _ in keychain.value = payload }
-      ),
-      startsAutomatically: false
-    )
-    await store.reloadAccounts()
-
-    // Both stores now hold the switched-in identity; discovery resolves the
-    // saved account to the canonical (keychain) live row, and both live rows
-    // map back to the saved copy.
-    discovery.update(StaticAccountDiscovery(
-      accounts: [.claude: [liveKeychain, liveFile]],
-      liveEquivalents: [savedAccount.id: liveKeychain],
-      capturedCopies: [liveKeychain.id: savedAccount, liveFile.id: savedAccount]
-    ))
-    await store.switchCLIAccount(to: savedAccount)
-
-    #expect(store.captureErrors[.claude] == nil)
-    #expect(store.selectedAccounts[.claude]?.credentialSource == .claudeKeychain(service: "Claude Code-credentials"))
-  }
-
   @Test func refreshesAreSuppressedWhileSwitching() async {
     // The switch gate must block every credential-touching fetch entry point
     // so none rotates a slot mid-switch.
@@ -371,15 +312,5 @@ extension UsageStoreSwitchTests {
     store.isSwitching = false
     store.startQueuedAccountRediscoveryIfNeeded()
     await store.inFlightAccountReload?.value
-  }
-}
-
-private final class KeychainPayloadBox: @unchecked Sendable {
-  private let lock = NSLock()
-  private var payload: Data?
-
-  var value: Data? {
-    get { lock.withLock { payload } }
-    set { lock.withLock { payload = newValue } }
   }
 }

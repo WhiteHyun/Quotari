@@ -224,6 +224,30 @@ struct CapturedAccountStoreTests {
     #expect(store.account(id: "a")?.payload == Data(#"{"tokens":{"access_token":"rotated"}}"#.utf8))
   }
 
+  @Test func claudePayloadAndTerminalIdentityRefreshAtomically() throws {
+    let keychain = InMemoryKeychain()
+    let store = CapturedAccountStore(keychain: keychain.store, service: "ClaudeMetadataUpdateTest")
+    let account = CapturedAccount(
+      id: "claude:a",
+      provider: .claude,
+      displayName: "Claude",
+      detail: "Keychain",
+      capturedAt: .distantPast,
+      origin: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+      payload: Data(#"{"claudeAiOauth":{"accessToken":"old","refreshToken":"old-ref"}}"#.utf8)
+    )
+    try store.save(account)
+    let metadata = Data(#"{"accountUuid":"a","emailAddress":"a@example.com"}"#.utf8)
+
+    try store.updatePayload(id: account.id, claudeOAuthAccount: metadata) { _ in
+      Data(#"{"claudeAiOauth":{"accessToken":"new","refreshToken":"new-ref"}}"#.utf8)
+    }
+
+    let refreshed = try #require(store.account(id: account.id))
+    #expect(refreshed.claudeOAuthAccount == metadata)
+    #expect(try ClaudeCredentialsStore.parse(refreshed.payload).accessToken == "new")
+  }
+
   @Test func concurrentSavesAllSurviveInTheIndex() async {
     let store = makeStore(InMemoryKeychain())
     // Without serialized index read-modify-write these would clobber each

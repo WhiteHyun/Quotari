@@ -98,6 +98,105 @@ struct AutomaticCaptureIdentitySafetyTests {
     #expect(registry.load().map(\.id) == ["claude:saved"])
     #expect(store.captureErrors[.claude]?.contains("every saved Claude account") == true)
   }
+
+  @Test func organizationOnlyProfileDoesNotCreateAnotherManagedAccount() async throws {
+    let directory = try TemporaryDirectory()
+    let livePayload = claudePayload(
+      accessToken: "organization-only-access",
+      refreshToken: "organization-only-refresh"
+    )
+    let registry = CapturedAccountStore.inMemoryForTesting()
+    try registry.save(CapturedAccount(
+      id: "claude:saved",
+      provider: .claude,
+      displayName: "Saved Claude",
+      detail: "Saved in Quotari",
+      capturedAt: Date(timeIntervalSince1970: 0),
+      origin: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+      payload: claudePayload(accessToken: "saved-access", refreshToken: "saved-refresh")
+    ))
+    let discovery = ProviderAccountDiscovery(
+      environment: [:],
+      home: directory.url,
+      keychainData: { livePayload },
+      capturedAccounts: registry
+    )
+    let store = UsageStore.isolatedForTesting(
+      providers: [claudeDescriptorForAutomaticCapture()],
+      accountDiscovery: discovery,
+      accountCapture: AccountCaptureService(
+        capturedAccounts: registry,
+        claudeKeychainRead: { _ in livePayload }
+      ),
+      automaticallyCapturesDiscoveredAccounts: true,
+      profileFetcher: TokenClaudeProfileFetcher(profiles: [
+        "organization-only-access": ClaudeProfile(organizationName: "Example Organization"),
+        "saved-access": ClaudeProfile(accountID: "saved-account", email: "saved@example.com"),
+      ]),
+      claudeCredentialLoader: { source in
+        identitySafetyCredentials(source: source, livePayload: livePayload, registry: registry)
+      },
+      startsAutomatically: false
+    )
+
+    await store.reloadAccounts()
+
+    #expect(registry.load().map(\.id) == ["claude:saved"])
+    #expect(store.captureErrors[.claude]?.contains("verify this Claude account") == true)
+  }
+
+  @Test func cachedOrganizationOnlyProfileDoesNotCreateAnotherManagedAccount() async throws {
+    let directory = try TemporaryDirectory()
+    let livePayload = claudePayload(
+      accessToken: "organization-only-access",
+      refreshToken: "organization-only-refresh"
+    )
+    let registry = CapturedAccountStore.inMemoryForTesting()
+    try registry.save(CapturedAccount(
+      id: "claude:saved",
+      provider: .claude,
+      displayName: "Saved Claude",
+      detail: "Saved in Quotari",
+      capturedAt: Date(timeIntervalSince1970: 0),
+      origin: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+      payload: claudePayload(accessToken: "saved-access", refreshToken: "saved-refresh")
+    ))
+    let discovery = ProviderAccountDiscovery(
+      environment: [:],
+      home: directory.url,
+      keychainData: { livePayload },
+      capturedAccounts: registry
+    )
+    let liveAccount = try #require(await discovery.accounts(for: .claude).first(where: {
+      !$0.credentialSource.isCaptured
+    }))
+    let store = UsageStore.isolatedForTesting(
+      providers: [claudeDescriptorForAutomaticCapture()],
+      accountDiscovery: discovery,
+      accountCapture: AccountCaptureService(
+        capturedAccounts: registry,
+        claudeKeychainRead: { _ in livePayload }
+      ),
+      automaticallyCapturesDiscoveredAccounts: true,
+      profileFetcher: TokenClaudeProfileFetcher(profiles: [
+        "organization-only-access": ClaudeProfile(organizationName: "Example Organization"),
+        "saved-access": ClaudeProfile(accountID: "saved-account", email: "saved@example.com"),
+      ]),
+      claudeCredentialLoader: { source in
+        identitySafetyCredentials(source: source, livePayload: livePayload, registry: registry)
+      },
+      startsAutomatically: false
+    )
+    store.claudeProfiles[liveAccount.id] = ClaudeProfile(
+      organizationName: "Cached Organization",
+      fingerprint: ProviderCredentialIdentity.fingerprint(of: "organization-only-access")
+    )
+
+    await store.reloadAccounts()
+
+    #expect(registry.load().map(\.id) == ["claude:saved"])
+    #expect(store.captureErrors[.claude]?.contains("verify this Claude account") == true)
+  }
 }
 
 private actor GatedNonRotatingClaudeStrategy: ProviderFetchStrategy {
@@ -142,6 +241,22 @@ private func identitySafetyClaudeDescriptor(
     ),
     pipeline: ProviderFetchPipeline { _ in [strategy] }
   )
+}
+
+private func identitySafetyCredentials(
+  source: ProviderCredentialSource,
+  livePayload: Data,
+  registry: CapturedAccountStore
+) -> ClaudeCredentials? {
+  let payload: Data? = switch source {
+  case .claudeKeychain:
+    livePayload
+  case let .quotariRegistry(id):
+    registry.account(id: id)?.payload
+  case .claudeCredentialsFile, .claudeEnvironment, .codexAuthFile, .codexKeychain:
+    nil
+  }
+  return payload.flatMap { try? ClaudeCredentialsStore.parse($0) }
 }
 
 @MainActor

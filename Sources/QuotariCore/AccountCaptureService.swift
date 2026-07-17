@@ -112,7 +112,9 @@ public struct AccountCaptureService: Sendable {
     provider: UsageProvider,
     origin: ProviderCredentialSource,
     payload: Data,
-    now: Date
+    now: Date,
+    claudeOAuthAccount: Data? = nil,
+    preserveExistingClaudeOAuthAccount: Bool = false
   ) throws -> CapturedAccount? {
     // Renewability is the bar; an identity-less (but renewable) login is
     // still saved, under a UUID, exactly as normal Save would.
@@ -129,10 +131,16 @@ public struct AccountCaptureService: Sendable {
       detail: origin.detail,
       capturedAt: now,
       origin: origin,
-      payload: minimized
+      payload: minimized,
+      claudeOAuthAccount: provider == .claude ? claudeOAuthAccount : nil
     )
     return try capturedAccounts.upsert(captured) { existing, candidate in
-      Self.preferredCredentialSnapshot(existing: existing, candidate: candidate)
+      var resolved = Self.preferredCredentialSnapshot(existing: existing, candidate: candidate)
+      if provider == .claude, preserveExistingClaudeOAuthAccount,
+         let existingOAuthAccount = existing.claudeOAuthAccount {
+        resolved.claudeOAuthAccount = existingOAuthAccount
+      }
+      return resolved
     }
   }
 
@@ -145,6 +153,7 @@ public struct AccountCaptureService: Sendable {
     id: String,
     provider: UsageProvider,
     payload: Data,
+    claudeOAuthAccount: Data? = nil,
     requiresNewerGenerationEvidence: Bool = false
   ) throws -> CapturedAccount {
     guard let existing = capturedAccounts.account(id: id), existing.provider == provider,
@@ -155,7 +164,10 @@ public struct AccountCaptureService: Sendable {
     // explicit switch backup path has stronger transaction evidence and keeps
     // its existing replacement behavior. The guarded decision runs inside the
     // mutation lock so a concurrent refresh cannot be overwritten afterward.
-    try capturedAccounts.updatePayload(id: id) { current in
+    try capturedAccounts.updatePayload(
+      id: id,
+      claudeOAuthAccount: provider == .claude ? claudeOAuthAccount : nil
+    ) { current in
       guard provider == .claude, requiresNewerGenerationEvidence else { return minimized }
       return ProviderCredentialIdentity.claudeCandidateCanReplace(
         storedPayload: current,

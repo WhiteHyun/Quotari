@@ -48,15 +48,16 @@ struct UsageStoreClaudeCredentialRaceTests {
       accessToken: "interrupted-access",
       refreshToken: "interrupted-refresh"
     )
-    let login = AccountLoginService(managedOperation: { provider, _, preserveCredential, credentialMutation in
+    let login = AccountLoginService(observedManagedOperation: { provider, _, preserve, mutation, observation in
       context.liveCredential.value = interveningPayload
-      try await preserveCredential?(
+      try await preserve?(
         provider,
         .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
         interveningPayload
       )
-      credentialMutation?()
+      mutation?()
       context.liveCredential.value = interruptedPayload
+      observation?(context.loginObservation(keychainPayload: interruptedPayload))
       throw AccountLoginError.commandFailed(provider, status: 9)
     })
     let store = context.makeStore(login: login, accountSwitch: context.makeSwitcher())

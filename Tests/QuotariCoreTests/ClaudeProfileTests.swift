@@ -17,6 +17,7 @@ struct ClaudeProfileFetcherTests {
     #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer tok")
     #expect(profile.accountID == "u1")
     #expect(profile.email == "dev@example.com")
+    #expect(profile.organizationID == "o1")
     #expect(profile.organizationName == "Acme")
   }
 
@@ -28,6 +29,7 @@ struct ClaudeProfileFetcherTests {
     let profile = try await ClaudeProfileFetcher(transport: transport).fetchProfile(accessToken: "tok")
 
     #expect(profile.email == "solo@example.com")
+    #expect(profile.organizationID == "o1")
     #expect(profile.organizationName == nil)
   }
 
@@ -54,6 +56,7 @@ struct ClaudeProfileStoreTests {
 
     var profile = ClaudeProfile(
       email: "a@b.com",
+      organizationID: "organization-uuid",
       organizationName: "Org",
       fingerprint: "access-fingerprint"
     )
@@ -63,6 +66,7 @@ struct ClaudeProfileStoreTests {
 
     #expect(loaded["claude:keychain"]?.accountID == "account-uuid")
     #expect(loaded["claude:keychain"]?.email == "a@b.com")
+    #expect(loaded["claude:keychain"]?.organizationID == "organization-uuid")
     #expect(loaded["claude:keychain"]?.organizationName == "Org")
     #expect(loaded["claude:keychain"]?.fingerprint == "access-fingerprint")
   }
@@ -78,6 +82,7 @@ struct ClaudeProfileStoreTests {
 
     #expect(profile.accountID == nil)
     #expect(profile.email == "legacy@example.com")
+    #expect(profile.organizationID == nil)
     #expect(profile.fingerprint == "legacy-fingerprint")
   }
 

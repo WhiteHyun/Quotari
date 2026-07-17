@@ -4,9 +4,10 @@ import QuotariCore
 extension UsageStore {
   @discardableResult
   func submitAccountLoginAuthenticationCode(_ code: String, for provider: UsageProvider) -> Bool {
-    guard accountLoginPhases[provider] == .waitingForAuthenticationCode,
-          let input = accountLoginInputs[provider]
-    else {
+    guard accountLoginPhases[provider] == .waitingForAuthenticationCode else {
+      return false
+    }
+    guard let input = accountLoginInputs[provider] else {
       accountLoginErrors[provider] = AccountLoginInputError.inputUnavailable.localizedDescription
       return false
     }
@@ -50,28 +51,47 @@ extension UsageStore {
       onCredentialMutationPossible: {
         registryBaseline?.markCredentialMutationPossible()
       },
-      onCredentialObserved: { payload in
-        registryBaseline?.recordClaudePostLoginKeychain(payload)
+      onCredentialObserved: { observation in
+        registryBaseline?.recordClaudePostLogin(
+          keychainPayload: observation.keychainPayload,
+          accountState: observation.accountState
+        )
       }
     )
-    registryBaseline?.recordClaudePostLoginKeychain(result.payload)
+    if let observation = result.claudeLoginObservation {
+      registryBaseline?.recordClaudePostLogin(
+        keychainPayload: observation.keychainPayload,
+        accountState: observation.accountState
+      )
+    }
     return result
   }
 
   private func appendAccountLoginOutput(_ output: String, for provider: UsageProvider) {
     var sanitizer = accountLoginOutputSanitizers[provider] ?? AccountLoginOutputSanitizer()
     let sanitized = sanitizer.append(output)
-    accountLoginOutputSanitizers[provider] = sanitizer
     let previous = accountLoginOutputs[provider] ?? ""
     let combined = previous + sanitized
     accountLoginOutputs[provider] = String(combined.suffix(12000))
     let authenticationCodePrompt = "Paste code here"
-    let recentOutput = String(previous.suffix(authenticationCodePrompt.count - 1)) + sanitized
+    let loginSuccess = "Login successful"
+    let boundaryLength = max(authenticationCodePrompt.count, loginSuccess.count) - 1
+    let recentOutput = String(previous.suffix(boundaryLength)) + sanitized
     let phase = accountLoginPhases[provider]
-    if phase == .waitingForBrowser || phase == .completingLogin,
-       recentOutput.localizedCaseInsensitiveContains(authenticationCodePrompt) {
+    let canObserveLoginSuccess = phase == .waitingForBrowser
+      || phase == .waitingForAuthenticationCode
+      || phase == .completingLogin
+    if canObserveLoginSuccess,
+       recentOutput.localizedCaseInsensitiveContains(loginSuccess) {
+      accountLoginErrors[provider] = nil
+      sanitizer.didObserveLoginSuccess = true
+      accountLoginPhases[provider] = .completingLogin
+    } else if !sanitizer.didObserveLoginSuccess,
+              phase == .waitingForBrowser || phase == .completingLogin,
+              recentOutput.localizedCaseInsensitiveContains(authenticationCodePrompt) {
       accountLoginPhases[provider] = .waitingForAuthenticationCode
     }
+    accountLoginOutputSanitizers[provider] = sanitizer
   }
 }
 
@@ -86,6 +106,7 @@ struct AccountLoginOutputSanitizer {
 
   private var state = State.text
   private var lastOutputWasNewline = false
+  var didObserveLoginSuccess = false
 
   mutating func append(_ output: String) -> String {
     var sanitized = String.UnicodeScalarView()

@@ -1,23 +1,10 @@
 import Foundation
 
-/// A live Claude source whose current access-token generation was verified
-/// against the saved account's profile immediately before a switch. The
-/// service rechecks the fingerprint on every slot read before it may refresh
-/// that saved registry row in place.
-public struct KnownLiveClaudeTarget: Equatable, Sendable {
-  public var source: ProviderCredentialSource
-  public var accessTokenFingerprint: String
-
-  public init(source: ProviderCredentialSource, accessTokenFingerprint: String) {
-    self.source = source
-    self.accessTokenFingerprint = accessTokenFingerprint
-  }
-}
-
 /// Switches the account a CLI actually uses: writes a saved (registry)
 /// account's credentials into the CLI's own credential slot — the Claude Code
-/// keychain item AND `~/.claude/.credentials.json` when present (both, so the
-/// CLI's read-precedence can't resurrect the old login), or the effective
+/// keychain item, `~/.claude/.credentials.json` when present, AND the matching
+/// `~/.claude.json.oauthAccount` identity (so new terminals label the switched
+/// credential correctly), or the effective
 /// Codex's configured file/keyring/auto credential backend (scoped by the
 /// effective `CODEX_HOME`).
 ///
@@ -123,7 +110,9 @@ public extension AccountSwitchService {
   func switchCLI(
     toRegistryAccount id: String,
     now: Date,
-    knownLiveTarget: KnownLiveClaudeTarget? = nil
+    knownLiveTarget: KnownLiveClaudeTarget? = nil,
+    targetClaudeProfile: ClaudeProfile? = nil,
+    verifiedLiveClaudeIdentity: VerifiedLiveClaudeIdentity? = nil
   ) throws -> ProviderCredentialSource {
     let provider = capturedAccounts.account(id: id)?.provider
     if let provider {
@@ -134,7 +123,9 @@ public extension AccountSwitchService {
       return try switchClaude(
         registryID: id,
         now: now,
-        knownLiveTarget: knownLiveTarget
+        knownLiveTarget: knownLiveTarget,
+        targetProfile: targetClaudeProfile,
+        verifiedLiveIdentity: verifiedLiveClaudeIdentity
       )
     case .codex:
       return try switchCodex(registryID: id, now: now)
@@ -150,12 +141,15 @@ private extension AccountSwitchService {
   private func switchClaude(
     registryID: String,
     now: Date,
-    knownLiveTarget: KnownLiveClaudeTarget?
+    knownLiveTarget: KnownLiveClaudeTarget?,
+    targetProfile: ClaudeProfile?,
+    verifiedLiveIdentity: VerifiedLiveClaudeIdentity?
   ) throws -> ProviderCredentialSource {
     let current = try backedUpClaudeSlots(
       registryID: registryID,
       now: now,
-      knownLiveTarget: knownLiveTarget
+      knownLiveTarget: knownLiveTarget,
+      verifiedLiveIdentity: verifiedLiveIdentity
     )
     let service = current.service
     let fileURL = current.fileURL
@@ -166,6 +160,10 @@ private extension AccountSwitchService {
     // Re-read the target AFTER backups: a backup may have refreshed the same
     // registry id with a fresher copy of the target account.
     let savedPayload = try targetPayload(registryID: registryID)
+    let accountState = try claudeAccountStateInstallation(
+      registryID: registryID,
+      targetProfile: targetProfile
+    )
 
     // Write only the stores that already existed, so the switch never leaves
     // an orphaned credential in a store the user wasn't using. If NEITHER
@@ -188,7 +186,8 @@ private extension AccountSwitchService {
       service: service,
       fileURL: fileURL,
       previous: ResolvedClaudeLivePayloads(keychain: keychainNow, file: fileNow),
-      replacement: ResolvedClaudeLivePayloads(keychain: mergedKeychain, file: mergedFile)
+      replacement: ResolvedClaudeLivePayloads(keychain: mergedKeychain, file: mergedFile),
+      accountState: accountState
     ))
     discardClaudeLivePendingGrantsAfterSuccessfulSwitch(current.pendingGrants)
     // The CLI reads the keychain first when both exist; that's the store the
@@ -201,7 +200,8 @@ private extension AccountSwitchService {
   private func backedUpClaudeSlots(
     registryID: String,
     now: Date,
-    knownLiveTarget: KnownLiveClaudeTarget?
+    knownLiveTarget: KnownLiveClaudeTarget?,
+    verifiedLiveIdentity: VerifiedLiveClaudeIdentity?
   ) throws -> ClaudeSlots {
     let service = ClaudeCredentialsStore.keychainService
     let fileURL = home.appendingPathComponent(".claude/.credentials.json")
@@ -231,25 +231,27 @@ private extension AccountSwitchService {
       context: context
     )
 
-    let current = try claudeLiveSnapshot(
+    let current = try stableClaudeLiveSnapshot(
       sources: sources,
       service: service,
-      fileURL: fileURL
+      fileURL: fileURL,
+      expectedPendingGrants: first.pendingGrants
     )
-    guard current.pendingGrants == first.pendingGrants else {
-      throw AccountSwitchError.slotReadFailed(
-        underlying: "A pending Claude token grant changed during the account switch."
-      )
-    }
+    let currentOAuthAccount = try stableClaudeOAuthAccount(
+      matching: current.slots,
+      service: service,
+      fileURL: fileURL,
+      verifiedLiveIdentity: verifiedLiveIdentity
+    )
     _ = try backUpResolvedClaudeSlots(
       current.resolvedSlots,
       verification: current.slots,
       keychainSource: keychainSource,
       fileSource: fileSource,
-      context: context
+      context: context,
+      claudeOAuthAccount: currentOAuthAccount
     )
-    let pendingGrants = try recordDurableClaudeLivePendingGrantBackups(current.pendingGrants)
-    return ClaudeSlots(
+    return try ClaudeSlots(
       service: service,
       fileURL: fileURL,
       fileSource: fileSource,
@@ -257,8 +259,27 @@ private extension AccountSwitchService {
       // exact second-read bytes so both live stores stay on one generation.
       keychain: current.slots.keychain,
       file: current.slots.file,
-      pendingGrants: pendingGrants
+      pendingGrants: recordDurableClaudeLivePendingGrantBackups(current.pendingGrants)
     )
+  }
+
+  private func stableClaudeLiveSnapshot(
+    sources: [ProviderCredentialSource],
+    service: String,
+    fileURL: URL,
+    expectedPendingGrants: [ClaudeLivePendingGrant]
+  ) throws -> ClaudeLiveSnapshot {
+    let current = try claudeLiveSnapshot(
+      sources: sources,
+      service: service,
+      fileURL: fileURL
+    )
+    guard current.pendingGrants == expectedPendingGrants else {
+      throw AccountSwitchError.slotReadFailed(
+        underlying: "A pending Claude token grant changed during the account switch."
+      )
+    }
+    return current
   }
 
   private func claudeLiveSnapshot(
@@ -288,8 +309,12 @@ private extension AccountSwitchService {
     verification: ResolvedClaudeLivePayloads,
     keychainSource: ProviderCredentialSource,
     fileSource: ProviderCredentialSource,
-    context: ClaudeBackupContext
+    context: ClaudeBackupContext,
+    claudeOAuthAccount: Data? = nil
   ) throws -> ResolvedClaudeLivePayloads {
+    let keychainIsCanonical = verification.keychain.flatMap {
+      try? ClaudeCredentialsStore.parse($0)
+    } != nil
     // Refresh the explicitly verified row before capturing a matching mirror.
     // Its newly rotated identity then makes the mirror converge on that row
     // instead of creating a duplicate under the refresh-token fingerprint.
@@ -298,13 +323,15 @@ private extension AccountSwitchService {
         slots.file,
         verificationPayload: verification.file,
         source: fileSource,
-        context: context
+        context: context,
+        claudeOAuthAccount: keychainIsCanonical ? nil : claudeOAuthAccount
       )
       let keychain = try backedUpClaudeSlot(
         slots.keychain,
         verificationPayload: verification.keychain,
         source: keychainSource,
-        context: context
+        context: context,
+        claudeOAuthAccount: keychainIsCanonical ? claudeOAuthAccount : nil
       )
       return ResolvedClaudeLivePayloads(keychain: keychain, file: file)
     }
@@ -312,13 +339,15 @@ private extension AccountSwitchService {
       slots.keychain,
       verificationPayload: verification.keychain,
       source: keychainSource,
-      context: context
+      context: context,
+      claudeOAuthAccount: keychainIsCanonical ? claudeOAuthAccount : nil
     )
     let file = try backedUpClaudeSlot(
       slots.file,
       verificationPayload: verification.file,
       source: fileSource,
-      context: context
+      context: context,
+      claudeOAuthAccount: keychainIsCanonical ? nil : claudeOAuthAccount
     )
     return ResolvedClaudeLivePayloads(keychain: keychain, file: file)
   }
@@ -327,18 +356,23 @@ private extension AccountSwitchService {
     _ payload: Data?,
     verificationPayload: Data?,
     source: ProviderCredentialSource,
-    context: ClaudeBackupContext
+    context: ClaudeBackupContext,
+    claudeOAuthAccount: Data? = nil
   ) throws -> Data? {
-    try backedUpSlot(
+    let refreshingTargetID = verifiedTargetID(
+      registryID: context.registryID,
+      payload: verificationPayload,
+      source: source,
+      knownLiveTarget: context.knownLiveTarget
+    )
+    return try backedUpSlot(
       payload,
       origin: source,
       now: context.now,
-      refreshingTargetID: verifiedTargetID(
-        registryID: context.registryID,
-        payload: verificationPayload,
-        source: source,
-        knownLiveTarget: context.knownLiveTarget
-      )
+      refreshingTargetID: refreshingTargetID,
+      // A known target proves the credential generation, not that the
+      // terminal state beside it is current. Keep its trusted saved identity.
+      claudeOAuthAccount: refreshingTargetID == nil ? claudeOAuthAccount : nil
     )
   }
 

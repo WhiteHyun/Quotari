@@ -6,6 +6,13 @@ extension AccountSwitchService {
     var fileURL: URL
     var previous: ResolvedClaudeLivePayloads
     var replacement: ResolvedClaudeLivePayloads
+    var accountState: ClaudeAccountStateInstallation?
+  }
+
+  struct ClaudeAccountStateInstallation {
+    var url: URL
+    var previous: Data?
+    var replacement: Data
   }
 
   func requireCLIInactive(_ provider: UsageProvider) throws {
@@ -20,87 +27,22 @@ extension AccountSwitchService {
     }
   }
 
-  /// Restores the exact Keychain state observed immediately before Claude's
-  /// browser login started. Before replacing a different renewable credential,
-  /// it saves that credential to Quotari: a cancelled or failed CLI command can
-  /// still have completed a token rotation, and that pair may be the account's
-  /// only usable generation. The compare-before-write helpers leave a
-  /// concurrently changed credential untouched.
-  public func restoreClaudeLoginKeychain(to previous: Data?) throws {
-    try restoreClaudeLoginKeychain(to: previous, expectation: .preserveInstalledCredential)
-  }
-
-  /// Restores only when the keychain still contains the exact generation
-  /// observed when Quotari's login attempt ended. This permits rollback of an
-  /// unrenewable failed-login payload without discarding a later external login.
-  public func restoreClaudeLoginKeychain(
-    to previous: Data?,
-    replacing observedPostLogin: Data?
-  ) throws {
-    try restoreClaudeLoginKeychain(
-      to: previous,
-      expectation: .replaceObservedCredential(observedPostLogin)
-    )
-  }
-
-  private func restoreClaudeLoginKeychain(
-    to previous: Data?,
-    expectation: ClaudeLoginRecoveryExpectation
-  ) throws {
-    let service = ClaudeCredentialsStore.keychainService
-    try requireCLIInactive(.claude)
-    let installed = try readKeychain(service)
-    guard installed != previous else { return }
-    if case let .replaceObservedCredential(observed) = expectation,
-       installed != observed {
-      throw AccountSwitchError.concurrentCredentialChange
-    }
-    let canSkipUnrenewableBackup = if case .replaceObservedCredential = expectation {
-      true
-    } else {
-      false
-    }
-    if !canSkipUnrenewableBackup
-      || installed.map({
-        ProviderCredentialMinimizer.minimize(provider: .claude, payload: $0) != nil
-      }) == true {
-      try backUp(
-        provider: .claude,
-        payload: installed,
-        origin: .claudeKeychain(service: service),
-        now: Date()
-      )
-    }
-    switch (previous, installed) {
-    case let (previous?, installed?):
-      try restoreClaudeKeychain(previous, replacing: installed, service: service)
-    case let (previous?, nil):
-      // The CLI is a separate process and Keychain has no compare-and-swap.
-      // Narrow the empty-slot race with the same activity/read interlock used
-      // by normal switches immediately before recreating the item.
-      try requireCLIInactive(.claude)
-      guard try readKeychain(service) == nil else {
-        throw AccountSwitchError.concurrentCredentialChange
-      }
-      try writeClaudeKeychain(previous, replacing: nil, service: service)
-    case let (nil, installed?):
-      try removeCreatedClaudeKeychain(replacing: installed, service: service)
-    case (nil, nil):
-      return
-    }
-  }
-
-  private enum ClaudeLoginRecoveryExpectation {
-    case preserveInstalledCredential
-    case replaceObservedCredential(Data?)
-  }
-
   func installClaudeCredentials(_ installation: ClaudeCredentialInstallation) throws {
     let preparedFile = try prepareCredentialFile(
       installation.replacement.file,
       replacing: installation.fileURL
     )
     defer { secureFileWriter.discard(preparedFile) }
+    let preparedFileRollback = try prepareCredentialFile(
+      installation.accountState == nil ? nil : installation.previous.file,
+      replacing: installation.fileURL
+    )
+    defer { secureFileWriter.discard(preparedFileRollback) }
+    let preparedAccountState = try prepareCredentialFile(
+      installation.accountState?.replacement,
+      replacing: installation.accountState?.url ?? installation.fileURL
+    )
+    defer { secureFileWriter.discard(preparedAccountState) }
     try requireCLIInactive(.claude)
     try verifyClaudeSlots(
       service: installation.service,
@@ -119,6 +61,84 @@ extension AccountSwitchService {
       try commitClaudeFile(preparedFile, installation: installation)
     }
     try verifyAppliedClaudeSlots(installation)
+    if let preparedAccountState, let accountState = installation.accountState {
+      try commitClaudeAccountState(
+        preparedAccountState,
+        accountState: accountState,
+        installation: installation,
+        preparedFileRollback: preparedFileRollback
+      )
+    }
+  }
+
+  private func commitClaudeAccountState(
+    _ preparedAccountState: URL,
+    accountState: ClaudeAccountStateInstallation,
+    installation: ClaudeCredentialInstallation,
+    preparedFileRollback: URL?
+  ) throws {
+    do {
+      try requireCLIInactive(.claude)
+      try verifyClaudeSlots(
+        service: installation.service,
+        fileURL: installation.fileURL,
+        expectedKeychain: installation.replacement.keychain,
+        expectedFile: installation.replacement.file
+      )
+      guard try readFile(accountState.url) == accountState.previous else {
+        throw AccountSwitchError.concurrentCredentialChange
+      }
+      try secureFileWriter.commit(preparedAccountState, replacing: accountState.url)
+    } catch {
+      let writeError = error
+      do {
+        try rollbackClaudeCredentialSlots(
+          installation,
+          preparedFileRollback: preparedFileRollback
+        )
+      } catch {
+        throw AccountSwitchError.partialSwitch(
+          underlying: "Claude's account identity update failed and its credential rollback also failed: "
+            + error.localizedDescription
+        )
+      }
+      if let switchError = writeError as? AccountSwitchError {
+        throw switchError
+      }
+      throw AccountSwitchError.writeFailed(underlying: writeError.localizedDescription)
+    }
+  }
+
+  private func rollbackClaudeCredentialSlots(
+    _ installation: ClaudeCredentialInstallation,
+    preparedFileRollback: URL?
+  ) throws {
+    try requireCLIInactive(.claude)
+    var rollbackErrors: [String] = []
+    if let replacementFile = installation.replacement.file {
+      do {
+        guard try readFile(installation.fileURL) == replacementFile,
+              let preparedFileRollback
+        else { throw AccountSwitchError.concurrentCredentialChange }
+        try secureFileWriter.commit(preparedFileRollback, replacing: installation.fileURL)
+      } catch {
+        rollbackErrors.append("credentials file: \(error.localizedDescription)")
+      }
+    }
+    do {
+      try restoreClaudeKeychainIfNeeded(
+        installation.previous.keychain,
+        replacing: installation.replacement.keychain,
+        service: installation.service
+      )
+    } catch {
+      rollbackErrors.append("Keychain: \(error.localizedDescription)")
+    }
+    if !rollbackErrors.isEmpty {
+      throw AccountSwitchError.partialSwitch(
+        underlying: rollbackErrors.joined(separator: "; ")
+      )
+    }
   }
 
   private func commitClaudeFile(
@@ -209,7 +229,7 @@ extension AccountSwitchService {
     else { throw AccountSwitchError.concurrentCredentialChange }
   }
 
-  private func writeClaudeKeychain(
+  func writeClaudeKeychain(
     _ payload: Data,
     replacing previous: Data?,
     service: String
@@ -240,7 +260,7 @@ extension AccountSwitchService {
     }
   }
 
-  private func restoreClaudeKeychain(
+  func restoreClaudeKeychain(
     _ previous: Data,
     replacing installed: Data,
     service: String
@@ -275,7 +295,7 @@ extension AccountSwitchService {
     }
   }
 
-  private func removeCreatedClaudeKeychain(
+  func removeCreatedClaudeKeychain(
     replacing installed: Data,
     service: String
   ) throws {

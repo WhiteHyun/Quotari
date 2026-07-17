@@ -21,6 +21,7 @@ extension ClaudeProfile {
     ClaudeProfile(
       accountID: accountID,
       email: email,
+      organizationID: organizationID,
       organizationName: organizationName,
       fingerprint: fingerprint
     )

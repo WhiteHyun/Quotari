@@ -187,6 +187,7 @@ extension UsageStore {
       let verified = ClaudeProfile(
         accountID: profile.accountID,
         email: profile.email,
+        organizationID: profile.organizationID,
         organizationName: profile.organizationName,
         fingerprint: attempt.credential.fingerprint
       )

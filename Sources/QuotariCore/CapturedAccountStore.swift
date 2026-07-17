@@ -16,6 +16,10 @@ public struct CapturedAccount: Codable, Equatable, Sendable, Identifiable {
   /// this snapshot when the CLI's live credential changes.
   public var origin: ProviderCredentialSource
   public var payload: Data
+  /// Claude Code keeps the display identity used by `claude auth status` in a
+  /// separate `~/.claude.json.oauthAccount` object. Store the exact object
+  /// with the renewable credential so both can be restored together.
+  public var claudeOAuthAccount: Data?
 
   public init(
     id: String,
@@ -24,7 +28,8 @@ public struct CapturedAccount: Codable, Equatable, Sendable, Identifiable {
     detail: String?,
     capturedAt: Date,
     origin: ProviderCredentialSource,
-    payload: Data
+    payload: Data,
+    claudeOAuthAccount: Data? = nil
   ) {
     self.id = id
     self.provider = provider
@@ -33,6 +38,7 @@ public struct CapturedAccount: Codable, Equatable, Sendable, Identifiable {
     self.capturedAt = capturedAt
     self.origin = origin
     self.payload = payload
+    self.claudeOAuthAccount = claudeOAuthAccount
   }
 }
 
@@ -143,11 +149,22 @@ public struct CapturedAccountStore: Sendable {
   /// a check-then-write (e.g. a stale-token guard) can't race a concurrent
   /// capture or refresh into clobbering the newer pair.
   public func updatePayload(id: String, transform: (Data) throws -> Data) throws {
+    try updatePayload(id: id, claudeOAuthAccount: nil, transform: transform)
+  }
+
+  public func updatePayload(
+    id: String,
+    claudeOAuthAccount: Data?,
+    transform: (Data) throws -> Data
+  ) throws {
     try Self.mutationLock.withLock {
       guard var account = account(id: id) else {
         throw KeychainItemStore.KeychainError.commandFailed(status: 44)
       }
       account.payload = try transform(account.payload)
+      if account.provider == .claude, let claudeOAuthAccount {
+        account.claudeOAuthAccount = claudeOAuthAccount
+      }
       try keychain.write(encode(account), service: itemService(id))
     }
   }
