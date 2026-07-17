@@ -41,12 +41,15 @@ public actor ClaudeUsageRateLimitGate {
 
   public func recordRateLimit(retryAfter: Date?, now: Date? = nil) {
     let now = now ?? currentDate()
-    let blockedUntil = if let retryAfter, retryAfter > now {
-      retryAfter
-    } else {
-      now.addingTimeInterval(defaultCooldown)
+    if let retryAfter {
+      guard retryAfter > now else {
+        clear()
+        return
+      }
+      store(retryAfter)
+      return
     }
-    store(blockedUntil)
+    store(now.addingTimeInterval(defaultCooldown))
   }
 
   public func recordSuccess() {

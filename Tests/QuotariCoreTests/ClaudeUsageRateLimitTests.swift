@@ -136,6 +136,17 @@ struct ClaudeUsageRateLimitTests {
     #expect(await gate.blockedUntil(now: gateNow) == gateNow.addingTimeInterval(300))
   }
 
+  @Test func zeroOrElapsedRetryAfterDoesNotImposeDefaultCooldown() async {
+    let now = Date(timeIntervalSince1970: 1_783_478_400)
+    let gate = ClaudeUsageRateLimitGate(defaultCooldown: 300, now: { now })
+    await gate.recordRateLimit(retryAfter: nil)
+    #expect(await gate.blockedUntil(now: now) == now.addingTimeInterval(300))
+
+    await gate.recordRateLimit(retryAfter: now)
+
+    #expect(await gate.blockedUntil(now: now) == nil)
+  }
+
   @Test func persistedCooldownSurvivesGateRecreation() async throws {
     let suiteName = "quotari-rate-limit-\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: suiteName))

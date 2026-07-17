@@ -52,7 +52,30 @@ struct UsageStoreClaudeRateLimitTests {
     #expect(await strategy.interactions == [.background, .userInitiated])
   }
 
-  private static func store(strategy: any ProviderFetchStrategy) -> UsageStore {
+  @Test func explicitAccountScanPropagatesUserInitiatedInteraction() async {
+    let strategy = InteractionSequenceStrategy(outcomes: [.success])
+    let account = ProviderAccount(
+      provider: .claude,
+      displayName: "Claude Code",
+      detail: nil,
+      credentialSource: .claudeKeychain(service: "rate-limit-test")
+    )
+    let store = Self.store(strategy: strategy, accounts: [account])
+    await store.reloadAccounts()
+
+    await store.refreshAccountUsage(
+      for: .claude,
+      force: true,
+      interaction: .userInitiated
+    )
+
+    #expect(await strategy.interactions == [.userInitiated])
+  }
+
+  private static func store(
+    strategy: any ProviderFetchStrategy,
+    accounts: [ProviderAccount] = []
+  ) -> UsageStore {
     let metadata = ProviderRegistry.descriptor(for: .claude).metadata
     let descriptor = ProviderDescriptor(
       id: .claude,
@@ -61,6 +84,7 @@ struct UsageStoreClaudeRateLimitTests {
     )
     return UsageStore.isolatedForTesting(
       providers: [descriptor],
+      accountDiscovery: StaticAccountDiscovery(accounts: [.claude: accounts]),
       startsAutomatically: false
     )
   }

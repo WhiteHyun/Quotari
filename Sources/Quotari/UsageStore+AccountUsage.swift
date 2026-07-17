@@ -68,7 +68,8 @@ extension UsageStore {
     force: Bool = false,
     notifiesQuota: Bool = false,
     includingLogicalAccountIDs: Set<String>? = nil,
-    excludingCredentialScopeIDs: Set<String> = []
+    excludingCredentialScopeIDs: Set<String> = [],
+    interaction: ProviderFetchInteraction = .background
   ) async {
     // A per-account fetch can rotate/persist a live token; never start one
     // while a switch is rewriting a credential slot.
@@ -78,7 +79,8 @@ extension UsageStore {
     let request = AccountUsageRefreshRequest(
       force: force, notifiesQuota: notifiesQuota,
       includingLogicalAccountIDs: includingLogicalAccountIDs,
-      excludingCredentialScopeIDs: excludingCredentialScopeIDs
+      excludingCredentialScopeIDs: excludingCredentialScopeIDs,
+      interaction: interaction
     )
     guard await joinsAccountUsageRefresh(provider, request: request) == false else { return }
     guard let descriptor = providers.first(where: { $0.id == provider }) else { return }
@@ -88,40 +90,22 @@ extension UsageStore {
 
     refreshingAccountUsageProviders.insert(provider)
     let revision = accountRevisions[provider] ?? 0
-    let task = Task { [weak self] in
-      guard let self else { return AccountUsageRefreshOutcome() }
-      let outcome = await performAndCompleteAccountUsageRefresh(
-        provider: provider,
-        execution: AccountUsageRefreshExecution(
-          descriptor: descriptor,
-          accounts: accountsToFetch,
-          now: now,
-          revision: revision,
-          notifiesQuota: notifiesQuota
-        )
-      )
-      guard !Task.isCancelled,
-            isProviderEnabled(provider),
-            (accountRevisions[provider] ?? 0) == revision
-      else { return outcome }
-      // Per-account fetches can rotate a live token too; keep any hidden
-      // saved copy of that identity in step.
-      await syncCapturedCopies(of: capturedCopyCandidates.filter { $0.provider == provider })
-      // A per-account usage fetch can rotate/persist a Claude token (via the
-      // strategy's refresh), so resolve email labels afterward too — otherwise
-      // a label stuck behind an expired token wouldn't update until a full
-      // dashboard refresh or reload.
-      if provider == .claude {
-        refreshClaudeProfiles()
-      }
-      return outcome
-    }
+    let execution = AccountUsageRefreshExecution(
+      descriptor: descriptor,
+      accounts: accountsToFetch,
+      now: now,
+      revision: revision,
+      notifiesQuota: notifiesQuota,
+      interaction: interaction
+    )
+    let task = accountUsageRefreshTask(provider: provider, execution: execution)
     accountUsageRefreshTasks[provider] = AccountUsageRefreshTask(
       task: task,
       force: force,
       notifiesQuota: notifiesQuota,
       revision: revision,
-      credentialScopeIDs: Set(accountsToFetch.map(\.credentialScopeID))
+      credentialScopeIDs: Set(accountsToFetch.map(\.credentialScopeID)),
+      interaction: interaction
     )
     _ = await task.value
     await retryNotifyingAccountUsageRefreshIfNeeded(
@@ -131,7 +115,11 @@ extension UsageStore {
     )
   }
 
-  func refreshAccountUsage(for account: ProviderAccount, force: Bool = false) async {
+  func refreshAccountUsage(
+    for account: ProviderAccount,
+    force: Bool = false,
+    interaction: ProviderFetchInteraction = .background
+  ) async {
     await waitForAutomaticCaptureBeforeAccountUsage(account.provider)
     guard !isSwitching, isProviderEnabled(account.provider),
           let currentAccount = monitoredAccount(afterCapturing: account)
@@ -139,7 +127,8 @@ extension UsageStore {
     await refreshAccountUsage(
       for: account.provider,
       force: force,
-      includingLogicalAccountIDs: [logicalMonitoringAccountID(for: currentAccount)]
+      includingLogicalAccountIDs: [logicalMonitoringAccountID(for: currentAccount)],
+      interaction: interaction
     )
   }
 
@@ -278,65 +267,7 @@ extension UsageStore {
     return usage.error == nil ? nil : usage
   }
 
-  func performAccountUsageRefresh(
-    provider: UsageProvider,
-    descriptor: ProviderDescriptor,
-    accounts: [ProviderAccount],
-    now: Date,
-    revision: UInt
-  ) async -> AccountUsageRefreshOutcome {
-    await withTaskGroup(
-      of: (ProviderAccount, Result<ProviderFetchResult, Error>).self,
-      returning: AccountUsageRefreshOutcome.self
-    ) { group in
-      for account in accounts {
-        let capturedRegistryID = capturedRegistryID(for: account)
-        group.addTask {
-          await (
-            account,
-            descriptor.fetch(
-              now: now,
-              account: account,
-              capturedRegistryID: capturedRegistryID
-            )
-          )
-        }
-      }
-      var credentialTransitions: [String: Set<String>] = [:]
-      var notificationCandidates: [AccountUsageNotificationCandidate] = []
-      for await (account, result) in group {
-        if let transition = result.credentialTransitionEvidence {
-          for sourceScopeID in transition.sourceScopeIDs {
-            credentialTransitions[sourceScopeID, default: []].insert(transition.targetScopeID)
-          }
-        }
-        guard !Task.isCancelled,
-              isProviderEnabled(provider),
-              (accountRevisions[provider] ?? 0) == revision,
-              self.accounts[provider]?.contains(account) == true
-        else { continue }
-        if case let .success(value) = result,
-           !fetchResult(value, belongsTo: account) {
-          // A mutable credential source can be replaced after discovery but
-          // before its fetch reads the file/keychain. Never publish account B's
-          // usage under the stale row for account A.
-          continue
-        }
-        applyAccountUsageResult(result, account: account)
-        if case let .success(value) = result {
-          notificationCandidates.append(
-            AccountUsageNotificationCandidate(account: account, result: value)
-          )
-        }
-      }
-      return AccountUsageRefreshOutcome(
-        credentialTransitions: credentialTransitions,
-        notificationCandidates: notificationCandidates
-      )
-    }
-  }
-
-  private func applyAccountUsageResult(
+  func applyAccountUsageResult(
     _ result: Result<ProviderFetchResult, Error>,
     account: ProviderAccount
   ) {
