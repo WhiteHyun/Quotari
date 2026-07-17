@@ -53,8 +53,7 @@ final class UsageStore {
   var automaticallyCapturingProviders = Set<UsageProvider>()
   private(set) var accountRediscoveryRequest: UInt = 0
   private(set) var completedAccountRediscoveryRequest: UInt = 0
-  /// Add Account requests that preserve a live CLI credential even when its provider is disabled.
-  /// The request generation keeps this override on the exact coalesced reload that the caller awaits.
+  /// Add Account preservation overrides keyed to the exact coalesced reload request.
   var accountPreservationRequests: [UsageProvider: UInt] = [:]
   private var accountRediscoveryWaiters: [AccountRediscoveryWaiter] = []
   /// True while an account switch is writing a credential slot. Refreshes are
@@ -70,6 +69,7 @@ final class UsageStore {
   var accountLoginPhases: [UsageProvider: AccountLoginPhase] = [:]
   var accountLoginErrors: [UsageProvider: String] = [:]
   var accountLoginOutputs: [UsageProvider: String] = [:]
+  var accountLoginOutputSanitizers: [UsageProvider: AccountLoginOutputSanitizer] = [:]
   var refreshInterval: TimeInterval {
     didSet {
       defaults.set(refreshInterval, forKey: Self.refreshIntervalDefaultsKey)

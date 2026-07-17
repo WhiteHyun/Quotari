@@ -54,11 +54,103 @@ extension UsageStore {
   }
 
   private func appendAccountLoginOutput(_ output: String, for provider: UsageProvider) {
-    let combined = (accountLoginOutputs[provider] ?? "") + output
+    var sanitizer = accountLoginOutputSanitizers[provider] ?? AccountLoginOutputSanitizer()
+    let sanitized = sanitizer.append(output)
+    accountLoginOutputSanitizers[provider] = sanitizer
+    let combined = (accountLoginOutputs[provider] ?? "") + sanitized
     accountLoginOutputs[provider] = String(combined.suffix(12000))
     if accountLoginPhases[provider] == .waitingForBrowser,
        combined.localizedCaseInsensitiveContains("Paste code here") {
       accountLoginPhases[provider] = .waitingForAuthenticationCode
+    }
+  }
+}
+
+struct AccountLoginOutputSanitizer {
+  private enum State {
+    case text
+    case escape
+    case controlSequence
+    case operatingSystemCommand
+    case operatingSystemCommandEscape
+  }
+
+  private var state = State.text
+  private var lastOutputWasNewline = false
+
+  mutating func append(_ output: String) -> String {
+    var sanitized = String.UnicodeScalarView()
+    for scalar in output.unicodeScalars {
+      switch state {
+      case .text:
+        appendText(scalar, to: &sanitized)
+      case .escape:
+        consumeEscape(scalar)
+      case .controlSequence:
+        consumeControlSequence(scalar)
+      case .operatingSystemCommand:
+        consumeOperatingSystemCommand(scalar)
+      case .operatingSystemCommandEscape:
+        consumeOperatingSystemCommandEscape(scalar)
+      }
+    }
+    return String(sanitized)
+  }
+
+  private mutating func appendText(
+    _ scalar: Unicode.Scalar,
+    to output: inout String.UnicodeScalarView
+  ) {
+    switch scalar.value {
+    case 0x1B:
+      state = .escape
+    case 0x0A:
+      if !lastOutputWasNewline {
+        output.append(scalar)
+      }
+      lastOutputWasNewline = true
+    case 0x0D:
+      if !lastOutputWasNewline {
+        output.append("\n")
+        lastOutputWasNewline = true
+      }
+    case 0x09, 0x20...:
+      output.append(scalar)
+      lastOutputWasNewline = false
+    default:
+      break
+    }
+  }
+
+  private mutating func consumeEscape(_ scalar: Unicode.Scalar) {
+    if scalar.value == 0x5B {
+      state = .controlSequence
+    } else if scalar.value == 0x5D {
+      state = .operatingSystemCommand
+    } else {
+      state = .text
+    }
+  }
+
+  private mutating func consumeControlSequence(_ scalar: Unicode.Scalar) {
+    if 0x40 ... 0x7E ~= scalar.value {
+      state = .text
+    }
+  }
+
+  private mutating func consumeOperatingSystemCommand(_ scalar: Unicode.Scalar) {
+    if scalar.value == 0x07 {
+      state = .text
+    } else if scalar.value == 0x1B {
+      state = .operatingSystemCommandEscape
+    }
+  }
+
+  private mutating func consumeOperatingSystemCommandEscape(_ scalar: Unicode.Scalar) {
+    if scalar.value == 0x5C || scalar.value == 0x07 {
+      state = .text
+    } else if scalar.value != 0x1B {
+      state = .operatingSystemCommand
     }
   }
 }

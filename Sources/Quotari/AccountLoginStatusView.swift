@@ -64,10 +64,13 @@ struct AccountLoginStatusView: View {
         .fixedSize(horizontal: false, vertical: true)
     }
     if let output = store.accountLoginOutputs[provider], !output.isEmpty {
-      Text(output)
-        .font(.caption.monospaced())
-        .textSelection(.enabled)
-        .fixedSize(horizontal: false, vertical: true)
+      ScrollView(.vertical) {
+        Text(output)
+          .font(.caption.monospaced())
+          .textSelection(.enabled)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+      .frame(maxHeight: 140)
     }
   }
 

@@ -5,6 +5,22 @@ import Testing
 
 @MainActor
 struct UsageStoreAccountLoginInputTests {
+  @Test func terminalOutputSanitizerStripsSplitANSIAndOSCSequences() {
+    var sanitizer = AccountLoginOutputSanitizer()
+
+    let first = sanitizer.append("Opening \u{001B}]8;;https://example")
+    let second = sanitizer.append(".com\u{001B}\\link\u{001B}[31")
+    let third = sanitizer.append("m red\u{001B}[0m\n")
+
+    #expect(first + second + third == "Opening link red\n")
+  }
+
+  @Test func terminalOutputSanitizerNormalizesCarriageReturnsAndDropsControls() {
+    var sanitizer = AccountLoginOutputSanitizer()
+
+    #expect(sanitizer.append("first\rsecond\r\nthird\u{0001}\tvalue") == "first\nsecond\nthird\tvalue")
+  }
+
   @Test func authenticationCodePromptCanBeSubmittedToTheActiveLogin() async throws {
     let receivedCode = AuthenticationCodeRecorder()
     let registry = CapturedAccountStore.inMemoryForTesting()

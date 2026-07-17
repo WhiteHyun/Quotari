@@ -81,11 +81,13 @@ extension UsageStore {
     accountLoginPhases[provider] = .preservingCurrentAccount
     accountLoginErrors[provider] = nil
     accountLoginOutputs[provider] = nil
+    accountLoginOutputSanitizers[provider] = AccountLoginOutputSanitizer()
     var ownsCredentialGate = false
     defer {
       endAccountLoginCredentialGate(ifOwnedBy: &ownsCredentialGate)
       addingAccountProviders.remove(provider)
       accountLoginPhases[provider] = nil
+      accountLoginOutputSanitizers[provider] = nil
     }
 
     let previousClaudeLogin: PreservedClaudeLogin?
