@@ -6,9 +6,16 @@ struct NotificationsPreferencesView: View {
   var body: some View {
     @Bindable var notifications = store.quotaNotifications
 
-    Form {
-      Section("Quota Alerts") {
-        Toggle("Quota alerts", isOn: $notifications.notificationsEnabled)
+    VStack(spacing: 16) {
+      PreferencesCard(
+        "Quota Alerts",
+        subtitle: "Get notified before a provider reaches its usage limit."
+      ) {
+        PreferencesToggleRow(
+          "Quota alerts",
+          detail: "Deliver warning, critical, and reset notifications.",
+          isOn: $notifications.notificationsEnabled
+        )
         if let message = notifications.authorizationMessage {
           Text(message)
             .font(.caption)
@@ -20,35 +27,54 @@ struct NotificationsPreferencesView: View {
         }
       }
 
-      Section("Thresholds") {
-        Stepper(
-          "Warning at \(notifications.warningThreshold)%",
-          value: $notifications.warningThreshold,
-          in: 1 ... max(1, notifications.criticalThreshold - 1)
-        )
-        .disabled(!controlsEnabled)
-        Stepper(
-          "Critical at \(notifications.criticalThreshold)%",
-          value: $notifications.criticalThreshold,
-          in: min(100, notifications.warningThreshold + 1) ... 100
-        )
-        .disabled(!controlsEnabled)
-      }
-
-      Section("Providers") {
-        ForEach(store.providers, id: \.id) { descriptor in
-          Toggle(
-            "\(descriptor.metadata.displayName) alerts",
-            isOn: $notifications[providerEnabled: descriptor.id]
+      PreferencesCard(
+        "Thresholds",
+        subtitle: "Set the usage levels that trigger each alert."
+      ) {
+        VStack(spacing: 14) {
+          Stepper(
+            "Warning at \(notifications.warningThreshold)%",
+            value: $notifications.warningThreshold,
+            in: 1 ... max(1, notifications.criticalThreshold - 1)
+          )
+          .disabled(!controlsEnabled)
+          PreferencesRowDivider()
+          Stepper(
+            "Critical at \(notifications.criticalThreshold)%",
+            value: $notifications.criticalThreshold,
+            in: min(100, notifications.warningThreshold + 1) ... 100
           )
           .disabled(!controlsEnabled)
         }
-        Text("These switches only control alerts, not global provider availability.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+      }
+
+      PreferencesCard(
+        "Providers",
+        subtitle: "Choose which enabled providers can send quota alerts."
+      ) {
+        VStack(spacing: 14) {
+          ForEach(Array(store.providers.enumerated()), id: \.element.id) { index, descriptor in
+            HStack(spacing: 13) {
+              ProviderIconView(descriptor: descriptor)
+              Text(descriptor.metadata.displayName)
+                .font(.body.weight(.medium))
+              Spacer()
+              Toggle(
+                "\(descriptor.metadata.displayName) alerts",
+                isOn: $notifications[providerEnabled: descriptor.id]
+              )
+              .labelsHidden()
+              .toggleStyle(.switch)
+              .tint(.blue)
+              .disabled(!controlsEnabled)
+            }
+            if index < store.providers.count - 1 {
+              PreferencesRowDivider()
+            }
+          }
+        }
       }
     }
-    .formStyle(.grouped)
   }
 
   private var controlsEnabled: Bool {
