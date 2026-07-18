@@ -32,18 +32,26 @@ struct NotificationsPreferencesView: View {
         subtitle: "Set the usage levels that trigger each alert."
       ) {
         VStack(spacing: 14) {
-          Stepper(
-            "Warning at \(notifications.warningThreshold)%",
-            value: $notifications.warningThreshold,
-            in: 1 ... max(1, notifications.criticalThreshold - 1)
-          )
+          PreferencesControlRow("Warning at \(notifications.warningThreshold)%") {
+            Stepper(
+              "Warning threshold",
+              value: $notifications.warningThreshold,
+              in: 1 ... max(1, notifications.criticalThreshold - 1)
+            )
+            .labelsHidden()
+            .accessibilityLabel("Warning threshold")
+          }
           .disabled(!controlsEnabled)
           PreferencesRowDivider()
-          Stepper(
-            "Critical at \(notifications.criticalThreshold)%",
-            value: $notifications.criticalThreshold,
-            in: min(100, notifications.warningThreshold + 1) ... 100
-          )
+          PreferencesControlRow("Critical at \(notifications.criticalThreshold)%") {
+            Stepper(
+              "Critical threshold",
+              value: $notifications.criticalThreshold,
+              in: min(100, notifications.warningThreshold + 1) ... 100
+            )
+            .labelsHidden()
+            .accessibilityLabel("Critical threshold")
+          }
           .disabled(!controlsEnabled)
         }
       }

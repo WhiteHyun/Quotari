@@ -6,7 +6,7 @@ import Testing
 
 @MainActor
 struct PreferencesSnapshotTests {
-  @Test func renderAccountsPreferencesSnapshots() async throws {
+  @Test func renderPreferencesSnapshots() async throws {
     _ = NSApplication.shared
     let accounts = Self.accounts
     let store = UsageStore.isolatedForTesting(
@@ -19,12 +19,15 @@ struct PreferencesSnapshotTests {
 
     let outputDirectory = Self.outputDirectory()
     try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
-    for (name, appearance) in Self.appearances {
-      let png = Self.renderPNG(store: store, appearance: appearance)
-      let url = outputDirectory.appendingPathComponent("preferences-accounts-\(name).png")
-      try png.write(to: url)
-      print("📸 preferences-accounts-\(name).png → \(url.path)")
-      #expect(png.count > 1000)
+    for tab in PreferencesTab.allCases {
+      for (name, appearance) in Self.appearances {
+        let png = Self.renderPNG(store: store, selectedTab: tab, appearance: appearance)
+        let filename = "preferences-\(tab.title.lowercased())-\(name).png"
+        let url = outputDirectory.appendingPathComponent(filename)
+        try png.write(to: url)
+        print("📸 \(filename) → \(url.path)")
+        #expect(png.count > 1000)
+      }
     }
   }
 
@@ -59,10 +62,14 @@ struct PreferencesSnapshotTests {
       .appendingPathComponent("Snapshots", isDirectory: true)
   }
 
-  private static func renderPNG(store: UsageStore, appearance: NSAppearance) -> Data {
+  private static func renderPNG(
+    store: UsageStore,
+    selectedTab: PreferencesTab,
+    appearance: NSAppearance
+  ) -> Data {
     let size = NSSize(width: 980, height: 680)
     let hosting = NSHostingView(rootView:
-      PreferencesView(selectedTab: .accounts)
+      PreferencesView(selectedTab: selectedTab)
         .environment(store))
     hosting.appearance = appearance
     hosting.frame = NSRect(origin: .zero, size: size)

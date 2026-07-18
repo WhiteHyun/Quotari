@@ -111,7 +111,33 @@ struct PreferencesToggleRow: View {
   }
 
   var body: some View {
-    Toggle(isOn: $isOn) {
+    PreferencesControlRow(title, detail: detail) {
+      Toggle(title, isOn: $isOn)
+        .labelsHidden()
+        .toggleStyle(.switch)
+        .tint(.blue)
+        .accessibilityLabel(title)
+    }
+  }
+}
+
+struct PreferencesControlRow<Control: View>: View {
+  let title: String
+  let detail: String?
+  @ViewBuilder let control: Control
+
+  init(
+    _ title: String,
+    detail: String? = nil,
+    @ViewBuilder control: () -> Control
+  ) {
+    self.title = title
+    self.detail = detail
+    self.control = control()
+  }
+
+  var body: some View {
+    HStack(alignment: .center, spacing: 20) {
       VStack(alignment: .leading, spacing: 2) {
         Text(title)
           .foregroundStyle(.primary)
@@ -121,8 +147,9 @@ struct PreferencesToggleRow: View {
             .foregroundStyle(.secondary)
         }
       }
+      Spacer(minLength: 24)
+      control
     }
-    .toggleStyle(.switch)
-    .tint(.blue)
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 }

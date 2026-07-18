@@ -52,14 +52,10 @@ struct GeneralPreferencesView: View {
             isOn: $menuBarPreferences.showsRemainingPercent
           )
           PreferencesRowDivider()
-          HStack {
-            VStack(alignment: .leading, spacing: 2) {
-              Text("Quota source")
-              Text("Choose which provider drives the menu-bar percentage.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            Spacer()
+          PreferencesControlRow(
+            "Quota source",
+            detail: "Choose which provider drives the menu-bar percentage."
+          ) {
             Picker("Quota source", selection: $menuBarPreferences.usageSource) {
               Text("Most constrained")
                 .tag(MenuBarUsageSource.mostConstrained)
@@ -78,7 +74,10 @@ struct GeneralPreferencesView: View {
             isOn: $menuBarPreferences.animatesMascot
           )
           PreferencesRowDivider()
-          KeyboardShortcuts.Recorder("Open dashboard", name: .toggleDashboard)
+          PreferencesControlRow("Open dashboard") {
+            KeyboardShortcuts.Recorder(for: .toggleDashboard)
+              .accessibilityLabel("Open dashboard")
+          }
         }
       }
     }

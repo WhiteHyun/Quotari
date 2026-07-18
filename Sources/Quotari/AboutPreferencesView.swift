@@ -26,11 +26,17 @@ struct AboutPreferencesView: View {
 
       PreferencesCard("Details") {
         VStack(spacing: 14) {
-          LabeledContent("App", value: "Quotari")
+          PreferencesControlRow("App") {
+            Text("Quotari")
+              .foregroundStyle(.secondary)
+          }
           PreferencesRowDivider()
-          LabeledContent("Providers", value: "\(store.providers.count)")
+          PreferencesControlRow("Providers") {
+            Text("\(store.providers.count)")
+              .foregroundStyle(.secondary)
+          }
           PreferencesRowDivider()
-          LabeledContent("Updates") {
+          PreferencesControlRow("Updates") {
             Button("Check for Updates…") { UpdaterController.shared.checkForUpdates() }
               .disabled(!UpdaterController.shared.isAvailable)
           }
