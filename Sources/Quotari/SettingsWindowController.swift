@@ -23,6 +23,10 @@ final class SettingsWindowController {
     window?.contentMinSize
   }
 
+  var isMovableByWindowBackground: Bool? {
+    window?.isMovableByWindowBackground
+  }
+
   func show(store: UsageStore) {
     store.beginAccountRediscovery()
     let settingsWindow = window ?? makeWindow(store: store)
@@ -45,7 +49,7 @@ final class SettingsWindowController {
     settingsWindow.styleMask = [.titled, .closable, .resizable, .fullSizeContentView]
     settingsWindow.titleVisibility = .hidden
     settingsWindow.titlebarAppearsTransparent = true
-    settingsWindow.isMovableByWindowBackground = true
+    settingsWindow.isMovableByWindowBackground = false
     settingsWindow.contentMinSize = NSSize(width: 840, height: 560)
     settingsWindow.setContentSize(NSSize(width: 980, height: 680))
     settingsWindow.isReleasedWhenClosed = false

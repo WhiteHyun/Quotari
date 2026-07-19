@@ -19,6 +19,7 @@ struct SettingsWindowControllerTests {
     #expect(controller.windowTitle == "Settings")
     #expect(controller.isResizable)
     #expect(controller.minimumContentSize == NSSize(width: 840, height: 560))
+    #expect(controller.isMovableByWindowBackground == false)
   }
 
   @Test func showingSettingsBeginsFreshAccountDiscovery() async {
