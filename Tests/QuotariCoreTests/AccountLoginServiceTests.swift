@@ -18,6 +18,20 @@ struct AccountLoginServiceTests {
     #expect(mutationMarked.value)
   }
 
+  @Test func repeatedFastProcessCompletionDoesNotMissTermination() async throws {
+    for _ in 0 ..< 50 {
+      let status = try await IsolatedAccountLogin.runLoginCommand(
+        executable: URL(fileURLWithPath: "/usr/bin/true"),
+        arguments: [],
+        environment: [:],
+        currentDirectory: FileManager.default.temporaryDirectory,
+        observers: AccountLoginCommandObservers()
+      )
+
+      #expect(status == 0)
+    }
+  }
+
   @Test func productionServiceAdvertisesBothManagedLoginFlows() {
     let service = AccountLoginService()
 
