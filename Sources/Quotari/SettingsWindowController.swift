@@ -28,10 +28,10 @@ final class SettingsWindowController {
   }
 
   func show(store: UsageStore) {
-    store.beginAccountRediscovery()
     let settingsWindow = window ?? makeWindow(store: store)
     NSApplication.shared.activate(ignoringOtherApps: true)
     settingsWindow.makeKeyAndOrderFront(nil)
+    store.beginAccountRediscovery()
   }
 
   func close() {

@@ -13,8 +13,11 @@ struct QuotariApp: App {
 
   var body: some Scene {
     MenuBarExtra {
-      DashboardView()
+      DashboardView(menuBarPresentation: menuBarPresentation)
         .environment(store)
+        .introspectMenuBarExtraWindow { window in
+          menuBarPresentation.trackDashboardWindow(window)
+        }
     } label: {
       MenuBarMascotLabel(store: store)
     }

@@ -8,6 +8,7 @@ struct ProviderCardView: View {
   let snapshot: UsageSnapshot?
   let sourceLabel: String?
   let error: String?
+  var showSettings: () -> Void = {}
 
   @State private var isShowingAccounts = false
 
@@ -91,8 +92,11 @@ struct ProviderCardView: View {
         attachmentAnchor: .rect(.bounds),
         arrowEdge: .leading
       ) {
-        ProviderAccountPopover(descriptor: descriptor)
-          .environment(store)
+        ProviderAccountPopover(
+          descriptor: descriptor,
+          showSettings: showSettings
+        )
+        .environment(store)
       }
       .accessibilityLabel("\(descriptor.metadata.displayName) account")
       .accessibilityHint("Shows usage for available accounts")

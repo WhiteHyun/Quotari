@@ -3,13 +3,17 @@ import QuotariCore
 import SwiftUI
 
 struct DashboardView: View {
+  @Environment(UsageStore.self) private var store
+
   /// The menu bar window resolves flexible height ranges to their minimum, so
   /// the window height must be a single measured value, not a min/max span.
   @State private var contentHeight: CGFloat = 100
 
+  let menuBarPresentation: MenuBarPresentationController
+
   var body: some View {
     ScrollView {
-      DashboardContent()
+      DashboardContent(showSettings: showSettings)
         .onGeometryChange(for: CGFloat.self) { proxy in
           proxy.size.height
         } action: { height in
@@ -20,12 +24,19 @@ struct DashboardView: View {
     .frame(height: min(max(contentHeight, 100), 560))
     .background(MenuVibrancyBackground())
   }
+
+  private func showSettings() {
+    menuBarPresentation.dismissDashboard()
+    SettingsWindowController.shared.show(store: store)
+  }
 }
 
 /// The popover's content at its natural height (no scroll cap). `DashboardView`
 /// wraps this in a scroll view for the menu bar; snapshot tests render it directly.
 struct DashboardContent: View {
   @Environment(UsageStore.self) private var store
+
+  var showSettings: () -> Void = {}
 
   var body: some View {
     VStack(spacing: 0) {
@@ -56,7 +67,8 @@ struct DashboardContent: View {
             descriptor: descriptor,
             snapshot: store.snapshots[descriptor.id],
             sourceLabel: store.sourceLabels[descriptor.id],
-            error: store.errors[descriptor.id]
+            error: store.errors[descriptor.id],
+            showSettings: showSettings
           )
           if index < providers.count - 1 {
             Divider()
@@ -83,10 +95,8 @@ struct DashboardContent: View {
         icon: "gearshape",
         title: "Settings…",
         shortcut: "⌘,"
-      ) {
-        SettingsWindowController.shared.show(store: store)
-      }
-      .keyboardShortcut(",")
+      ) { showSettings() }
+        .keyboardShortcut(",")
 
       MenuActionRow(
         icon: "power",
