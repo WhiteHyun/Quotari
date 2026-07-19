@@ -65,7 +65,7 @@ struct GeneralPreferencesView: View {
               }
             }
             .labelsHidden()
-            .frame(width: 190)
+            .frame(width: 190, alignment: .trailing)
           }
           PreferencesRowDivider()
           PreferencesToggleRow(

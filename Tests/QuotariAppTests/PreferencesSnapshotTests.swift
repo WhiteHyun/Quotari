@@ -29,6 +29,21 @@ struct PreferencesSnapshotTests {
         #expect(png.count > 1000)
       }
     }
+    for tab in [PreferencesTab.general, .accounts] {
+      for (name, appearance) in Self.appearances {
+        let png = Self.renderPNG(
+          store: store,
+          selectedTab: tab,
+          appearance: appearance,
+          size: NSSize(width: 980, height: 820)
+        )
+        let filename = "preferences-\(tab.title.lowercased())-expanded-\(name).png"
+        let url = outputDirectory.appendingPathComponent(filename)
+        try png.write(to: url)
+        print("📸 \(filename) → \(url.path)")
+        #expect(png.count > 1000)
+      }
+    }
   }
 
   private static let accounts = [
@@ -43,6 +58,12 @@ struct PreferencesSnapshotTests {
       displayName: "WhiteHyun",
       detail: "auth.json",
       credentialSource: .codexAuthFile(path: "/tmp/codex/auth.json")
+    ),
+    ProviderAccount(
+      provider: .claude,
+      displayName: "Team",
+      detail: "team@example.com",
+      credentialSource: .quotariRegistry(id: "claude-team")
     ),
   ]
 
@@ -65,9 +86,9 @@ struct PreferencesSnapshotTests {
   private static func renderPNG(
     store: UsageStore,
     selectedTab: PreferencesTab,
-    appearance: NSAppearance
+    appearance: NSAppearance,
+    size: NSSize = NSSize(width: 980, height: 680)
   ) -> Data {
-    let size = NSSize(width: 980, height: 680)
     let hosting = NSHostingView(rootView:
       PreferencesView(selectedTab: selectedTab)
         .environment(store))

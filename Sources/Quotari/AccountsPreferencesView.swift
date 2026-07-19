@@ -142,12 +142,15 @@ private extension AccountsPreferencesView {
       Button {
         store.startAddingAccount(for: descriptor.id)
       } label: {
-        if store.addingAccountProviders.contains(descriptor.id) {
-          ProgressView()
-            .controlSize(.small)
-        } else {
-          Label(accountLoginTitle(for: descriptor.id), systemImage: "plus")
+        Group {
+          if store.addingAccountProviders.contains(descriptor.id) {
+            ProgressView()
+              .controlSize(.small)
+          } else {
+            Label(accountLoginTitle(for: descriptor.id), systemImage: "plus")
+          }
         }
+        .frame(width: 150)
       }
       .disabled(!store.addingAccountProviders.isEmpty || !canAddAccount)
       .help(store.addAccountUnavailableReason(for: descriptor.id) ?? accountLoginHelp(for: descriptor.id))
@@ -217,31 +220,35 @@ private extension AccountsPreferencesView {
   }
 
   private func monitoredAccountRow(_ account: ProviderAccount, activeCLIID: String?) -> some View {
-    HStack(spacing: 8) {
-      Toggle(isOn: monitoringBinding(for: account)) {
-        VStack(alignment: .leading, spacing: 1) {
-          HStack(spacing: 7) {
-            Text(store.accountLabel(for: account))
-              .lineLimit(1)
-            if account.id == activeCLIID {
-              PreferencesBadge(title: "CLI Active", color: .blue)
-            }
-            if account.credentialSource.isCaptured {
-              PreferencesBadge(title: "Saved", color: Theme.brandAccent)
-            }
+    let label = store.accountLabel(for: account)
+    return HStack(alignment: .center, spacing: 8) {
+      Toggle(label, isOn: monitoringBinding(for: account))
+        .labelsHidden()
+        .toggleStyle(.checkbox)
+        .accessibilityLabel("Monitor \(label)")
+      VStack(alignment: .leading, spacing: 1) {
+        HStack(spacing: 7) {
+          Text(label)
+            .lineLimit(1)
+          if account.id == activeCLIID {
+            PreferencesBadge(title: "CLI Active", color: .blue)
           }
-          if let detail = account.detail {
-            Text(detail)
-              .font(.caption)
-              .foregroundStyle(.secondary)
+          if account.credentialSource.isCaptured {
+            PreferencesBadge(title: "Saved", color: Theme.brandAccent)
           }
         }
+        if let detail = account.detail {
+          Text(detail)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
       }
-      .toggleStyle(.checkbox)
+      Spacer(minLength: 12)
       if account.credentialSource.isCaptured {
         savedAccountActions(account)
       }
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   private func savedAccountActions(_ account: ProviderAccount) -> some View {
