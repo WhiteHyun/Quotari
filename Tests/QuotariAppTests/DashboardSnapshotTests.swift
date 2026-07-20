@@ -13,7 +13,6 @@ struct DashboardSnapshotTests {
   @Test func renderDashboardSnapshots() async throws {
     _ = NSApplication.shared
     let states = await Self.snapshotStates()
-    let providerStatus = Self.providerStatusFixture()
     let outputDirectory = Self.outputDirectory()
     try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 
@@ -21,7 +20,6 @@ struct DashboardSnapshotTests {
       for (appearanceName, appearance) in Self.appearances {
         let png = Self.renderPNG(
           store: state.store,
-          providerStatus: providerStatus,
           appearance: appearance
         )
         let filename = "dashboard-\(state.name)-\(appearanceName).png"
@@ -30,18 +28,6 @@ struct DashboardSnapshotTests {
         print("📸 \(filename) → \(url.path)")
         #expect(png.count > 1000)
       }
-    }
-
-    for (appearanceName, appearance) in Self.appearances {
-      let png = Self.renderStatusPNG(
-        providerStatus: providerStatus,
-        appearance: appearance
-      )
-      let filename = "provider-status-\(appearanceName).png"
-      let url = outputDirectory.appendingPathComponent(filename)
-      try png.write(to: url)
-      print("📸 \(filename) → \(url.path)")
-      #expect(png.count > 1000)
     }
   }
 
@@ -128,55 +114,6 @@ struct DashboardSnapshotTests {
     ("dark", NSAppearance(named: .darkAqua)!),
   ]
 
-  private static func providerStatusFixture() -> ProviderStatusController {
-    let updatedAt = Date(timeIntervalSince1970: 1_800_000_000)
-    return ProviderStatusController(initialStatuses: [
-      .codex: ProviderServiceStatus(
-        provider: .codex,
-        state: .degradedPerformance,
-        updatedAt: updatedAt,
-        statusPageURL: .init(string: "https://status.openai.com/")!,
-        components: [
-          ProviderStatusComponent(
-            id: "codex-desktop",
-            name: "Codex in ChatGPT Desktop",
-            state: .operational
-          ),
-          ProviderStatusComponent(
-            id: "codex-api",
-            name: "Codex API",
-            state: .degradedPerformance
-          ),
-        ],
-        incident: ProviderStatusIncident(
-          id: "codex-incident",
-          name: "Elevated errors for GitHub-dependent Codex workflows",
-          status: "monitoring",
-          impact: "minor",
-          url: .init(string: "https://status.openai.com/incidents/codex-incident")!
-        )
-      ),
-      .claude: ProviderServiceStatus(
-        provider: .claude,
-        state: .operational,
-        updatedAt: updatedAt,
-        statusPageURL: .init(string: "https://status.claude.com/")!,
-        components: [
-          ProviderStatusComponent(
-            id: "claude-code",
-            name: "Claude Code",
-            state: .operational
-          ),
-          ProviderStatusComponent(
-            id: "claude-api",
-            name: "Claude API (api.anthropic.com)",
-            state: .operational
-          ),
-        ]
-      ),
-    ])
-  }
-
   private static func outputDirectory() -> URL {
     if let dir = ProcessInfo.processInfo.environment["QUOTARI_SNAPSHOT_DIR"], !dir.isEmpty {
       return URL(fileURLWithPath: dir, isDirectory: true)
@@ -215,11 +152,10 @@ struct DashboardSnapshotTests {
   /// draws the real view tree, including SF Symbols and vibrancy-less content).
   private static func renderPNG(
     store: UsageStore,
-    providerStatus: ProviderStatusController,
     appearance: NSAppearance
   ) -> Data {
     let hosting = NSHostingView(rootView:
-      DashboardContent(providerStatus: providerStatus)
+      DashboardContent()
         .environment(store)
         .background(Color(nsColor: .windowBackgroundColor)))
     hosting.appearance = appearance
@@ -239,38 +175,6 @@ struct DashboardSnapshotTests {
     window.orderFrontRegardless()
 
     // Pump the main run loop so AppKit/SwiftUI complete layout and display.
-    RunLoop.current.run(until: Date().addingTimeInterval(0.35))
-    defer { window.orderOut(nil) }
-
-    guard let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else { return Data() }
-    hosting.cacheDisplay(in: hosting.bounds, to: rep)
-    return rep.representation(using: .png, properties: [:]) ?? Data()
-  }
-
-  private static func renderStatusPNG(
-    providerStatus: ProviderStatusController,
-    appearance: NSAppearance
-  ) -> Data {
-    let content = ProviderStatusPopover(
-      descriptors: ProviderFixtures.descriptors,
-      controller: providerStatus
-    )
-    let hosting = NSHostingView(rootView:
-      content.background(Color(nsColor: .windowBackgroundColor)))
-    hosting.appearance = appearance
-    hosting.frame = NSRect(x: 0, y: 0, width: 300, height: 10)
-    hosting.layoutSubtreeIfNeeded()
-
-    let height = max(hosting.fittingSize.height, 200)
-    hosting.frame = NSRect(x: 0, y: 0, width: 300, height: height)
-    let window = NSWindow(
-      contentRect: NSRect(x: -30000, y: -30000, width: 300, height: height),
-      styleMask: .borderless, backing: .buffered, defer: false
-    )
-    window.appearance = appearance
-    window.isOpaque = true
-    window.contentView = hosting
-    window.orderFrontRegardless()
     RunLoop.current.run(until: Date().addingTimeInterval(0.35))
     defer { window.orderOut(nil) }
 
