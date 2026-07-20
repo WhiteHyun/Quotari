@@ -4,7 +4,7 @@ import Foundation
 /// Renders the Quotari flame mascot as a compact, animated menu-bar item.
 /// Its animation speeds up as the most-constrained quota gets closer to its limit.
 enum IconRenderer {
-  private static let resourceBundle: Bundle = {
+  static let resourceBundle: Bundle = {
     if let url = Bundle.main.url(forResource: "Quotari_Quotari", withExtension: "bundle"),
        let packaged = Bundle(url: url) {
       return packaged
@@ -31,6 +31,7 @@ enum IconRenderer {
   static var packagedResourcesAreReady: Bool {
     guard let resourceURL = Bundle.main.resourceURL else { return false }
     return frameCount > 1
+      && ProviderIconAsset.resourcesAreReady
       && resourceBundle.bundleURL.deletingLastPathComponent().standardizedFileURL
       == resourceURL.standardizedFileURL
   }

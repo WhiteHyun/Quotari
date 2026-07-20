@@ -52,7 +52,8 @@ struct ProviderCardView: View {
 
   private var header: some View {
     VStack(spacing: 2) {
-      HStack(alignment: .top) {
+      HStack(alignment: .top, spacing: 8) {
+        ProviderIconView(descriptor: descriptor, size: 24)
         Text(descriptor.metadata.displayName).font(.headline)
         Spacer()
         accountControl

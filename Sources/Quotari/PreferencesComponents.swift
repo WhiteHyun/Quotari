@@ -1,3 +1,4 @@
+import AppKit
 import QuotariCore
 import SwiftUI
 
@@ -52,6 +53,8 @@ struct PreferencesRowDivider: View {
 }
 
 struct ProviderIconView: View {
+  @Environment(\.colorScheme) private var colorScheme
+
   let descriptor: ProviderDescriptor
   var size: CGFloat = 38
 
@@ -63,10 +66,10 @@ struct ProviderIconView: View {
     )
   }
 
-  private var systemImage: String {
+  private var logoSize: CGFloat {
     switch descriptor.id {
-    case .claude: "sparkles"
-    case .codex: "terminal.fill"
+    case .claude: size * 0.56
+    case .codex: size * 0.92
     }
   }
 
@@ -76,12 +79,63 @@ struct ProviderIconView: View {
         .fill(accent.opacity(0.14))
       RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
         .stroke(accent.opacity(0.22))
-      Image(systemName: systemImage)
-        .font(.system(size: size * 0.43, weight: .semibold))
-        .foregroundStyle(accent)
+      providerLogo
     }
     .frame(width: size, height: size)
     .accessibilityHidden(true)
+  }
+
+  @ViewBuilder
+  private var providerLogo: some View {
+    if let image = ProviderIconAsset.image(for: descriptor.id, colorScheme: colorScheme) {
+      switch descriptor.id {
+      case .claude:
+        Image(nsImage: image)
+          .renderingMode(.template)
+          .resizable()
+          .scaledToFit()
+          .foregroundStyle(accent)
+          .frame(width: logoSize, height: logoSize)
+      case .codex:
+        Image(nsImage: image)
+          .renderingMode(.original)
+          .resizable()
+          .scaledToFit()
+          .frame(width: logoSize, height: logoSize)
+      }
+    } else {
+      Image(systemName: "questionmark")
+        .font(.system(size: size * 0.4, weight: .semibold))
+        .foregroundStyle(accent)
+    }
+  }
+}
+
+enum ProviderIconAsset {
+  static var resourcesAreReady: Bool {
+    image(for: .claude, colorScheme: .light) != nil
+      && image(for: .codex, colorScheme: .light) != nil
+      && image(for: .codex, colorScheme: .dark) != nil
+  }
+
+  static func resourceName(for provider: UsageProvider, colorScheme: ColorScheme) -> String {
+    switch provider {
+    case .claude:
+      "Claude"
+    case .codex:
+      colorScheme == .dark ? "OpenAI-Blossom-White" : "OpenAI-Blossom-Black"
+    }
+  }
+
+  static func image(
+    for provider: UsageProvider,
+    colorScheme: ColorScheme
+  ) -> NSImage? {
+    let name = resourceName(for: provider, colorScheme: colorScheme)
+    let bundle = IconRenderer.resourceBundle
+    let url = bundle.url(forResource: name, withExtension: "svg", subdirectory: "ProviderIcons")
+      ?? bundle.url(forResource: name, withExtension: "svg")
+    return url.flatMap(NSImage.init(contentsOf:))
   }
 }
 
