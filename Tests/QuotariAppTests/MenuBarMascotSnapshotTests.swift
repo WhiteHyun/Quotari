@@ -9,12 +9,12 @@ struct MenuBarMascotSnapshotTests {
       try pngData(for: IconRenderer.mascotIcon(frame: frame))
     }
 
-    #expect(IconRenderer.frameCount == 12)
+    #expect(IconRenderer.frameCount == 8)
     #expect(Set(pngs).count == IconRenderer.frameCount)
   }
 
   @Test func renderMascotFrames() throws {
-    let preview = NSImage(size: NSSize(width: 356, height: 40))
+    let preview = NSImage(size: NSSize(width: 242, height: 40))
     preview.lockFocus()
     NSColor(calibratedRed: 0.08, green: 0.44, blue: 0.64, alpha: 1).setFill()
     NSBezierPath(rect: NSRect(origin: .zero, size: preview.size)).fill()
@@ -42,14 +42,14 @@ struct MenuBarMascotSnapshotTests {
     )
     try png.write(to: output)
     #expect(png.count > 100)
-    #expect(IconRenderer.frameCount == 12)
+    #expect(IconRenderer.frameCount == 8)
   }
 
   @Test func animationRateTracksQuotaPressure() {
-    #expect(IconRenderer.animationInterval(usedPercent: 69) == 0.16)
-    #expect(IconRenderer.animationInterval(usedPercent: 70) == 0.1)
-    #expect(IconRenderer.animationInterval(usedPercent: 89) == 0.1)
-    #expect(IconRenderer.animationInterval(usedPercent: 90) == 0.075)
+    #expect(IconRenderer.animationInterval(usedPercent: 69) == 0.22)
+    #expect(IconRenderer.animationInterval(usedPercent: 70) == 0.15)
+    #expect(IconRenderer.animationInterval(usedPercent: 89) == 0.15)
+    #expect(IconRenderer.animationInterval(usedPercent: 90) == 0.11)
   }
 
   private func pngData(for image: NSImage) throws -> Data {
