@@ -45,6 +45,54 @@ The script defaults to an `arm64 x86_64` universal build. Override `ARCHS`,
 through the environment when needed. By default, the script requires the clean
 local commit to exactly match the remote `main` commit before publishing.
 
+### Self-hosted GitHub Actions release
+
+The `Release` workflow runs only when manually dispatched from `main` and
+targets the dedicated `[self-hosted, macOS, ARM64, quotari-release]` runner.
+Register that runner under a separate macOS user on the CICD Mac so it does not
+share a Keychain or process namespace with pull-request runners. Create a GitHub
+Environment named `release`, protect it with a required reviewer, and configure
+these environment secrets:
+
+- `DEVELOPER_ID_P12_BASE64`: base64-encoded Developer ID Application identity
+- `DEVELOPER_ID_P12_PASSWORD`: password used to export that `.p12`
+- `RELEASE_KEYCHAIN_PASSWORD`: a strong temporary-Keychain password
+- `SPARKLE_PRIVATE_KEY`: private key exported with
+  `generate_keys --account quotari -x <file>`
+- `SPARKLE_PUBLIC_KEY`: public key printed by
+  `generate_keys --account quotari -p`
+- `NOTARY_API_KEY`: App Store Connect API private key contents
+- `NOTARY_KEY_ID`: App Store Connect API key ID
+- `NOTARY_ISSUER`: issuer UUID for a Team API key; leave empty for an
+  Individual API key
+
+The workflow imports the Developer ID identity into an ephemeral Keychain,
+uses file-based Sparkle and notary credentials, and removes the temporary files
+and Keychain after every run. Do not install release credentials permanently in
+the shared runner user's login Keychain.
+
+Create the notarized draft first:
+
+```sh
+gh workflow run release.yml --ref main \
+  -f version=0.1.1 \
+  -f action=draft
+```
+
+After testing the draft DMG and the Sparkle update, publish the same release:
+
+```sh
+gh workflow run release.yml --ref main \
+  -f version=0.1.1 \
+  -f action=publish
+```
+
+Because multiple repository runners currently share one physical Mac and user
+account, run privileged release jobs under a dedicated macOS user before adding
+production secrets. GitHub Environment approval protects workflow access, but
+it does not provide operating-system isolation from another process running as
+the same user.
+
 ## Manual release reference
 
 The following commands document the underlying workflow for troubleshooting.

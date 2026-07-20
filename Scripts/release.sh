@@ -18,6 +18,11 @@ CODESIGN_IDENTITY="${CODESIGN_IDENTITY:-Developer ID Application: SeungHyun Hong
 NOTARY_PROFILE="${NOTARY_PROFILE:-quotari-notary}"
 SPARKLE_ACCOUNT="${SPARKLE_ACCOUNT:-quotari}"
 ARCHS="${ARCHS:-arm64 x86_64}"
+SPARKLE_PUBLIC_KEY_OVERRIDE="${SPARKLE_PUBLIC_KEY:-}"
+SPARKLE_PRIVATE_KEY_FILE="${SPARKLE_PRIVATE_KEY_FILE:-}"
+NOTARY_KEY="${NOTARY_KEY:-}"
+NOTARY_KEY_ID="${NOTARY_KEY_ID:-}"
+NOTARY_ISSUER="${NOTARY_ISSUER:-}"
 
 MODE="release"
 VERSION=""
@@ -43,7 +48,8 @@ Release options:
 
 Environment overrides:
   CODESIGN_IDENTITY, NOTARY_PROFILE, SPARKLE_ACCOUNT, ARCHS, REPOSITORY,
-  RELEASE_TARGET, TEAM_ID
+  RELEASE_TARGET, TEAM_ID, SPARKLE_PUBLIC_KEY, SPARKLE_PRIVATE_KEY_FILE,
+  NOTARY_KEY, NOTARY_KEY_ID, NOTARY_ISSUER
 USAGE
 }
 
@@ -93,6 +99,26 @@ find_sparkle_tool() {
 require_signing_identity() {
   security find-identity -v -p codesigning | grep -Fq "\"${CODESIGN_IDENTITY}\"" ||
     die "Developer ID identity is unavailable: ${CODESIGN_IDENTITY}"
+}
+
+notary_auth_arguments() {
+  if [[ -n "$NOTARY_KEY" || -n "$NOTARY_KEY_ID" || -n "$NOTARY_ISSUER" ]]; then
+    [[ -n "$NOTARY_KEY" && -n "$NOTARY_KEY_ID" ]] ||
+      die "NOTARY_KEY and NOTARY_KEY_ID must be provided together"
+    [[ -f "$NOTARY_KEY" ]] || die "notary API key not found: $NOTARY_KEY"
+
+    print -r -- "--key"
+    print -r -- "$NOTARY_KEY"
+    print -r -- "--key-id"
+    print -r -- "$NOTARY_KEY_ID"
+    if [[ -n "$NOTARY_ISSUER" ]]; then
+      print -r -- "--issuer"
+      print -r -- "$NOTARY_ISSUER"
+    fi
+  else
+    print -r -- "--keychain-profile"
+    print -r -- "$NOTARY_PROFILE"
+  fi
 }
 
 setup_release_credentials() {
@@ -180,6 +206,12 @@ release_preflight() {
   [[ "$VERSION" =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]] ||
     die "version must use X.Y.Z format"
   [[ -z "$NOTES_FILE" || -f "$NOTES_FILE" ]] || die "notes file not found: $NOTES_FILE"
+  if [[ -n "$SPARKLE_PUBLIC_KEY_OVERRIDE" || -n "$SPARKLE_PRIVATE_KEY_FILE" ]]; then
+    [[ -n "$SPARKLE_PUBLIC_KEY_OVERRIDE" && -n "$SPARKLE_PRIVATE_KEY_FILE" ]] ||
+      die "SPARKLE_PUBLIC_KEY and SPARKLE_PRIVATE_KEY_FILE must be provided together"
+    [[ -f "$SPARKLE_PRIVATE_KEY_FILE" ]] ||
+      die "Sparkle private key not found: $SPARKLE_PRIVATE_KEY_FILE"
+  fi
 
   if (( DRY_RUN )); then
     return
@@ -188,7 +220,9 @@ release_preflight() {
   [[ -z "$(git status --porcelain)" ]] || die "release from a clean workspace"
   require_signing_identity
   gh auth status >/dev/null
-  xcrun notarytool history --keychain-profile "$NOTARY_PROFILE" >/dev/null
+  local -a notary_arguments
+  notary_arguments=("${(@f)$(notary_auth_arguments)}")
+  xcrun notarytool history "${notary_arguments[@]}" >/dev/null
 
   local local_commit remote_commit
   local_commit=$(git rev-parse HEAD)
@@ -227,15 +261,31 @@ create_release() {
 
   local generate_keys generate_appcast sparkle_public_key
   if (( DRY_RUN )); then
-    generate_keys="$ROOT/.build/artifacts/sparkle/Sparkle/bin/generate_keys"
     generate_appcast="$ROOT/.build/artifacts/sparkle/Sparkle/bin/generate_appcast"
-    sparkle_public_key="<Sparkle public key from Keychain account ${SPARKLE_ACCOUNT}>"
-    run "$generate_keys" --account "$SPARKLE_ACCOUNT" -p
+    if [[ -n "$SPARKLE_PUBLIC_KEY_OVERRIDE" ]]; then
+      sparkle_public_key="<Sparkle public key from SPARKLE_PUBLIC_KEY>"
+    else
+      generate_keys="$ROOT/.build/artifacts/sparkle/Sparkle/bin/generate_keys"
+      sparkle_public_key="<Sparkle public key from Keychain account ${SPARKLE_ACCOUNT}>"
+      run "$generate_keys" --account "$SPARKLE_ACCOUNT" -p
+    fi
   else
-    generate_keys=$(find_sparkle_tool generate_keys)
     generate_appcast=$(find_sparkle_tool generate_appcast)
-    sparkle_public_key=$("$generate_keys" --account "$SPARKLE_ACCOUNT" -p)
+    if [[ -n "$SPARKLE_PUBLIC_KEY_OVERRIDE" ]]; then
+      sparkle_public_key="$SPARKLE_PUBLIC_KEY_OVERRIDE"
+    else
+      generate_keys=$(find_sparkle_tool generate_keys)
+      sparkle_public_key=$("$generate_keys" --account "$SPARKLE_ACCOUNT" -p)
+    fi
     [[ -n "$sparkle_public_key" ]] || die "Sparkle public key is empty"
+  fi
+
+  local -a notary_arguments appcast_signing_arguments
+  notary_arguments=("${(@f)$(notary_auth_arguments)}")
+  if [[ -n "$SPARKLE_PRIVATE_KEY_FILE" ]]; then
+    appcast_signing_arguments=(--ed-key-file "$SPARKLE_PRIVATE_KEY_FILE")
+  else
+    appcast_signing_arguments=(--account "$SPARKLE_ACCOUNT")
   fi
 
   log "building and Developer ID signing Quotari ${VERSION} (${ARCHS})"
@@ -247,7 +297,7 @@ create_release() {
     "$ROOT/Scripts/package-app.sh"
 
   log "notarizing the Sparkle ZIP"
-  run xcrun notarytool submit "$zip" --keychain-profile "$NOTARY_PROFILE" --wait
+  run xcrun notarytool submit "$zip" "${notary_arguments[@]}" --wait
   run xcrun stapler staple "$app"
   run xcrun stapler validate "$app"
   run codesign --verify --deep --strict --verbose=2 "$app"
@@ -264,7 +314,7 @@ create_release() {
     "$ROOT/Scripts/create-dmg.sh" "$app" "$dmg"
 
   log "notarizing and stapling the DMG"
-  run xcrun notarytool submit "$dmg" --keychain-profile "$NOTARY_PROFILE" --wait
+  run xcrun notarytool submit "$dmg" "${notary_arguments[@]}" --wait
   run xcrun stapler staple "$dmg"
   run xcrun stapler validate "$dmg"
   run hdiutil verify "$dmg"
@@ -273,7 +323,7 @@ create_release() {
   log "generating the signed Sparkle appcast"
   run ditto "$zip" "$update_root/Quotari-${VERSION}.zip"
   run "$generate_appcast" \
-    --account "$SPARKLE_ACCOUNT" \
+    "${appcast_signing_arguments[@]}" \
     --download-url-prefix "${release_download_url}/" \
     --link "https://github.com/${REPOSITORY}" \
     --versions "$VERSION" \
