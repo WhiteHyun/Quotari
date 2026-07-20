@@ -104,6 +104,10 @@ struct DashboardContent: View {
 
   private var actionRows: some View {
     VStack(spacing: 1) {
+      if !store.enabledProviderDescriptors.isEmpty {
+        ProviderUsageMenu(descriptors: store.enabledProviderDescriptors)
+      }
+
       MenuActionRow(
         icon: "arrow.clockwise",
         title: "Refresh",
@@ -163,7 +167,8 @@ private struct MenuActionRow: View {
         title: title,
         shortcut: shortcut,
         busy: busy,
-        highlighted: hovering
+        highlighted: hovering,
+        accessorySystemImage: nil
       )
     }
     .buttonStyle(.plain)
@@ -177,6 +182,7 @@ private struct MenuActionLabel: View {
   let shortcut: String?
   let busy: Bool
   let highlighted: Bool
+  let accessorySystemImage: String?
 
   var body: some View {
     HStack(spacing: 8) {
@@ -193,6 +199,10 @@ private struct MenuActionLabel: View {
       if let shortcut {
         Text(shortcut)
           .foregroundStyle(highlighted ? Color.white.opacity(0.8) : Color.secondary)
+      } else if let accessorySystemImage {
+        Image(systemName: accessorySystemImage)
+          .font(.caption.weight(.semibold))
+          .foregroundStyle(highlighted ? Color.white.opacity(0.8) : Color.secondary)
       }
     }
     .font(.body)
@@ -204,5 +214,37 @@ private struct MenuActionLabel: View {
       highlighted ? Color.accentColor : Color.clear,
       in: RoundedRectangle(cornerRadius: 5, style: .continuous)
     )
+  }
+}
+
+private struct ProviderUsageMenu: View {
+  @Environment(\.openURL) private var openURL
+  @State private var hovering = false
+
+  let descriptors: [ProviderDescriptor]
+
+  var body: some View {
+    Menu {
+      ForEach(descriptors, id: \.id) { descriptor in
+        Button("Open \(descriptor.metadata.displayName) Usage") {
+          openURL(descriptor.id.usageDashboardURL)
+        }
+      }
+    } label: {
+      MenuActionLabel(
+        icon: "chart.bar.xaxis",
+        title: "Usage Dashboards",
+        shortcut: nil,
+        busy: false,
+        highlighted: hovering,
+        accessorySystemImage: "chevron.right"
+      )
+      .frame(width: 288)
+    }
+    .menuStyle(.borderlessButton)
+    .menuIndicator(.hidden)
+    .frame(width: 288)
+    .onHover { hovering = $0 }
+    .accessibilityHint("Opens an official provider usage page")
   }
 }
