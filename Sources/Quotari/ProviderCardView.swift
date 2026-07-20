@@ -59,8 +59,16 @@ struct ProviderCardView: View {
         accountControl
       }
       HStack {
-        if let sourceLabel {
-          Text(sourceLabel).font(.caption).foregroundStyle(.secondary)
+        if let snapshot {
+          ProviderFreshnessView(
+            updatedAt: snapshot.updatedAt,
+            refreshInterval: store.refreshInterval,
+            sourceLabel: sourceLabel
+          )
+        } else if let sourceLabel {
+          Text(sourceLabel)
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
         Spacer()
       }
