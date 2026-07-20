@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AboutPreferencesView: View {
   @Environment(UsageStore.self) private var store
+  @Environment(\.appVersionInfo) private var appVersionInfo
 
   var body: some View {
     VStack(spacing: 16) {
@@ -10,9 +11,10 @@ struct AboutPreferencesView: View {
         subtitle: "Your Claude and Codex quota companion for the macOS menu bar."
       ) {
         HStack(spacing: 16) {
-          Image(nsImage: IconRenderer.mascotIcon(frame: 0))
+          Image(nsImage: IconRenderer.mascotArtwork(frame: 0))
             .resizable()
             .interpolation(.high)
+            .scaledToFit()
             .frame(width: 52, height: 52)
           VStack(alignment: .leading, spacing: 3) {
             Text("Quotari")
@@ -26,8 +28,8 @@ struct AboutPreferencesView: View {
 
       PreferencesCard("Details") {
         VStack(spacing: 14) {
-          PreferencesControlRow("App") {
-            Text("Quotari")
+          PreferencesControlRow("Version") {
+            Text(appVersionInfo?.displayVersion ?? "Not available")
               .foregroundStyle(.secondary)
           }
           PreferencesRowDivider()

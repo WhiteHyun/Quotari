@@ -91,25 +91,42 @@ struct PreferencesSnapshotTests {
   ) -> Data {
     let hosting = NSHostingView(rootView:
       PreferencesView(selectedTab: selectedTab)
-        .environment(store))
+        .environment(store)
+        .environment(\.appVersionInfo, AppVersionInfo(version: "0.1.2", build: "12")))
     hosting.appearance = appearance
     hosting.frame = NSRect(origin: .zero, size: size)
 
     let window = NSWindow(
-      contentRect: NSRect(x: -30000, y: -30000, width: size.width, height: size.height),
-      styleMask: .borderless,
+      contentRect: NSRect(x: 80, y: 80, width: size.width, height: size.height),
+      styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
       backing: .buffered,
       defer: false
     )
     window.appearance = appearance
-    window.isOpaque = true
+    window.titleVisibility = .hidden
+    window.titlebarAppearsTransparent = true
     window.contentView = hosting
-    window.orderFrontRegardless()
+    window.setContentSize(size)
+    NSApplication.shared.activate(ignoringOtherApps: true)
+    window.makeKeyAndOrderFront(nil)
     RunLoop.current.run(until: Date().addingTimeInterval(0.35))
     defer { window.orderOut(nil) }
 
-    guard let representation = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else { return Data() }
-    hosting.cacheDisplay(in: hosting.bounds, to: representation)
-    return representation.representation(using: .png, properties: [:]) ?? Data()
+    let captureURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("quotari-settings-\(UUID().uuidString).png")
+    defer { try? FileManager.default.removeItem(at: captureURL) }
+
+    let capture = Process()
+    capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+    capture.arguments = ["-x", "-o", "-l", "\(window.windowNumber)", captureURL.path]
+    do {
+      try capture.run()
+      capture.waitUntilExit()
+      guard capture.terminationStatus == 0 else { return Data() }
+      return try Data(contentsOf: captureURL)
+    } catch {
+      Issue.record("Could not capture Settings window: \(error)")
+      return Data()
+    }
   }
 }

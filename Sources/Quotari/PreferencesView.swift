@@ -47,21 +47,19 @@ struct PreferencesView: View {
   }
 
   var body: some View {
-    HStack(spacing: 0) {
+    NavigationSplitView {
       sidebar
-      Rectangle()
-        .fill(Theme.settingsSeparator)
-        .frame(width: 1)
+        .navigationSplitViewColumnWidth(min: 210, ideal: 230, max: 280)
+    } detail: {
       detail
     }
-    .background(Theme.settingsDetailBackground)
+    .navigationSplitViewStyle(.balanced)
     .frame(
       minWidth: 840,
       idealWidth: 980,
       minHeight: 560,
       idealHeight: 680
     )
-    .ignoresSafeArea(.container, edges: .top)
     .onAppear { refreshExternalState() }
     // Coming back from System Settings (e.g. after approving the login item)
     // re-activates the app; that's the moment to pick up the outside change.
@@ -73,105 +71,71 @@ struct PreferencesView: View {
   private var sidebar: some View {
     VStack(alignment: .leading, spacing: 0) {
       HStack(spacing: 11) {
-        Image(nsImage: IconRenderer.mascotIcon(frame: 0))
+        Image(nsImage: IconRenderer.mascotArtwork(frame: 0))
           .resizable()
           .interpolation(.high)
+          .scaledToFit()
           .frame(width: 32, height: 32)
         Text("Quotari")
           .font(.title3.weight(.bold))
       }
-      .padding(.horizontal, 22)
-      .padding(.top, 54)
-      .padding(.bottom, 28)
+      .padding(.horizontal, 18)
+      .padding(.top, 18)
+      .padding(.bottom, 14)
 
-      VStack(spacing: 5) {
+      List(selection: tabSelection) {
         ForEach(PreferencesTab.allCases, id: \.self) { tab in
-          Button {
-            selectedTab = tab
-          } label: {
-            HStack(spacing: 12) {
-              Image(systemName: tab.systemImage)
-                .font(.system(size: 16, weight: .medium))
-                .frame(width: 22)
-              Text(tab.title)
-                .font(.body.weight(selectedTab == tab ? .semibold : .regular))
-              Spacer()
-            }
-            .foregroundStyle(selectedTab == tab ? Color.white : Color.primary)
-            .padding(.horizontal, 14)
-            .frame(height: 44)
-            .contentShape(Rectangle())
-            .background {
-              if selectedTab == tab {
-                LinearGradient(
-                  colors: [Theme.brandAccentSecondary, Theme.brandAccent],
-                  startPoint: .topLeading,
-                  endPoint: .bottomTrailing
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-              }
-            }
-          }
-          .buttonStyle(.plain)
-          .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
+          Label(tab.title, systemImage: tab.systemImage)
+            .font(.body)
+            .tag(tab)
         }
       }
-      .padding(.horizontal, 14)
-
-      Spacer()
+      .listStyle(.sidebar)
+      .tint(Theme.brandAccent)
     }
-    .frame(width: 230)
-    .background(Theme.settingsSidebarBackground)
   }
 
   private var detail: some View {
-    VStack(spacing: 0) {
-      detailHeader
-      ScrollView {
-        selectedTab.content
-          .frame(maxWidth: .infinity, alignment: .topLeading)
-          .padding(.horizontal, 26)
-          .padding(.bottom, 28)
+    ScrollView {
+      selectedTab.content
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 26)
+        .padding(.top, 24)
+        .padding(.bottom, 28)
+    }
+    .scrollIndicators(.hidden)
+    .background(Theme.settingsDetailBackground)
+    .navigationTitle(selectedTab.title)
+    .toolbar {
+      ToolbarItemGroup(placement: .navigation) {
+        Button {
+          moveSelection(by: -1)
+        } label: {
+          Label("Previous Section", systemImage: "chevron.left")
+        }
+        .labelStyle(.iconOnly)
+        .disabled(!canMoveSelection(by: -1))
+
+        Button {
+          moveSelection(by: 1)
+        } label: {
+          Label("Next Section", systemImage: "chevron.right")
+        }
+        .labelStyle(.iconOnly)
+        .disabled(!canMoveSelection(by: 1))
       }
-      .scrollIndicators(.hidden)
     }
   }
 
-  private var detailHeader: some View {
-    HStack(spacing: 18) {
-      HStack(spacing: 0) {
-        navigationButton(systemImage: "chevron.left", offset: -1)
-        Rectangle()
-          .fill(Theme.settingsSeparator)
-          .frame(width: 1, height: 24)
-        navigationButton(systemImage: "chevron.right", offset: 1)
+  private var tabSelection: Binding<PreferencesTab?> {
+    Binding(
+      get: { selectedTab },
+      set: { newValue in
+        if let newValue {
+          selectedTab = newValue
+        }
       }
-      .padding(4)
-      .background(.regularMaterial, in: Capsule())
-      .overlay { Capsule().stroke(Theme.settingsSeparator) }
-      .shadow(color: .black.opacity(0.06), radius: 8, y: 2)
-
-      Text(selectedTab.title)
-        .font(.title2.weight(.bold))
-        .contentTransition(.interpolate)
-      Spacer()
-    }
-    .padding(.horizontal, 26)
-    .padding(.top, 42)
-    .padding(.bottom, 20)
-  }
-
-  private func navigationButton(systemImage: String, offset: Int) -> some View {
-    Button {
-      moveSelection(by: offset)
-    } label: {
-      Image(systemName: systemImage)
-        .font(.system(size: 15, weight: .semibold))
-        .frame(width: 34, height: 30)
-        .contentShape(Rectangle())
-    }
-    .buttonStyle(.plain)
-    .disabled(!canMoveSelection(by: offset))
+    )
   }
 
   private func canMoveSelection(by offset: Int) -> Bool {
