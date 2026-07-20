@@ -14,12 +14,8 @@ extension IsolatedAccountLogin {
       environment: environment,
       currentDirectory: currentDirectory
     )
-    let inputPipe = observers.input.map { _ in Pipe() }
-    process.standardInput = inputPipe ?? FileHandle.nullDevice
     defer { observers.input?.finish() }
-    if let inputPipe {
-      try observers.input?.connect(inputPipe.fileHandleForWriting)
-    }
+    try configureAccountLoginInput(observers: observers, process: process)
     let box = AccountLoginProcessBox(process)
     let completionMatcher = observers.completionOutput.map(AccountLoginOutputMatcher.init)
     let outputHandler = accountLoginOutputHandler(
@@ -39,15 +35,19 @@ extension IsolatedAccountLogin {
         try Task.checkCancellation()
         return try await withCheckedThrowingContinuation { continuation in
           do {
-            try box.run()
-            // Establish the recovery marker synchronously after launch, then
-            // observe process completion on a worker. Even an executable that
-            // exits inside `Process.run()` cannot publish its status first.
-            observers.didLaunch?()
-            try? outputPipe?.fileHandleForWriting.close()
-            Task.detached {
-              continuation.resume(returning: box.waitUntilExit())
+            let completion = AccountLoginProcessCompletion { status in
+              continuation.resume(returning: status)
             }
+            try box.run { status in
+              completion.processDidTerminate(with: status)
+            }
+            // Establish the recovery marker synchronously after launch, then
+            // release a termination that may already have arrived. Even an
+            // executable that exits inside `Process.run()` cannot publish its
+            // status first.
+            observers.didLaunch?()
+            completion.didPublishLaunch()
+            try? outputPipe?.fileHandleForWriting.close()
           } catch {
             try? outputPipe?.fileHandleForWriting.close()
             continuation.resume(throwing: error)
@@ -62,6 +62,49 @@ extension IsolatedAccountLogin {
     }
     await outputReader?.finish()
     return completionMatcher?.didMatch == true ? 0 : status
+  }
+}
+
+private func configureAccountLoginInput(
+  observers: AccountLoginCommandObservers,
+  process: Process
+) throws {
+  let inputPipe = observers.input.map { _ in Pipe() }
+  process.standardInput = inputPipe ?? FileHandle.nullDevice
+  if let inputPipe {
+    try observers.input?.connect(inputPipe.fileHandleForWriting)
+  }
+}
+
+private final class AccountLoginProcessCompletion: @unchecked Sendable {
+  private let lock = NSLock()
+  private let completion: @Sendable (Int32) -> Void
+  private var hasPublishedLaunch = false
+  private var terminationStatus: Int32?
+  private var didComplete = false
+
+  init(completion: @escaping @Sendable (Int32) -> Void) {
+    self.completion = completion
+  }
+
+  func processDidTerminate(with status: Int32) {
+    finishIfReady(after: { terminationStatus = status })
+  }
+
+  func didPublishLaunch() {
+    finishIfReady(after: { hasPublishedLaunch = true })
+  }
+
+  private func finishIfReady(after update: () -> Void) {
+    let status = lock.withLock { () -> Int32? in
+      update()
+      guard hasPublishedLaunch, let terminationStatus, !didComplete else { return nil }
+      didComplete = true
+      return terminationStatus
+    }
+    if let status {
+      completion(status)
+    }
   }
 }
 

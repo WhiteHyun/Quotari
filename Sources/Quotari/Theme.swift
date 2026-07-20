@@ -2,6 +2,12 @@ import AppKit
 import SwiftUI
 
 enum Theme {
+  static let brandAccent = Color(red: 0.96, green: 0.31, blue: 0.12)
+  static let brandAccentSecondary = Color(red: 1, green: 0.57, blue: 0.22)
+  static let settingsSidebarBackground = Color(nsColor: .windowBackgroundColor)
+  static let settingsDetailBackground = Color(nsColor: .windowBackgroundColor)
+  static let settingsCardBackground = Color(nsColor: .controlBackgroundColor)
+  static let settingsSeparator = Color.primary.opacity(0.09)
   static let usageTrack = Color.primary.opacity(0.12)
 
   /// Status word for VoiceOver, so severity isn't conveyed by color alone.

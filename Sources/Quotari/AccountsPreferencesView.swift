@@ -6,105 +6,173 @@ struct AccountsPreferencesView: View {
   @State private var confirmation: AccountManagementConfirmation?
 
   var body: some View {
+    VStack(spacing: 16) {
+      providersCard
+      accountsCard
+    }
+    .alert(item: $confirmation) { confirmationAlert(for: $0) }
+  }
+
+  private var providersCard: some View {
     @Bindable var store = store
-
-    Form {
-      Section("Providers") {
-        ForEach(store.providers, id: \.id) { descriptor in
-          VStack(alignment: .leading, spacing: 2) {
-            Toggle(
-              descriptor.metadata.displayName,
-              isOn: $store[providerEnabled: descriptor.id]
-            )
-            if store.credentialDiscoveryState(for: descriptor.id) == .absent {
-              Text("No credentials detected. When enabled, Quotari may show demo data until an account is available.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
+    return PreferencesCard(
+      "Providers",
+      subtitle: "Choose the AI services that appear throughout Quotari."
+    ) {
+      VStack(spacing: 14) {
+        ForEach(Array(store.providers.enumerated()), id: \.element.id) { index, descriptor in
+          providerToggleRow(descriptor, isEnabled: $store[providerEnabled: descriptor.id])
+          if index < store.providers.count - 1 {
+            PreferencesRowDivider()
           }
         }
-        Text("These switches control providers across Quotari. Quota alerts are configured separately.")
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
-
-      Section("Accounts") {
-        ForEach(store.providers, id: \.id) { descriptor in
-          VStack(alignment: .leading, spacing: 6) {
-            let canAddAccount = store.canAddAccount(for: descriptor.id)
-            HStack {
-              accountPicker(
-                for: descriptor,
-                selection: $store[selectedAccountID: descriptor.id]
-              )
-              Button {
-                store.startAddingAccount(for: descriptor.id)
-              } label: {
-                if store.addingAccountProviders.contains(descriptor.id) {
-                  ProgressView()
-                    .controlSize(.small)
-                } else {
-                  Label(accountLoginTitle(for: descriptor.id), systemImage: "plus")
-                }
-              }
-              .disabled(!store.addingAccountProviders.isEmpty || !canAddAccount)
-              .help(store.addAccountUnavailableReason(for: descriptor.id) ?? accountLoginHelp(for: descriptor.id))
-            }
-            monitoringSelection(for: descriptor)
-            if descriptor.id == .claude {
-              Text(
-                "Claude keeps one shared CLI login. Quotari saves the current account before browser login, "
-                  + "then adds the new account automatically."
-              )
-              .font(.caption)
-              .foregroundStyle(.secondary)
-              .fixedSize(horizontal: false, vertical: true)
-            }
-            if let reason = store.addAccountUnavailableReason(for: descriptor.id) {
-              Text(reason)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-            AccountLoginStatusView(provider: descriptor.id)
-            if let error = store.captureErrors[descriptor.id] {
-              Text(error)
-                .font(.caption)
-                .foregroundStyle(.red)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-          }
-        }
-        Button("Scan & Add Current Accounts") { Task { await scanAccountsButtonTapped() } }
       }
     }
-    .formStyle(.grouped)
-    .alert(item: $confirmation) { confirmation in
-      switch confirmation {
-      case let .switchCLI(account):
-        Alert(
-          title: Text("Switch CLI account?"),
-          message: Text(
-            "Quit active Claude Code or Codex sessions first. Quotari will preserve the current login, then put "
-              + "\(store.accountLabel(for: account)) into the shared CLI slot."
-          ),
-          primaryButton: .default(Text("Switch Account")) {
-            Task { await store.switchCLIAccount(to: account) }
-          },
-          secondaryButton: .cancel()
-        )
-      case let .remove(account):
-        Alert(
-          title: Text("Remove saved account?"),
-          message: Text(
-            "This removes \(store.accountLabel(for: account)) from Quotari. The provider account remains intact."
-          ),
-          primaryButton: .destructive(Text("Remove")) {
-            Task { await store.removeCapturedAccount(account) }
-          },
-          secondaryButton: .cancel()
-        )
+  }
+
+  private var accountsCard: some View {
+    PreferencesCard(
+      "Accounts",
+      subtitle: "Monitor usage across accounts and switch the shared CLI login."
+    ) {
+      VStack(spacing: 20) {
+        ForEach(Array(store.providers.enumerated()), id: \.element.id) { index, descriptor in
+          providerAccountSection(descriptor)
+          if index < store.providers.count - 1 {
+            PreferencesRowDivider()
+          }
+        }
+        HStack {
+          Spacer()
+          Button("Scan & Add Current Accounts") {
+            Task { await scanAccountsButtonTapped() }
+          }
+          .buttonStyle(.borderedProminent)
+          .tint(Theme.brandAccent)
+        }
       }
+    }
+  }
+
+  private func confirmationAlert(for confirmation: AccountManagementConfirmation) -> Alert {
+    switch confirmation {
+    case let .switchCLI(account):
+      Alert(
+        title: Text("Switch CLI account?"),
+        message: Text(
+          "Quit active Claude Code or Codex sessions first. Quotari will preserve the current login, then put "
+            + "\(store.accountLabel(for: account)) into the shared CLI slot."
+        ),
+        primaryButton: .default(Text("Switch Account")) {
+          Task { await store.switchCLIAccount(to: account) }
+        },
+        secondaryButton: .cancel()
+      )
+    case let .remove(account):
+      Alert(
+        title: Text("Remove saved account?"),
+        message: Text(
+          "This removes \(store.accountLabel(for: account)) from Quotari. The provider account remains intact."
+        ),
+        primaryButton: .destructive(Text("Remove")) {
+          Task { await store.removeCapturedAccount(account) }
+        },
+        secondaryButton: .cancel()
+      )
+    }
+  }
+}
+
+private extension AccountsPreferencesView {
+  private func providerToggleRow(
+    _ descriptor: ProviderDescriptor,
+    isEnabled: Binding<Bool>
+  ) -> some View {
+    HStack(spacing: 13) {
+      ProviderIconView(descriptor: descriptor)
+      VStack(alignment: .leading, spacing: 2) {
+        Text(descriptor.metadata.displayName)
+          .font(.body.weight(.medium))
+        HStack(spacing: 5) {
+          Circle()
+            .fill(providerStatusColor(for: descriptor.id))
+            .frame(width: 7, height: 7)
+          Text(providerStatusTitle(for: descriptor.id))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+      Spacer()
+      Toggle(descriptor.metadata.displayName, isOn: isEnabled)
+        .labelsHidden()
+        .toggleStyle(.switch)
+        .tint(.blue)
+    }
+  }
+
+  private func providerAccountSection(_ descriptor: ProviderDescriptor) -> some View {
+    VStack(alignment: .leading, spacing: 14) {
+      providerAccountHeader(descriptor)
+      monitoringSelection(for: descriptor)
+      providerAccountGuidance(descriptor)
+      AccountLoginStatusView(provider: descriptor.id)
+      if let error = store.captureErrors[descriptor.id] {
+        Text(error)
+          .font(.caption)
+          .foregroundStyle(.red)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+  }
+
+  private func providerAccountHeader(_ descriptor: ProviderDescriptor) -> some View {
+    let canAddAccount = store.canAddAccount(for: descriptor.id)
+    return HStack(spacing: 12) {
+      ProviderIconView(descriptor: descriptor, size: 34)
+      Text(descriptor.metadata.displayName)
+        .font(.headline)
+      Spacer()
+      accountPicker(
+        for: descriptor,
+        selection: Binding(
+          get: { store[selectedAccountID: descriptor.id] },
+          set: { store[selectedAccountID: descriptor.id] = $0 }
+        )
+      )
+      Button {
+        store.startAddingAccount(for: descriptor.id)
+      } label: {
+        Group {
+          if store.addingAccountProviders.contains(descriptor.id) {
+            ProgressView()
+              .controlSize(.small)
+          } else {
+            Label(accountLoginTitle(for: descriptor.id), systemImage: "plus")
+          }
+        }
+        .frame(width: 150)
+      }
+      .disabled(!store.addingAccountProviders.isEmpty || !canAddAccount)
+      .help(store.addAccountUnavailableReason(for: descriptor.id) ?? accountLoginHelp(for: descriptor.id))
+    }
+  }
+
+  @ViewBuilder
+  private func providerAccountGuidance(_ descriptor: ProviderDescriptor) -> some View {
+    if descriptor.id == .claude {
+      Text(
+        "Claude keeps one shared CLI login. Quotari saves the current account before browser login, "
+          + "then adds the new account automatically."
+      )
+      .font(.caption)
+      .foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+    }
+    if let reason = store.addAccountUnavailableReason(for: descriptor.id) {
+      Text(reason)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
     }
   }
 
@@ -123,16 +191,20 @@ struct AccountsPreferencesView: View {
           .tag(account.id)
       }
     }
-    .frame(maxWidth: .infinity)
+    .labelsHidden()
+    .frame(width: 190)
     .disabled(accounts.isEmpty)
+    .accessibilityLabel("\(descriptor.metadata.displayName) dashboard account")
   }
+}
 
+private extension AccountsPreferencesView {
   private func monitoringSelection(for descriptor: ProviderDescriptor) -> some View {
     let accounts = displayedAccounts(for: descriptor.id)
     let activeCLIID = store.activeCLIAccount(for: descriptor.id)?.id
     return VStack(alignment: .leading, spacing: 4) {
       Text("Monitored Accounts")
-        .font(.caption.weight(.medium))
+        .font(.subheadline.weight(.medium))
         .foregroundStyle(.secondary)
       if accounts.isEmpty {
         Text("No accounts available")
@@ -140,46 +212,89 @@ struct AccountsPreferencesView: View {
           .foregroundStyle(.secondary)
       } else {
         ForEach(accounts) { account in
-          HStack(spacing: 8) {
-            Toggle(isOn: monitoringBinding(for: account)) {
-              HStack(spacing: 6) {
-                Text(accountLabel(account))
-                  .lineLimit(1)
-                if account.id == activeCLIID {
-                  Text("CLI Active")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                }
-              }
-            }
-            .toggleStyle(.checkbox)
-            if account.credentialSource.isCaptured {
-              Button("Switch") {
-                confirmation = .switchCLI(account)
-              }
-              .controlSize(.small)
-              .disabled(store.isSwitching || !store.addingAccountProviders.isEmpty)
-              Button {
-                confirmation = .remove(account)
-              } label: {
-                Image(systemName: "minus.circle")
-              }
-              .buttonStyle(.borderless)
-              .help("Remove saved account")
-              .disabled(store.isSwitching || !store.addingAccountProviders.isEmpty)
-            }
-          }
+          monitoredAccountRow(account, activeCLIID: activeCLIID)
         }
       }
-      Text(
-        "Checked accounts refresh in the background. The dashboard account and CLI active account remain single choices."
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
-      .fixedSize(horizontal: false, vertical: true)
+      monitoringFooter
     }
   }
 
+  private func monitoredAccountRow(_ account: ProviderAccount, activeCLIID: String?) -> some View {
+    let label = store.accountLabel(for: account)
+    return HStack(alignment: .center, spacing: 8) {
+      Toggle(label, isOn: monitoringBinding(for: account))
+        .labelsHidden()
+        .toggleStyle(.checkbox)
+        .accessibilityLabel("Monitor \(label)")
+      VStack(alignment: .leading, spacing: 1) {
+        HStack(spacing: 7) {
+          Text(label)
+            .lineLimit(1)
+          if account.id == activeCLIID {
+            PreferencesBadge(title: "CLI Active", color: .blue)
+          }
+          if account.credentialSource.isCaptured {
+            PreferencesBadge(title: "Saved", color: Theme.brandAccent)
+          }
+        }
+        if let detail = account.detail {
+          Text(detail)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+      }
+      Spacer(minLength: 12)
+      if account.credentialSource.isCaptured {
+        savedAccountActions(account)
+      }
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  private func savedAccountActions(_ account: ProviderAccount) -> some View {
+    Group {
+      Button("Switch") {
+        confirmation = .switchCLI(account)
+      }
+      .controlSize(.small)
+      Button {
+        confirmation = .remove(account)
+      } label: {
+        Image(systemName: "minus.circle")
+      }
+      .buttonStyle(.borderless)
+      .help("Remove saved account")
+    }
+    .disabled(store.isSwitching || !store.addingAccountProviders.isEmpty)
+  }
+
+  private var monitoringFooter: some View {
+    Text(
+      "Checked accounts refresh in the background. The dashboard account and CLI active account remain single choices."
+    )
+    .font(.caption)
+    .foregroundStyle(.secondary)
+    .fixedSize(horizontal: false, vertical: true)
+  }
+
+  private func providerStatusTitle(for provider: UsageProvider) -> String {
+    switch store.credentialDiscoveryState(for: provider) {
+    case .unknown: "Checking credentials…"
+    case .present: "Connected"
+    case .absent: "No credentials detected"
+    }
+  }
+
+  private func providerStatusColor(for provider: UsageProvider) -> Color {
+    switch store.credentialDiscoveryState(for: provider) {
+    case .unknown: .secondary
+    case .present: .green
+    case .absent: .orange
+    }
+  }
+}
+
+private extension AccountsPreferencesView {
   private func monitoringBinding(for account: ProviderAccount) -> Binding<Bool> {
     Binding(
       get: { store.isMonitoring(account) },

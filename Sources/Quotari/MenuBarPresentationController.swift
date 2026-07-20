@@ -1,3 +1,4 @@
+import AppKit
 import KeyboardShortcuts
 import Observation
 
@@ -14,6 +15,7 @@ final class MenuBarPresentationController {
 
   @ObservationIgnored private let shortcutRegistrar: ShortcutRegistrar?
   @ObservationIgnored private var didRegisterShortcut = false
+  @ObservationIgnored private weak var dashboardWindow: NSWindow?
 
   init(registersShortcut: Bool = true) {
     shortcutRegistrar = registersShortcut
@@ -35,5 +37,14 @@ final class MenuBarPresentationController {
 
   func toggleDashboard() {
     isPresented.toggle()
+  }
+
+  func trackDashboardWindow(_ window: NSWindow) {
+    dashboardWindow = window
+  }
+
+  func dismissDashboard() {
+    isPresented = false
+    dashboardWindow?.close()
   }
 }

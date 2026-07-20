@@ -6,6 +6,7 @@ struct ProviderAccountPopover: View {
   @Environment(\.dismiss) private var dismiss
 
   let descriptor: ProviderDescriptor
+  var showSettings: () -> Void = {}
 
   @State private var isReloadingAccounts = false
   @State private var switchCoordinator = ProviderAccountPopoverSwitchCoordinator()
@@ -167,7 +168,8 @@ struct ProviderAccountPopover: View {
         systemImage: "gearshape",
         busy: false
       ) {
-        SettingsWindowController.shared.show(store: store)
+        dismiss()
+        showSettings()
       }
     }
   }

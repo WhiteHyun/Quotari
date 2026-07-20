@@ -33,10 +33,13 @@ final class AccountLoginProcessBox: @unchecked Sendable {
     self.process = process
   }
 
-  func run() throws {
+  func run(onTermination: @escaping @Sendable (Int32) -> Void) throws {
     try lock.withLock {
       if cancelled {
         throw CancellationError()
+      }
+      process.terminationHandler = { process in
+        onTermination(process.terminationStatus)
       }
       try process.run()
     }
@@ -76,11 +79,6 @@ final class AccountLoginProcessBox: @unchecked Sendable {
     ) { [self] in
       terminateAfterSuccessfulOutputIfNeeded()
     }
-  }
-
-  func waitUntilExit() -> Int32 {
-    process.waitUntilExit()
-    return process.terminationStatus
   }
 
   private func forceKillIfNeeded() {

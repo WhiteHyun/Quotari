@@ -18,15 +18,17 @@ defaults:
 jobs:
   build-test:
     runs-on: [self-hosted, macOS, quotari]
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           clean: true
       - run: swift build
-      - run: swift test
+      - run: swift test --no-parallel
 
   lint:
     runs-on: [self-hosted, macOS, quotari]
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
