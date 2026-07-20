@@ -60,6 +60,8 @@ struct ProviderStatusTests {
     #expect(status.state == .partialOutage)
     #expect(status.incident?.id == "incident-2")
     #expect(status.updatedAt == Date(timeIntervalSince1970: 1_784_517_444.78))
+    #expect(status.components.map(\.name) == ["Claude Code", "Claude API (api.anthropic.com)"])
+    #expect(status.components.map(\.state) == [.degradedPerformance, .operational])
   }
 
   @Test func unrelatedIncidentDoesNotDegradeCodex() async throws {

@@ -37,11 +37,24 @@ public struct ProviderStatusIncident: Sendable, Equatable, Identifiable {
   }
 }
 
+public struct ProviderStatusComponent: Sendable, Equatable, Identifiable {
+  public let id: String
+  public let name: String
+  public let state: ProviderServiceState
+
+  public init(id: String, name: String, state: ProviderServiceState) {
+    self.id = id
+    self.name = name
+    self.state = state
+  }
+}
+
 public struct ProviderServiceStatus: Sendable, Equatable {
   public let provider: UsageProvider
   public let state: ProviderServiceState
   public let updatedAt: Date
   public let statusPageURL: URL
+  public let components: [ProviderStatusComponent]
   public let incident: ProviderStatusIncident?
 
   public init(
@@ -49,12 +62,14 @@ public struct ProviderServiceStatus: Sendable, Equatable {
     state: ProviderServiceState,
     updatedAt: Date,
     statusPageURL: URL,
+    components: [ProviderStatusComponent] = [],
     incident: ProviderStatusIncident? = nil
   ) {
     self.provider = provider
     self.state = state
     self.updatedAt = updatedAt
     self.statusPageURL = statusPageURL
+    self.components = components
     self.incident = incident
   }
 }
@@ -141,6 +156,13 @@ public actor ProviderStatusService: ProviderStatusServing {
       state: resolvedState,
       updatedAt: parseDate(payload.page.updatedAt) ?? now,
       statusPageURL: configuration.statusPage,
+      components: relevantComponents.map {
+        ProviderStatusComponent(
+          id: $0.id,
+          name: $0.name,
+          state: serviceState(componentStatus: $0.status)
+        )
+      },
       incident: primaryIncident.map {
         ProviderStatusIncident(
           id: $0.id,
