@@ -60,11 +60,6 @@ struct DashboardContent: View {
     VStack(spacing: 0) {
       sectionStack
       Divider()
-      ProviderStatusSection(
-        descriptors: store.enabledProviderDescriptors,
-        controller: providerStatus
-      )
-      Divider()
       actionRows
     }
     .frame(width: 300)
@@ -105,7 +100,11 @@ struct DashboardContent: View {
   private var actionRows: some View {
     VStack(spacing: 1) {
       if !store.enabledProviderDescriptors.isEmpty {
-        ProviderUsageMenu(descriptors: store.enabledProviderDescriptors)
+        ProviderStatusMenu(
+          descriptors: store.enabledProviderDescriptors,
+          controller: providerStatus,
+          refresh: refreshProviderStatus
+        )
       }
 
       MenuActionRow(
@@ -217,23 +216,21 @@ private struct MenuActionLabel: View {
   }
 }
 
-private struct ProviderUsageMenu: View {
-  @Environment(\.openURL) private var openURL
+private struct ProviderStatusMenu: View {
   @State private var hovering = false
+  @State private var isPresented = false
 
   let descriptors: [ProviderDescriptor]
+  let controller: ProviderStatusController
+  let refresh: () -> Void
 
   var body: some View {
-    Menu {
-      ForEach(descriptors, id: \.id) { descriptor in
-        Button("Open \(descriptor.metadata.displayName) Usage") {
-          openURL(descriptor.id.usageDashboardURL)
-        }
-      }
+    Button {
+      isPresented.toggle()
     } label: {
       MenuActionLabel(
-        icon: "chart.bar.xaxis",
-        title: "Usage Dashboards",
+        icon: "waveform.path.ecg",
+        title: "Provider Status",
         shortcut: nil,
         busy: false,
         highlighted: hovering,
@@ -241,10 +238,19 @@ private struct ProviderUsageMenu: View {
       )
       .frame(width: 288)
     }
-    .menuStyle(.borderlessButton)
-    .menuIndicator(.hidden)
-    .frame(width: 288)
+    .buttonStyle(.plain)
     .onHover { hovering = $0 }
-    .accessibilityHint("Opens an official provider usage page")
+    .popover(
+      isPresented: $isPresented,
+      attachmentAnchor: .rect(.bounds),
+      arrowEdge: .leading
+    ) {
+      ProviderStatusPopover(
+        descriptors: descriptors,
+        controller: controller,
+        refresh: refresh
+      )
+    }
+    .accessibilityHint("Shows live provider service health")
   }
 }
