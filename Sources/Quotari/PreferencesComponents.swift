@@ -112,6 +112,12 @@ struct ProviderIconView: View {
 }
 
 enum ProviderIconAsset {
+  static var resourcesAreReady: Bool {
+    image(for: .claude, colorScheme: .light) != nil
+      && image(for: .codex, colorScheme: .light) != nil
+      && image(for: .codex, colorScheme: .dark) != nil
+  }
+
   static func resourceName(for provider: UsageProvider, colorScheme: ColorScheme) -> String {
     switch provider {
     case .claude:
@@ -123,10 +129,10 @@ enum ProviderIconAsset {
 
   static func image(
     for provider: UsageProvider,
-    colorScheme: ColorScheme,
-    bundle: Bundle = .module
+    colorScheme: ColorScheme
   ) -> NSImage? {
     let name = resourceName(for: provider, colorScheme: colorScheme)
+    let bundle = IconRenderer.resourceBundle
     let url = bundle.url(forResource: name, withExtension: "svg", subdirectory: "ProviderIcons")
       ?? bundle.url(forResource: name, withExtension: "svg")
     return url.flatMap(NSImage.init(contentsOf:))

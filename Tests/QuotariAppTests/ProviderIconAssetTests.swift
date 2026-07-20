@@ -23,6 +23,8 @@ struct ProviderIconAssetTests {
   }
 
   @Test func bundledProviderAssetsLoadAsImages() {
+    #expect(ProviderIconAsset.resourcesAreReady)
+
     for provider in UsageProvider.allCases {
       for colorScheme in [ColorScheme.light, .dark] {
         #expect(ProviderIconAsset.image(for: provider, colorScheme: colorScheme) != nil)
