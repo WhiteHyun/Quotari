@@ -127,6 +127,7 @@ VERIFY_APP="$VERIFY_ROOT/Quotari.app"
 ditto "$APP" "$VERIFY_APP"
 codesign --verify --deep --strict "$VERIFY_APP"
 "$VERIFY_APP/Contents/MacOS/Quotari" --verify-packaged-resources
+"$VERIFY_APP/Contents/MacOS/Quotari" --verify-packaged-settings
 rm -rf "$VERIFY_ROOT"
 trap - EXIT
 

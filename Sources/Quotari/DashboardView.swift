@@ -8,42 +8,26 @@ struct DashboardView: View {
   /// The menu bar window resolves flexible height ranges to their minimum, so
   /// the window height must be a single measured value, not a min/max span.
   @State private var contentHeight: CGFloat = 100
-  @State private var providerStatus = ProviderStatusController()
 
   let menuBarPresentation: MenuBarPresentationController
 
   var body: some View {
-    let enabledProviders = store.enabledProviderDescriptors.map(\.id)
     ScrollView {
-      DashboardContent(
-        providerStatus: providerStatus,
-        showSettings: showSettings,
-        refreshProviderStatus: refreshProviderStatus
-      )
-      .onGeometryChange(for: CGFloat.self) { proxy in
-        proxy.size.height
-      } action: { height in
-        contentHeight = height
-      }
+      DashboardContent(showSettings: showSettings)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+          proxy.size.height
+        } action: { height in
+          contentHeight = height
+        }
     }
     .frame(width: 300)
     .frame(height: min(max(contentHeight, 100), 560))
     .background(MenuVibrancyBackground())
-    .task(id: enabledProviders) {
-      await providerStatus.refresh(providers: enabledProviders)
-    }
   }
 
   private func showSettings() {
     menuBarPresentation.dismissDashboard()
     SettingsWindowController.shared.show(store: store)
-  }
-
-  private func refreshProviderStatus() {
-    let providers = store.enabledProviderDescriptors.map(\.id)
-    Task {
-      await providerStatus.refresh(providers: providers, forceRefresh: true)
-    }
   }
 }
 
@@ -52,9 +36,7 @@ struct DashboardView: View {
 struct DashboardContent: View {
   @Environment(UsageStore.self) private var store
 
-  let providerStatus: ProviderStatusController
   var showSettings: () -> Void = {}
-  var refreshProviderStatus: () -> Void = {}
 
   var body: some View {
     VStack(spacing: 0) {
@@ -99,14 +81,6 @@ struct DashboardContent: View {
 
   private var actionRows: some View {
     VStack(spacing: 1) {
-      if !store.enabledProviderDescriptors.isEmpty {
-        ProviderStatusMenu(
-          descriptors: store.enabledProviderDescriptors,
-          controller: providerStatus,
-          refresh: refreshProviderStatus
-        )
-      }
-
       MenuActionRow(
         icon: "arrow.clockwise",
         title: "Refresh",
@@ -114,7 +88,6 @@ struct DashboardContent: View {
         busy: store.isRefreshing
       ) {
         store.beginRefresh()
-        refreshProviderStatus()
       }
       .keyboardShortcut("r")
 
@@ -213,44 +186,5 @@ private struct MenuActionLabel: View {
       highlighted ? Color.accentColor : Color.clear,
       in: RoundedRectangle(cornerRadius: 5, style: .continuous)
     )
-  }
-}
-
-private struct ProviderStatusMenu: View {
-  @State private var hovering = false
-  @State private var isPresented = false
-
-  let descriptors: [ProviderDescriptor]
-  let controller: ProviderStatusController
-  let refresh: () -> Void
-
-  var body: some View {
-    Button {
-      isPresented.toggle()
-    } label: {
-      MenuActionLabel(
-        icon: "waveform.path.ecg",
-        title: "Provider Status",
-        shortcut: nil,
-        busy: false,
-        highlighted: hovering,
-        accessorySystemImage: "chevron.right"
-      )
-      .frame(width: 288)
-    }
-    .buttonStyle(.plain)
-    .onHover { hovering = $0 }
-    .popover(
-      isPresented: $isPresented,
-      attachmentAnchor: .rect(.bounds),
-      arrowEdge: .leading
-    ) {
-      ProviderStatusPopover(
-        descriptors: descriptors,
-        controller: controller,
-        refresh: refresh
-      )
-    }
-    .accessibilityHint("Shows live provider service health")
   }
 }

@@ -1,4 +1,3 @@
-import KeyboardShortcuts
 import SwiftUI
 
 struct GeneralPreferencesView: View {
@@ -75,8 +74,8 @@ struct GeneralPreferencesView: View {
           )
           PreferencesRowDivider()
           PreferencesControlRow("Open dashboard") {
-            KeyboardShortcuts.Recorder(for: .toggleDashboard)
-              .accessibilityLabel("Open dashboard")
+            DashboardShortcutRecorder()
+              .frame(width: 130)
           }
         }
       }

@@ -16,8 +16,32 @@ private enum QuotariEntrypoint {
       }
       Darwin.exit(EXIT_SUCCESS)
     }
+    if CommandLine.arguments.contains("--verify-packaged-settings") {
+      Darwin.exit(verifyPackagedSettings() ? EXIT_SUCCESS : EXIT_FAILURE)
+    }
 
     QuotariApp.main()
+  }
+
+  @MainActor
+  private static func verifyPackagedSettings() -> Bool {
+    _ = NSApplication.shared
+    let store = UsageStore(providers: [], startsAutomatically: false)
+    let hosting = NSHostingView(rootView: PreferencesView().environment(store))
+    hosting.frame = NSRect(x: 0, y: 0, width: 980, height: 680)
+
+    let window = NSWindow(
+      contentRect: hosting.frame,
+      styleMask: .borderless,
+      backing: .buffered,
+      defer: false
+    )
+    window.contentView = hosting
+    window.orderFrontRegardless()
+    RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+    defer { window.orderOut(nil) }
+
+    return hosting.fittingSize.width > 0 && hosting.fittingSize.height > 0
   }
 }
 
