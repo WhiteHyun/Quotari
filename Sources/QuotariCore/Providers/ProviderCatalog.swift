@@ -1,33 +1,34 @@
 import Foundation
 
-/// Assembles the provider descriptors the app actually uses: a live strategy
-/// first, then the mock strategy as a fallback. When real credentials are
-/// present the live data wins; otherwise the pipeline falls through to demo
-/// data, so the app is never empty during development.
+/// Assembles the live provider descriptors the app uses at runtime.
+/// Missing credentials and fetch failures remain failures so the UI can show
+/// an honest empty or error state instead of substituting fabricated usage.
 public enum ProviderCatalog {
-  public static let descriptors: [ProviderDescriptor] = MockProviders.descriptors.map { mock in
+  public static let descriptors: [ProviderDescriptor] = [
     ProviderDescriptor(
-      id: mock.id,
-      metadata: mock.metadata,
-      pipeline: pipeline(for: mock.id)
-    )
-  }
-
-  private static func pipeline(for id: UsageProvider) -> ProviderFetchPipeline {
-    switch id {
-    case .codex:
-      ProviderFetchPipeline { context in
-        let live = CodexUsageStrategy()
-        return context.account == nil ? [live, MockProviders.codexStrategy] : [live]
+      id: .codex,
+      metadata: .init(
+        displayName: "Codex",
+        accent: .init(0.063, 0.639, 0.498),
+        supportsWeekly: true
+      ), // OpenAI #10A37F
+      pipeline: ProviderFetchPipeline { _ in [CodexUsageStrategy()] }
+    ),
+    ProviderDescriptor(
+      id: .claude,
+      metadata: .init(
+        displayName: "Claude",
+        accent: .init(0.851, 0.467, 0.341),
+        supportsWeekly: true
+      ), // Anthropic #D97757
+      pipeline: ProviderFetchPipeline { _ in
+        [
+          ClaudeUsageStrategy(
+            mirroredCredentialsFileURL: FileManager.default.homeDirectoryForCurrentUser
+              .appendingPathComponent(".claude/.credentials.json")
+          ),
+        ]
       }
-    case .claude:
-      ProviderFetchPipeline { context in
-        let live = ClaudeUsageStrategy(
-          mirroredCredentialsFileURL: FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".claude/.credentials.json")
-        )
-        return context.account == nil ? [live, MockProviders.claudeStrategy] : [live]
-      }
-    }
-  }
+    ),
+  ]
 }

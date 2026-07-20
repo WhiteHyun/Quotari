@@ -5,9 +5,7 @@ extension UsageStore {
     by value: ProviderFetchResult,
     provider: UsageProvider
   ) -> ProviderAccount? {
-    guard value.sourceKind != .mock,
-          let resultScopeID = value.credentialScopeID
-    else { return nil }
+    guard let resultScopeID = value.credentialScopeID else { return nil }
     let candidates = accounts[provider] ?? []
     if let exact = candidates.first(where: { $0.credentialScopeID == resultScopeID }) {
       return exact
@@ -24,7 +22,6 @@ extension UsageStore {
   }
 
   func fetchResult(_ value: ProviderFetchResult, belongsTo account: ProviderAccount) -> Bool {
-    guard value.sourceKind != .mock else { return false }
     guard let resultScopeID = value.credentialScopeID else {
       // Real OAuth strategies always provide identity evidence. Other injected
       // or non-credential strategies may not have a credential scope to verify.

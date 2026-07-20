@@ -9,7 +9,6 @@ extension UsageStore {
     sourceKind: ProviderFetchKind?,
     credentialScopeID: String?
   ) async -> QuotaNotificationAccountResolution {
-    guard sourceKind != .mock else { return .unattributed }
     if let account {
       guard case let .current(claudeCredentialFingerprint) = notificationFetchCredentialValidation(
         account: account,

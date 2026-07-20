@@ -93,8 +93,6 @@ struct QuotaNotificationPolicy: Equatable, Sendable {
         cancellationRequestIDs: pendingResetRequestIDs { $0.provider == snapshot.provider }
       )
     }
-    guard sourceKind != .mock else { return QuotaNotificationEvaluation() }
-
     var evaluation = QuotaNotificationEvaluation()
     evaluate(
       window: snapshot.primary,

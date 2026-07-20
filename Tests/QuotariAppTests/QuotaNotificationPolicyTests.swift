@@ -262,21 +262,8 @@ extension QuotaNotificationPolicyTests {
 }
 
 extension QuotaNotificationPolicyTests {
-  @Test func mockAndExpiredWindowsDoNotMutateTheLedgerOrProduceRequests() {
+  @Test func expiredWindowsDoNotMutateTheLedgerOrProduceRequests() {
     var policy = QuotaNotificationPolicy()
-    let mock = evaluate(
-      .init(
-        sessionUsed: 96,
-        sessionResetAt: now.addingTimeInterval(3600),
-        weeklyUsed: 96,
-        weeklyResetAt: now.addingTimeInterval(7200),
-        sourceKind: .mock
-      ),
-      using: &policy
-    )
-    #expect(mock == QuotaNotificationEvaluation())
-    #expect(policy.ledger.windows.isEmpty)
-
     let expired = evaluate(.init(sessionUsed: 96, sessionResetAt: now), using: &policy)
     #expect(expired == QuotaNotificationEvaluation())
     #expect(policy.ledger.windows.isEmpty)

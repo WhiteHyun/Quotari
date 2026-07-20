@@ -20,7 +20,7 @@ public enum ClaudeUsageParser {
     } + scopedLimitWindows(from: root, now: now)
     let mapped = UsageWindowMapper.map(rawWindows)
     // A 200 with no recognizable windows is a failure, not an empty success —
-    // otherwise it would suppress the mock fallback and render an empty card.
+    // otherwise the app would treat a malformed response as valid live usage.
     guard !mapped.isEmpty else { throw ProviderFetchError.emptyUsage(provider) }
 
     return UsageSnapshot(

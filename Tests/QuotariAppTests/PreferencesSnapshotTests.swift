@@ -10,7 +10,7 @@ struct PreferencesSnapshotTests {
     _ = NSApplication.shared
     let accounts = Self.accounts
     let store = UsageStore.isolatedForTesting(
-      providers: MockProviders.descriptors,
+      providers: ProviderFixtures.descriptors,
       accountDiscovery: StaticAccountDiscovery(accounts: Dictionary(grouping: accounts, by: \.provider)),
       startsAutomatically: false
     )

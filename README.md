@@ -5,9 +5,9 @@ remaining quota, reset times, and estimated local API cost at a glance.
 
 ## Features
 
-- Tries live Claude and Codex usage from their existing OAuth credentials first,
-  with built-in demo fallback in Automatic mode when the live strategy is
-  unavailable or returns a fallback-eligible response.
+- Shows only live Claude and Codex usage from existing OAuth credentials.
+  Missing accounts and fetch failures stay visible as actionable empty or error
+  states; Quotari never substitutes sample usage at runtime.
 - Refreshes Claude credentials and saved Codex credentials. Refreshing a live
   Codex `auth.json` remains the Codex CLI's responsibility.
 - Discovers CLI accounts from the Claude keychain and credentials file, the
@@ -45,10 +45,10 @@ swift run Quotari      # run the menu-bar app from source
 swift test             # run QuotariCore and app-level tests
 ```
 
-The source build tries live CLI credentials first. Automatic mode may use demo
-data when the live strategy is unavailable or a response is eligible for
-fallback. The app runs as an accessory app, so look for the flame mascot in the
-menu bar rather than a Dock icon.
+The source build uses the same live-only provider catalog as the packaged app.
+Automatic mode selects the effective live CLI credential; it does not generate
+sample usage when no account is available. The app runs as an accessory app,
+so look for the flame mascot in the menu bar rather than a Dock icon.
 
 ## Structure
 
@@ -58,8 +58,7 @@ Sources/
 │   ├── Providers/
 │   │   ├── Claude/                      # credentials, refresh, profile, parsing, fetch
 │   │   ├── Codex/                       # credentials, refresh, parsing, fetch
-│   │   ├── Mock/                        # demo fallback strategies
-│   │   └── ProviderCatalog.swift        # live-first provider pipelines
+│   │   └── ProviderCatalog.swift        # live-only provider pipelines
 │   ├── ProviderAccount*.swift           # account model, discovery, and selection
 │   ├── CapturedAccountStore.swift       # Quotari-owned Keychain account registry
 │   ├── AccountCaptureService.swift      # save renewable CLI credentials
@@ -89,7 +88,7 @@ preferences, and user notifications.
 
 1. Add the provider identity and metadata.
 2. Implement its credential loader and `ProviderFetchStrategy`.
-3. Register the live strategy and demo fallback in `ProviderCatalog`.
+3. Register the live strategy in `ProviderCatalog`.
 4. Add account discovery, selection, and local-cost integration where the
    provider supports them.
 5. Extend registry completeness and provider-specific tests.

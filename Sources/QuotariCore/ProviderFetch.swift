@@ -1,7 +1,7 @@
 import Foundation
 
 public enum ProviderFetchKind: String, Sendable {
-  case api, oauth, web, cli, mock
+  case api, oauth, web, cli
 }
 
 public enum ProviderFetchInteraction: Sendable {
@@ -162,12 +162,19 @@ public enum ProviderFetchError: LocalizedError, Sendable {
   case emptyUsage(UsageProvider)
 
   public var errorDescription: String? {
-    switch self {
-    case let .noStrategyAvailable(p): "No available fetch strategy for \(p.rawValue)."
-    case let .missingCredential(p): "Missing credential for \(p.rawValue)."
+    let name: String = switch self {
+    case let .noStrategyAvailable(provider),
+         let .missingCredential(provider),
+         let .selectedCredentialUnavailable(provider),
+         let .emptyUsage(provider):
+      provider.rawValue.capitalized
+    }
+    return switch self {
+    case .noStrategyAvailable: "No live usage source is available for \(name)."
+    case .missingCredential: "No \(name) account credential was found."
     case let .selectedCredentialUnavailable(p):
-      "The selected \(p.rawValue) credential is missing or invalid."
-    case let .emptyUsage(p): "No usage windows returned for \(p.rawValue)."
+      "The selected \(p.rawValue.capitalized) account credential is missing or invalid."
+    case .emptyUsage: "\(name) returned no usage windows."
     }
   }
 }
@@ -202,11 +209,14 @@ public struct ProviderFetchPipeline: Sendable {
   public func fetch(_ context: ProviderFetchContext) async -> Result<ProviderFetchResult, Error> {
     var lastError: Error?
     var transitions = ProviderCredentialTransitionAccumulator()
-    for strategy in resolveStrategies(context) {
+    let strategies = resolveStrategies(context)
+    var foundAvailableStrategy = false
+    for strategy in strategies {
       if Task.isCancelled {
         return .failure(transitions.wrapping(CancellationError()))
       }
       guard await strategy.isAvailable(context) else { continue }
+      foundAvailableStrategy = true
       do {
         let result = try await strategy.fetch(context)
           .withSourceKind(strategy.kind)
@@ -230,9 +240,11 @@ public struct ProviderFetchPipeline: Sendable {
         return .failure(transitions.wrapping(underlying))
       }
     }
-    return .failure(transitions.wrapping(
-      lastError ?? ProviderFetchError.noStrategyAvailable(context.provider)
-    ))
+    let error = lastError
+      ?? (strategies.isEmpty || foundAvailableStrategy
+        ? ProviderFetchError.noStrategyAvailable(context.provider)
+        : ProviderFetchError.missingCredential(context.provider))
+    return .failure(transitions.wrapping(error))
   }
 }
 

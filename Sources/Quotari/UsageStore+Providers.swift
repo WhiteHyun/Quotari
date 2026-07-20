@@ -1,6 +1,6 @@
 import QuotariCore
 
-enum ProviderCredentialDiscoveryState {
+enum ProviderCredentialDiscoveryState: Equatable {
   case unknown
   case present
   case absent

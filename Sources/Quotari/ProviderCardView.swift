@@ -35,19 +35,37 @@ struct ProviderCardView: View {
           Divider().padding(.vertical, 2)
           CostSectionView(cost: cost, accent: accent)
         }
-      } else if let error {
-        Text(error)
-          .font(.footnote)
-          .foregroundStyle(.red)
-          .lineLimit(2)
+        if let error {
+          ProviderStaleDataNotice(message: error, retry: retry)
+        }
       } else {
-        Text("Loading…")
-          .font(.footnote)
-          .foregroundStyle(.secondary)
+        ProviderAvailabilityView(
+          descriptor: descriptor,
+          state: availabilityState,
+          showSettings: showSettings,
+          retry: retry
+        )
       }
     }
     .padding(.horizontal, 14)
     .padding(.vertical, 12)
+  }
+
+  private var availabilityState: ProviderAvailabilityState {
+    switch store.credentialDiscoveryState(for: descriptor.id) {
+    case .absent:
+      .noAccount
+    case .unknown, .present:
+      if let error {
+        .error(error)
+      } else {
+        .loading
+      }
+    }
+  }
+
+  private func retry() {
+    store.beginRefresh()
   }
 
   private var header: some View {

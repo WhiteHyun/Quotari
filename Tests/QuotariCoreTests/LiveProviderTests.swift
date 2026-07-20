@@ -145,24 +145,21 @@ struct CodexUsageTests {
     #expect(await strategy.isAvailable(ProviderFetchContext(provider: .codex, now: Date())) == false)
   }
 
-  @Test func emptyPayloadFailsAndFallsBack() async throws {
-    // A 200 with no recognizable windows must fail so the pipeline can fall
-    // through to the mock instead of rendering an empty card.
+  @Test func emptyPayloadRemainsALiveFetchFailure() async {
+    // A 200 with no recognizable windows must remain a visible live-data
+    // failure instead of being accepted as an empty usage snapshot.
     let live = CodexUsageStrategy(
       transport: StubTransport(json: #"{"plan":"free"}"#),
       loadCredentials: { CodexCredentials(accessToken: "tok", accountID: nil) }
     )
     let context = ProviderFetchContext(provider: .codex, now: Date())
-    do {
-      _ = try await live.fetch(context)
-      Issue.record("expected emptyUsage error")
-    } catch {
-      #expect(live.shouldFallback(on: error) == true)
-    }
+    let result = await ProviderFetchPipeline { _ in [live] }.fetch(context)
 
-    let pipeline = ProviderFetchPipeline { _ in [live, MockProviders.codexStrategy] }
-    let result = try await pipeline.fetch(context).get()
-    #expect(result.sourceLabel == "Mock")
+    guard case let .failure(ProviderFetchError.emptyUsage(provider)) = result else {
+      Issue.record("Expected the empty live response to fail")
+      return
+    }
+    #expect(provider == .codex)
   }
 }
 
@@ -302,18 +299,30 @@ struct PlanLabelTests {
 }
 
 struct ProviderCatalogTests {
-  @Test func pipelineFallsThroughUnavailableLiveStrategyToMock() async throws {
-    // A live strategy that reports unavailable (no credentials) must fall
-    // through to the mock, so the app is never empty during development.
+  @Test func unavailableLiveStrategyReturnsMissingCredential() async {
     let unavailableLive = CodexUsageStrategy(
       transport: StubTransport(json: "{}"),
       loadCredentials: { throw CodexCredentialsError.notFound }
     )
-    let pipeline = ProviderFetchPipeline { _ in [unavailableLive, MockProviders.codexStrategy] }
-    let result = try await pipeline.fetch(ProviderFetchContext(provider: .codex, now: Date())).get()
+    let pipeline = ProviderFetchPipeline { _ in [unavailableLive] }
+    let result = await pipeline.fetch(ProviderFetchContext(provider: .codex, now: Date()))
 
-    #expect(result.sourceLabel == "Mock")
-    #expect(result.usage.plan == "Pro 5x")
+    guard case let .failure(ProviderFetchError.missingCredential(provider)) = result else {
+      Issue.record("Expected a missing-credential failure")
+      return
+    }
+    #expect(provider == .codex)
+  }
+
+  @Test func runtimeCatalogContainsOnlyOneLiveOAuthStrategyPerProvider() {
+    for descriptor in ProviderRegistry.all {
+      let context = ProviderFetchContext(provider: descriptor.id, now: Date())
+      let strategies = descriptor.pipeline.resolveStrategies(context)
+
+      #expect(strategies.count == 1)
+      #expect(strategies.first?.kind == .oauth)
+      #expect(strategies.first?.id.hasSuffix(".oauth") == true)
+    }
   }
 
   @Test func everyProviderStillHasADescriptor() {

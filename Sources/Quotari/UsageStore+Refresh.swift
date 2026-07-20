@@ -219,7 +219,7 @@ extension UsageStore {
       // not be refreshed again through the stale discovered rows.
       scopeIDs.formUnion(transition.sourceScopeIDs)
     }
-    guard case let .success(value) = completion.result, value.sourceKind != .mock else {
+    guard case let .success(value) = completion.result else {
       return scopeIDs
     }
     let attributedAccount: ProviderAccount?
@@ -308,8 +308,7 @@ extension UsageStore {
   ) {
     switch result {
     case let .success(value):
-      if let account, value.sourceKind != .mock,
-         !fetchResult(value, belongsTo: account) {
+      if let account, !fetchResult(value, belongsTo: account) {
         return
       }
       applySuccessfulFetch(value, provider: provider, account: account)

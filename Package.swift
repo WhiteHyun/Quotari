@@ -19,7 +19,7 @@ let package = Package(
     .package(url: "https://github.com/mattt/swift-toml", from: "2.0.0"),
   ],
   targets: [
-    // Domain logic: models, provider abstraction, mock fetch. UI-agnostic.
+    // Domain logic: models and live provider integrations. UI-agnostic.
     .target(
       name: "QuotariCore",
       dependencies: [

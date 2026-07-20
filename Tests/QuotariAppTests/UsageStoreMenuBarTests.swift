@@ -205,7 +205,7 @@ private extension UsageStoreMenuBarTests {
     let defaults = try #require(UserDefaults(suiteName: suiteName))
     defaults.removePersistentDomain(forName: suiteName)
     let store = UsageStore.isolatedForTesting(
-      providers: MockProviders.descriptors,
+      providers: ProviderFixtures.descriptors,
       defaults: defaults,
       startsAutomatically: false
     )

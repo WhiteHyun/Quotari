@@ -86,7 +86,7 @@ private func claudeSwitchIdentityStore(
   discovery: MutableAccountDiscovery
 ) -> UsageStore {
   UsageStore.isolatedForTesting(
-    providers: MockProviders.descriptors.filter { $0.id == .claude },
+    providers: ProviderFixtures.descriptors.filter { $0.id == .claude },
     costEstimator: EmptyCostEstimator(),
     accountDiscovery: discovery,
     accountSwitch: .isolatedForTesting(
