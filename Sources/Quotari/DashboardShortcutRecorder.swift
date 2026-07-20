@@ -16,6 +16,7 @@ struct DashboardShortcutRecorder: NSViewRepresentable {
 final class DashboardShortcutRecorderButton: NSButton {
   private let shortcutName: KeyboardShortcuts.Name
   private var eventMonitor: Any?
+  private var deactivationObservers: [NSObjectProtocol] = []
   private(set) var isRecording = false
 
   init(name: KeyboardShortcuts.Name) {
@@ -36,6 +37,9 @@ final class DashboardShortcutRecorderButton: NSButton {
   }
 
   isolated deinit {
+    for observer in deactivationObservers {
+      NotificationCenter.default.removeObserver(observer)
+    }
     if let eventMonitor {
       NSEvent.removeMonitor(eventMonitor)
     }
@@ -67,6 +71,7 @@ final class DashboardShortcutRecorderButton: NSButton {
       return
     }
     KeyboardShortcuts.disable(shortcutName)
+    observeRecordingDeactivation()
     eventMonitor = NSEvent.addLocalMonitorForEvents(
       matching: [.keyDown, .leftMouseDown, .rightMouseDown]
     ) { [weak self] event in
@@ -93,11 +98,12 @@ final class DashboardShortcutRecorderButton: NSButton {
     let modifiers = event.modifierFlags
       .intersection(.deviceIndependentFlagsMask)
       .subtracting(.capsLock)
+    if Self.isFocusTraversalKey(event.keyCode, modifiers: modifiers) {
+      window?.makeFirstResponder(nil)
+      return event
+    }
     if modifiers.isEmpty {
       switch event.keyCode {
-      case 48: // Tab moves focus instead of becoming a shortcut.
-        window?.makeFirstResponder(nil)
-        return event
       case 51, 117: // Delete / Forward Delete clears the shortcut.
         KeyboardShortcuts.setShortcut(nil, for: shortcutName)
         window?.makeFirstResponder(nil)
@@ -111,7 +117,7 @@ final class DashboardShortcutRecorderButton: NSButton {
     }
 
     guard let shortcut = KeyboardShortcuts.Shortcut(event: event),
-          hasAllowedModifiers(modifiers, key: shortcut.key),
+          Self.hasAllowedModifiers(modifiers, key: shortcut.key),
           !shortcut.isTakenBySystem
     else {
       NSSound.beep()
@@ -125,6 +131,7 @@ final class DashboardShortcutRecorderButton: NSButton {
 
   private func finishRecording() {
     guard isRecording else { return }
+    stopObservingRecordingDeactivation()
     if let eventMonitor {
       NSEvent.removeMonitor(eventMonitor)
       self.eventMonitor = nil
@@ -134,18 +141,56 @@ final class DashboardShortcutRecorderButton: NSButton {
     refreshTitle()
   }
 
-  private func hasAllowedModifiers(
+  private func observeRecordingDeactivation() {
+    let center = NotificationCenter.default
+    deactivationObservers = [
+      center.addObserver(
+        forName: NSWindow.didResignKeyNotification,
+        object: window,
+        queue: .main
+      ) { [weak self] _ in
+        MainActor.assumeIsolated {
+          self?.finishRecording()
+        }
+      },
+      center.addObserver(
+        forName: NSApplication.didResignActiveNotification,
+        object: NSApplication.shared,
+        queue: .main
+      ) { [weak self] _ in
+        MainActor.assumeIsolated {
+          self?.finishRecording()
+        }
+      },
+    ]
+  }
+
+  private func stopObservingRecordingDeactivation() {
+    let center = NotificationCenter.default
+    for observer in deactivationObservers {
+      center.removeObserver(observer)
+    }
+    deactivationObservers.removeAll()
+  }
+
+  static func isFocusTraversalKey(
+    _ keyCode: UInt16,
+    modifiers: NSEvent.ModifierFlags
+  ) -> Bool {
+    keyCode == 48 && modifiers.subtracting(.shift).isEmpty
+  }
+
+  static func hasAllowedModifiers(
     _ modifiers: NSEvent.ModifierFlags,
     key: KeyboardShortcuts.Key?
   ) -> Bool {
-    let meaningfulModifiers = modifiers.subtracting([.shift, .function])
-    return !meaningfulModifiers.isEmpty || functionKeys.contains(key)
+    let meaningfulModifiers = modifiers.intersection([.command, .control, .option])
+    return !meaningfulModifiers.isEmpty || key.map(functionKeys.contains) == true
   }
 
-  private var functionKeys: Set<KeyboardShortcuts.Key?> {
+  private static let functionKeys: Set<KeyboardShortcuts.Key> =
     [
       .f1, .f2, .f3, .f4, .f5, .f6, .f7, .f8, .f9, .f10,
       .f11, .f12, .f13, .f14, .f15, .f16, .f17, .f18, .f19, .f20,
     ]
-  }
 }
