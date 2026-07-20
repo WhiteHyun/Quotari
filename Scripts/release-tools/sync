@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# dmgbuild 1.6.7 passes GNU-only operands, while macOS sync accepts none.
+exec /bin/sync

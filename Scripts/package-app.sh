@@ -18,6 +18,12 @@ IDENTITY="${CODESIGN_IDENTITY:--}"
 ARCHS="${ARCHS:-arm64}"
 BUNDLE_ID="com.whitehyun.quotari"
 FEED_URL="https://github.com/WhiteHyun/Quotari/releases/latest/download/appcast.xml"
+APP_ICON="$PWD/Scripts/assets/Quotari.icns"
+
+if [[ ! -f "$APP_ICON" ]]; then
+  echo "App icon not found: $APP_ICON" >&2
+  exit 1
+fi
 
 echo "▸ building release binary"
 ARCH_LIST=(${(z)ARCHS})
@@ -52,6 +58,7 @@ fi
 # Keep distributable resources inside Contents so codesign seals them. The app
 # prefers this packaged bundle and falls back to Bundle.module for source runs.
 ditto "$RESOURCE_BUNDLE" "$APP/Contents/Resources/Quotari_Quotari.bundle"
+ditto "$APP_ICON" "$APP/Contents/Resources/Quotari.icns"
 
 echo "▸ embedding Sparkle.framework"
 SPARKLE=$(find .build -type d -name "Sparkle.framework" | grep -v dSYM | head -1)
@@ -73,6 +80,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
   <key>CFBundleExecutable</key><string>Quotari</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleIconFile</key><string>Quotari.icns</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>

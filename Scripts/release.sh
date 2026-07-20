@@ -220,7 +220,6 @@ create_release() {
     work_root=$(mktemp -d "${TMPDIR:-/tmp}/quotari-release.XXXXXX")
     RELEASE_WORK_ROOT="$work_root"
   fi
-  local dmg_root="$work_root/dmg"
   local update_root="$work_root/updates"
 
   log "resolving Sparkle tools and public key"
@@ -259,15 +258,10 @@ create_release() {
   run ditto -c -k --keepParent --norsrc "$app" "$zip"
 
   log "creating the drag-to-Applications DMG"
-  run mkdir -p "$dmg_root" "$update_root"
-  run ditto --norsrc "$app" "$dmg_root/Quotari.app"
-  run ln -s /Applications "$dmg_root/Applications"
-  run hdiutil create \
-    -volname "Quotari ${VERSION}" \
-    -srcfolder "$dmg_root" \
-    -format UDZO \
-    -ov "$dmg"
-  run codesign --force --timestamp --sign "$CODESIGN_IDENTITY" "$dmg"
+  run mkdir -p "$update_root"
+  run env \
+    "CODESIGN_IDENTITY=$CODESIGN_IDENTITY" \
+    "$ROOT/Scripts/create-dmg.sh" "$app" "$dmg"
 
   log "notarizing and stapling the DMG"
   run xcrun notarytool submit "$dmg" --keychain-profile "$NOTARY_PROFILE" --wait
