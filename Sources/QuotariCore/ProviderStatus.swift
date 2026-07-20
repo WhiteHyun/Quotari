@@ -129,12 +129,9 @@ public actor ProviderStatusService: ProviderStatusServing {
     let componentIDs = Set(relevantComponents.map(\.id))
     let componentState = relevantComponents.map { serviceState(componentStatus: $0.status) }.max() ?? .unknown
 
-    var incidents = payload.incidents.filter {
+    let incidents = payload.incidents.filter {
       $0.components.contains(where: { componentIDs.contains($0.id) })
         || configuration.matches(incidentText: $0.searchableText)
-    }
-    if incidents.isEmpty, componentState > .operational {
-      incidents = payload.incidents
     }
     let primaryIncident = incidents.max { impactState($0.impact) < impactState($1.impact) }
     let resolvedState = max(componentState, primaryIncident.map { impactState($0.impact) } ?? .unknown)

@@ -88,6 +88,32 @@ struct ProviderStatusTests {
     #expect(status.incident == nil)
   }
 
+  @Test func unrelatedIncidentDoesNotOverrideADegradedCodexComponent() async throws {
+    let transport = ProviderStatusTransportStub(json: """
+    {
+      "page": { "updated_at": "2026-07-20T03:25:54Z" },
+      "components": [
+        { "id": "codex-api", "name": "Codex API", "status": "degraded_performance" }
+      ],
+      "incidents": [
+        {
+          "id": "incident-4",
+          "name": "ChatGPT image uploads unavailable",
+          "status": "investigating",
+          "impact": "critical",
+          "incident_updates": []
+        }
+      ]
+    }
+    """)
+    let service = ProviderStatusService(transport: transport)
+
+    let status = try await service.status(for: .codex)
+
+    #expect(status.state == .degradedPerformance)
+    #expect(status.incident == nil)
+  }
+
   @Test func cachedStatusAvoidsRepeatedRequests() async throws {
     let transport = ProviderStatusTransportStub(json: """
     {
