@@ -83,6 +83,7 @@ jobs:
           : "${SPARKLE_PUBLIC_KEY:?release secret SPARKLE_PUBLIC_KEY is missing}"
           : "${NOTARY_API_KEY:?release secret NOTARY_API_KEY is missing}"
           : "${NOTARY_KEY_ID:?release secret NOTARY_KEY_ID is missing}"
+          : "${NOTARY_ISSUER:?release secret NOTARY_ISSUER is missing}"
 
           credential_root="$RUNNER_TEMP/quotari-release-$GITHUB_RUN_ID"
           keychain_path="$credential_root/quotari-release.keychain-db"

@@ -63,8 +63,10 @@ these environment secrets:
   `generate_keys --account quotari -p`
 - `NOTARY_API_KEY`: App Store Connect API private key contents
 - `NOTARY_KEY_ID`: App Store Connect API key ID
-- `NOTARY_ISSUER`: issuer UUID for a Team API key; leave empty for an
-  Individual API key
+- `NOTARY_ISSUER`: issuer UUID for the Team API key
+
+Use a Team API key for notarization. Individual App Store Connect API keys do
+not support `notarytool`.
 
 The workflow imports the Developer ID identity into an ephemeral Keychain,
 uses file-based Sparkle and notary credentials, and removes the temporary files

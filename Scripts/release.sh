@@ -103,8 +103,8 @@ require_signing_identity() {
 
 notary_auth_arguments() {
   if [[ -n "$NOTARY_KEY" || -n "$NOTARY_KEY_ID" || -n "$NOTARY_ISSUER" ]]; then
-    [[ -n "$NOTARY_KEY" && -n "$NOTARY_KEY_ID" ]] ||
-      die "NOTARY_KEY and NOTARY_KEY_ID must be provided together"
+    [[ -n "$NOTARY_KEY" && -n "$NOTARY_KEY_ID" && -n "$NOTARY_ISSUER" ]] ||
+      die "NOTARY_KEY, NOTARY_KEY_ID, and NOTARY_ISSUER must be provided together"
     [[ -f "$NOTARY_KEY" ]] || die "notary API key not found: $NOTARY_KEY"
 
     print -r -- "--key"
