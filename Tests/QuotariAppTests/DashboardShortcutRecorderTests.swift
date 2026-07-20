@@ -52,6 +52,18 @@ struct DashboardShortcutRecorderTests {
     #expect(!DashboardShortcutRecorderButton.isFocusTraversalKey(48, modifiers: [.command]))
   }
 
+  @Test func clearsForwardDeleteWithDeviceFlags() {
+    #expect(DashboardShortcutRecorderButton.isClearShortcutKey(51, modifiers: []))
+    #expect(DashboardShortcutRecorderButton.isClearShortcutKey(117, modifiers: [.function]))
+    #expect(DashboardShortcutRecorderButton.isClearShortcutKey(117, modifiers: [.numericPad]))
+    #expect(
+      !DashboardShortcutRecorderButton.isClearShortcutKey(
+        117,
+        modifiers: [.command, .function]
+      )
+    )
+  }
+
   @Test func endsRecordingWhenTheWindowOrApplicationDeactivates() {
     _ = NSApplication.shared
     let name = KeyboardShortcuts.Name("DashboardShortcutRecorderTests-\(UUID().uuidString)")

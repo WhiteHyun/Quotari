@@ -102,12 +102,13 @@ final class DashboardShortcutRecorderButton: NSButton {
       window?.makeFirstResponder(nil)
       return event
     }
+    if Self.isClearShortcutKey(event.keyCode, modifiers: modifiers) {
+      KeyboardShortcuts.setShortcut(nil, for: shortcutName)
+      window?.makeFirstResponder(nil)
+      return nil
+    }
     if modifiers.isEmpty {
       switch event.keyCode {
-      case 51, 117: // Delete / Forward Delete clears the shortcut.
-        KeyboardShortcuts.setShortcut(nil, for: shortcutName)
-        window?.makeFirstResponder(nil)
-        return nil
       case 53: // Escape cancels recording.
         window?.makeFirstResponder(nil)
         return nil
@@ -178,6 +179,15 @@ final class DashboardShortcutRecorderButton: NSButton {
     modifiers: NSEvent.ModifierFlags
   ) -> Bool {
     keyCode == 48 && modifiers.subtracting(.shift).isEmpty
+  }
+
+  static func isClearShortcutKey(
+    _ keyCode: UInt16,
+    modifiers: NSEvent.ModifierFlags
+  ) -> Bool {
+    let clearKeyCodes: Set<UInt16> = [51, 117]
+    let shortcutModifiers = modifiers.intersection([.command, .control, .option, .shift])
+    return clearKeyCodes.contains(keyCode) && shortcutModifiers.isEmpty
   }
 
   static func hasAllowedModifiers(
