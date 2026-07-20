@@ -51,6 +51,7 @@ struct ProviderAccountPopover: View {
   private var header: some View {
     let monitoredCount = accounts.filter(store.isMonitoring).count
     return HStack(alignment: .firstTextBaseline) {
+      ProviderIconView(descriptor: descriptor, size: 24)
       Text("\(descriptor.metadata.displayName) Accounts")
         .font(.headline)
       Spacer()
