@@ -5,19 +5,18 @@ on:
     branches: [main]
   pull_request:
 
-# A self-hosted runner reuses its workspace across jobs; cancel superseded runs.
+# Cancel superseded runs so only the latest revision consumes hosted capacity.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 defaults:
   run:
-    # mise lives in ~/.local/bin, which is only on PATH in a login shell.
-    shell: zsh -l {0}
+    shell: zsh {0}
 
 jobs:
   build-test:
-    runs-on: [self-hosted, macOS, quotari]
+    runs-on: macos-26
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -27,11 +26,11 @@ jobs:
       - run: swift test --no-parallel
 
   lint:
-    runs-on: [self-hosted, macOS, quotari]
+    runs-on: macos-26
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
           clean: true
-      - run: mise install
+      - uses: jdx/mise-action@v3
       - run: mise run lint

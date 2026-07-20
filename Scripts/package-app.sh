@@ -6,6 +6,7 @@
 # Environment:
 #   VERSION             bundle version (default 0.1.0)
 #   CODESIGN_IDENTITY   "Developer ID Application: ..." (default: ad-hoc "-")
+#   ARCHS               space-separated build architectures (default: arm64)
 #   SPARKLE_PUBLIC_KEY  Sparkle EdDSA public key; when set, the Info.plist gets
 #                       SUFeedURL + SUPublicEDKey and auto-update is active.
 #                       When unset, the app runs with updates disabled.
@@ -14,20 +15,36 @@ cd "$(dirname "$0")/.."
 
 VERSION="${VERSION:-0.1.0}"
 IDENTITY="${CODESIGN_IDENTITY:--}"
+ARCHS="${ARCHS:-arm64}"
 BUNDLE_ID="com.whitehyun.quotari"
 FEED_URL="https://github.com/WhiteHyun/Quotari/releases/latest/download/appcast.xml"
 
 echo "▸ building release binary"
-swift build -c release
-BIN=$(swift build -c release --show-bin-path)
+ARCH_LIST=(${(z)ARCHS})
+BINARY_PATHS=()
+RESOURCE_BUNDLE=""
+for arch in "${ARCH_LIST[@]}"; do
+  echo "  • $arch"
+  SCRATCH_PATH="$PWD/.build/release-$arch"
+  swift build -c release --arch "$arch" --scratch-path "$SCRATCH_PATH"
+  BIN=$(swift build -c release --arch "$arch" --scratch-path "$SCRATCH_PATH" --show-bin-path)
+  BINARY_PATHS+=("$BIN/Quotari")
+  if [[ -z "$RESOURCE_BUNDLE" ]]; then
+    RESOURCE_BUNDLE="$BIN/Quotari_Quotari.bundle"
+  fi
+done
 
 APP=dist/Quotari.app
 rm -rf dist
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
-cp "$BIN/Quotari" "$APP/Contents/MacOS/Quotari"
+if (( ${#BINARY_PATHS[@]} == 1 )); then
+  cp "${BINARY_PATHS[1]}" "$APP/Contents/MacOS/Quotari"
+else
+  lipo -create "${BINARY_PATHS[@]}" -output "$APP/Contents/MacOS/Quotari"
+fi
+lipo "$APP/Contents/MacOS/Quotari" -verify_arch "${ARCH_LIST[@]}"
 
 echo "▸ embedding SwiftPM resources"
-RESOURCE_BUNDLE="$BIN/Quotari_Quotari.bundle"
 if [[ ! -d "$RESOURCE_BUNDLE" ]]; then
   echo "Quotari_Quotari.bundle not found at $RESOURCE_BUNDLE" >&2
   exit 1
@@ -76,9 +93,10 @@ PLIST
 plutil -lint "$APP/Contents/Info.plist"
 
 echo "▸ codesigning (identity: ${IDENTITY})"
+xattr -cr "$APP"
 SIGN_OPTIONS=()
 if [[ "$IDENTITY" != "-" ]]; then
-  SIGN_OPTIONS=(--options runtime)
+  SIGN_OPTIONS=(--options runtime --timestamp)
 fi
 SPARKLE_FRAMEWORK="$APP/Contents/Frameworks/Sparkle.framework"
 SPARKLE_VERSION="$SPARKLE_FRAMEWORK/Versions/B"
@@ -105,5 +123,5 @@ rm -rf "$VERIFY_ROOT"
 trap - EXIT
 
 echo "▸ zipping"
-ditto -c -k --keepParent "$APP" "dist/Quotari-${VERSION}.zip"
+ditto -c -k --keepParent --norsrc "$APP" "dist/Quotari-${VERSION}.zip"
 echo "done: dist/Quotari-${VERSION}.zip"
