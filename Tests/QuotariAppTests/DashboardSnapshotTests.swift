@@ -27,12 +27,17 @@ struct DashboardSnapshotTests {
     }
     #expect(store.snapshots.count == ProviderRegistry.all.count)
     #expect(store.snapshots.values.allSatisfy { $0.cost != nil })
+    let providerStatus = Self.providerStatusFixture()
 
     let outputDirectory = Self.outputDirectory()
     try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 
     for (name, appearance) in Self.appearances {
-      let png = Self.renderPNG(store: store, appearance: appearance)
+      let png = Self.renderPNG(
+        store: store,
+        providerStatus: providerStatus,
+        appearance: appearance
+      )
       let url = outputDirectory.appendingPathComponent("dashboard-\(name).png")
       try png.write(to: url)
       print("📸 dashboard-\(name).png → \(url.path)")
@@ -44,6 +49,31 @@ struct DashboardSnapshotTests {
     ("light", NSAppearance(named: .aqua)!),
     ("dark", NSAppearance(named: .darkAqua)!),
   ]
+
+  private static func providerStatusFixture() -> ProviderStatusController {
+    let updatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+    return ProviderStatusController(initialStatuses: [
+      .codex: ProviderServiceStatus(
+        provider: .codex,
+        state: .degradedPerformance,
+        updatedAt: updatedAt,
+        statusPageURL: .init(string: "https://status.openai.com/")!,
+        incident: ProviderStatusIncident(
+          id: "codex-incident",
+          name: "Elevated errors for GitHub-dependent Codex workflows",
+          status: "monitoring",
+          impact: "minor",
+          url: .init(string: "https://status.openai.com/incidents/codex-incident")!
+        )
+      ),
+      .claude: ProviderServiceStatus(
+        provider: .claude,
+        state: .operational,
+        updatedAt: updatedAt,
+        statusPageURL: .init(string: "https://status.claude.com/")!
+      ),
+    ])
+  }
 
   private static func outputDirectory() -> URL {
     if let dir = ProcessInfo.processInfo.environment["QUOTARI_SNAPSHOT_DIR"], !dir.isEmpty {
@@ -81,9 +111,13 @@ struct DashboardSnapshotTests {
 
   /// Renders in an off-screen NSWindow and captures via `cacheDisplay` (this
   /// draws the real view tree, including SF Symbols and vibrancy-less content).
-  private static func renderPNG(store: UsageStore, appearance: NSAppearance) -> Data {
+  private static func renderPNG(
+    store: UsageStore,
+    providerStatus: ProviderStatusController,
+    appearance: NSAppearance
+  ) -> Data {
     let hosting = NSHostingView(rootView:
-      DashboardContent()
+      DashboardContent(providerStatus: providerStatus)
         .environment(store)
         .background(Color(nsColor: .windowBackgroundColor)))
     hosting.appearance = appearance

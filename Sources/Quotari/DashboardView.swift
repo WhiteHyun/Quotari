@@ -8,26 +8,42 @@ struct DashboardView: View {
   /// The menu bar window resolves flexible height ranges to their minimum, so
   /// the window height must be a single measured value, not a min/max span.
   @State private var contentHeight: CGFloat = 100
+  @State private var providerStatus = ProviderStatusController()
 
   let menuBarPresentation: MenuBarPresentationController
 
   var body: some View {
+    let enabledProviders = store.enabledProviderDescriptors.map(\.id)
     ScrollView {
-      DashboardContent(showSettings: showSettings)
-        .onGeometryChange(for: CGFloat.self) { proxy in
-          proxy.size.height
-        } action: { height in
-          contentHeight = height
-        }
+      DashboardContent(
+        providerStatus: providerStatus,
+        showSettings: showSettings,
+        refreshProviderStatus: refreshProviderStatus
+      )
+      .onGeometryChange(for: CGFloat.self) { proxy in
+        proxy.size.height
+      } action: { height in
+        contentHeight = height
+      }
     }
     .frame(width: 300)
     .frame(height: min(max(contentHeight, 100), 560))
     .background(MenuVibrancyBackground())
+    .task(id: enabledProviders) {
+      await providerStatus.refresh(providers: enabledProviders)
+    }
   }
 
   private func showSettings() {
     menuBarPresentation.dismissDashboard()
     SettingsWindowController.shared.show(store: store)
+  }
+
+  private func refreshProviderStatus() {
+    let providers = store.enabledProviderDescriptors.map(\.id)
+    Task {
+      await providerStatus.refresh(providers: providers, forceRefresh: true)
+    }
   }
 }
 
@@ -36,11 +52,18 @@ struct DashboardView: View {
 struct DashboardContent: View {
   @Environment(UsageStore.self) private var store
 
+  let providerStatus: ProviderStatusController
   var showSettings: () -> Void = {}
+  var refreshProviderStatus: () -> Void = {}
 
   var body: some View {
     VStack(spacing: 0) {
       sectionStack
+      Divider()
+      ProviderStatusSection(
+        descriptors: store.enabledProviderDescriptors,
+        controller: providerStatus
+      )
       Divider()
       actionRows
     }
@@ -88,6 +111,7 @@ struct DashboardContent: View {
         busy: store.isRefreshing
       ) {
         store.beginRefresh()
+        refreshProviderStatus()
       }
       .keyboardShortcut("r")
 
