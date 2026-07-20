@@ -1,0 +1,171 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Semantic version without the v prefix, for example 0.1.1
+        required: true
+        type: string
+      action:
+        description: Create a notarized draft, or publish an already verified draft
+        required: true
+        default: draft
+        type: choice
+        options:
+          - draft
+          - publish
+
+permissions:
+  contents: write
+
+concurrency:
+  group: quotari-release
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: zsh -l {0}
+
+jobs:
+  release:
+    name: ${{ inputs.action }} v${{ inputs.version }}
+    runs-on: [self-hosted, macOS, ARM64, quotari-release]
+    timeout-minutes: 90
+    environment: release
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      RELEASE_ACTION: ${{ inputs.action }}
+      CODESIGN_IDENTITY: "Developer ID Application: SeungHyun Hong (2ZQR76M3UH)"
+      SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          clean: true
+          fetch-depth: 0
+
+      - name: Validate release request
+        run: |
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
+            echo "Release workflow must run from main, not $GITHUB_REF" >&2
+            exit 1
+          }
+          [[ "$RELEASE_VERSION" =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]] || {
+            echo "Version must use X.Y.Z format" >&2
+            exit 1
+          }
+
+      - name: Install release tools
+        if: inputs.action == 'draft'
+        run: |
+          mise install python@3.14
+          python_bin="$(mise exec python@3.14 -- which python3)"
+          "$python_bin" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'
+          echo "PYTHON_BIN=$python_bin" >> "$GITHUB_ENV"
+
+      - name: Configure ephemeral release credentials
+        if: inputs.action == 'draft'
+        env:
+          DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
+          DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          RELEASE_KEYCHAIN_PASSWORD: ${{ secrets.RELEASE_KEYCHAIN_PASSWORD }}
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          NOTARY_API_KEY: ${{ secrets.NOTARY_API_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER }}
+        run: |
+          : "${DEVELOPER_ID_P12_BASE64:?release secret DEVELOPER_ID_P12_BASE64 is missing}"
+          : "${DEVELOPER_ID_P12_PASSWORD:?release secret DEVELOPER_ID_P12_PASSWORD is missing}"
+          : "${RELEASE_KEYCHAIN_PASSWORD:?release secret RELEASE_KEYCHAIN_PASSWORD is missing}"
+          : "${SPARKLE_PRIVATE_KEY:?release secret SPARKLE_PRIVATE_KEY is missing}"
+          : "${SPARKLE_PUBLIC_KEY:?release secret SPARKLE_PUBLIC_KEY is missing}"
+          : "${NOTARY_API_KEY:?release secret NOTARY_API_KEY is missing}"
+          : "${NOTARY_KEY_ID:?release secret NOTARY_KEY_ID is missing}"
+
+          credential_root="$RUNNER_TEMP/quotari-release-$GITHUB_RUN_ID"
+          keychain_path="$credential_root/quotari-release.keychain-db"
+          p12_path="$credential_root/developer-id.p12"
+          sparkle_key_path="$credential_root/sparkle-private-key"
+          notary_key_path="$credential_root/AuthKey_${NOTARY_KEY_ID}.p8"
+          original_keychains_path="$credential_root/original-keychains.txt"
+
+          umask 077
+          mkdir -p "$credential_root"
+          {
+            echo "RELEASE_CREDENTIAL_ROOT=$credential_root"
+            echo "RELEASE_KEYCHAIN_PATH=$keychain_path"
+            echo "SPARKLE_PRIVATE_KEY_FILE=$sparkle_key_path"
+            echo "NOTARY_KEY=$notary_key_path"
+            echo "NOTARY_KEY_ID=$NOTARY_KEY_ID"
+            echo "NOTARY_ISSUER=$NOTARY_ISSUER"
+          } >> "$GITHUB_ENV"
+
+          printf '%s' "$DEVELOPER_ID_P12_BASE64" | /usr/bin/base64 -D > "$p12_path"
+          printf '%s\n' "$SPARKLE_PRIVATE_KEY" > "$sparkle_key_path"
+          printf '%s\n' "$NOTARY_API_KEY" > "$notary_key_path"
+
+          security list-keychains -d user \
+            | tr -d '"' \
+            | sed 's/^[[:space:]]*//' \
+            > "$original_keychains_path"
+          original_keychains=("${(@f)$(<"$original_keychains_path")}")
+
+          security create-keychain -p "$RELEASE_KEYCHAIN_PASSWORD" "$keychain_path"
+          security set-keychain-settings -lut 3600 "$keychain_path"
+          security unlock-keychain -p "$RELEASE_KEYCHAIN_PASSWORD" "$keychain_path"
+          security import "$p12_path" \
+            -k "$keychain_path" \
+            -P "$DEVELOPER_ID_P12_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "$RELEASE_KEYCHAIN_PASSWORD" \
+            "$keychain_path"
+          security list-keychains -d user -s "$keychain_path" "${original_keychains[@]}"
+          security find-identity -v -p codesigning "$keychain_path" \
+            | grep -F 'Developer ID Application: SeungHyun Hong (2ZQR76M3UH)'
+
+      - name: Build, notarize, and create draft release
+        if: inputs.action == 'draft'
+        run: Scripts/release.sh "$RELEASE_VERSION" --draft
+
+      - name: Publish verified draft release
+        if: inputs.action == 'publish'
+        run: |
+          tag="v$RELEASE_VERSION"
+          is_draft="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+          [[ "$is_draft" == "true" ]] || {
+            echo "$tag does not exist as a draft release" >&2
+            exit 1
+          }
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+      - name: Summarize release
+        if: success()
+        run: |
+          {
+            echo "### Quotari v$RELEASE_VERSION"
+            echo
+            echo "Action: $RELEASE_ACTION"
+            echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/v$RELEASE_VERSION"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove ephemeral credentials
+        if: always() && inputs.action == 'draft'
+        run: |
+          if [[ -n "${RELEASE_CREDENTIAL_ROOT:-}" ]]; then
+            original_keychains_path="$RELEASE_CREDENTIAL_ROOT/original-keychains.txt"
+            if [[ -f "$original_keychains_path" ]]; then
+              original_keychains=("${(@f)$(<"$original_keychains_path")}")
+              security list-keychains -d user -s "${original_keychains[@]}"
+            fi
+            if [[ -n "${RELEASE_KEYCHAIN_PATH:-}" && -f "$RELEASE_KEYCHAIN_PATH" ]]; then
+              security lock-keychain "$RELEASE_KEYCHAIN_PATH" || true
+              security delete-keychain "$RELEASE_KEYCHAIN_PATH" || true
+            fi
+            rm -rf "$RELEASE_CREDENTIAL_ROOT"
+          fi
