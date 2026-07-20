@@ -4,7 +4,52 @@ Quotari ships outside the App Store: a signed + notarized `.app` on GitHub
 Releases, installable directly or via a Homebrew tap, with Sparkle keeping
 direct-download users up to date.
 
-## One-time setup
+## Automated release
+
+The release script performs the complete direct-distribution flow:
+
+1. Build a universal app and sign every nested Sparkle component bottom-up.
+2. Notarize the ZIP, staple and verify the app, then recreate the ZIP.
+3. Build a drag-to-Applications DMG, sign it, notarize it, and staple it.
+4. Generate an EdDSA-signed Sparkle appcast that downloads the ZIP.
+5. Publish the DMG, ZIP, and appcast together on GitHub Releases.
+
+Run the interactive setup once:
+
+```sh
+Scripts/release.sh --setup --apple-id you@example.com
+```
+
+This creates a Quotari-specific Sparkle key in the login Keychain and stores
+the Apple notarization credentials under `quotari-notary`. The app-specific
+password is entered through the secure `notarytool` prompt and is never written
+to the repository or shell history.
+
+Then cut a release with one command:
+
+```sh
+Scripts/release.sh 0.1.0
+```
+
+Useful variants:
+
+```sh
+Scripts/release.sh 0.1.0 --draft
+Scripts/release.sh 0.1.0 --no-publish
+Scripts/release.sh 0.1.0 --notes-file release-notes.md
+Scripts/release.sh 0.1.0 --dry-run
+```
+
+The script defaults to an `arm64 x86_64` universal build. Override `ARCHS`,
+`CODESIGN_IDENTITY`, `NOTARY_PROFILE`, `SPARKLE_ACCOUNT`, or `RELEASE_TARGET`
+through the environment when needed. By default, the script requires the clean
+local commit to exactly match the remote `main` commit before publishing.
+
+## Manual release reference
+
+The following commands document the underlying workflow for troubleshooting.
+
+### One-time setup
 
 1. **Developer ID certificate** — an Apple Developer Program membership with a
    "Developer ID Application" certificate in your keychain.
@@ -12,7 +57,7 @@ direct-download users up to date.
    (it lands in your keychain):
 
    ```sh
-   $(find .build -name generate_keys -type f | head -1)
+   $(find .build -name generate_keys -type f | head -1) --account quotari
    ```
 
    Record the printed public key; it goes into every build as `SPARKLE_PUBLIC_KEY`.
@@ -23,7 +68,7 @@ direct-download users up to date.
      --apple-id you@example.com --team-id TEAMID --password <app-specific>
    ```
 
-## Cutting a release
+### Cutting a release
 
 ```sh
 # 1. Build, bundle, and sign
@@ -38,7 +83,8 @@ xcrun stapler staple dist/Quotari.app
 ditto -c -k --keepParent dist/Quotari.app dist/Quotari-0.1.0.zip   # re-zip stapled app
 
 # 3. Generate the Sparkle appcast (signs the zip with your private key)
-$(find .build -name generate_appcast -type f | head -1) dist/
+$(find .build -name generate_appcast -type f | head -1) \
+  --account quotari dist/
 
 # 4. Publish
 gh release create v0.1.0 dist/Quotari-0.1.0.zip dist/appcast.xml \
@@ -83,5 +129,5 @@ but consider disabling the feed for cask builds later.)
 - `package-app.sh` copies the SwiftPM resource bundle into `Contents/Resources`,
   verifies the complete code signature, then launches an isolated copy with a
   resource smoke-check argument before creating the zip.
-- Builds are arm64-only for now; add `--arch x86_64 --arch arm64` to the build
-  step for universal binaries when needed.
+- `package-app.sh` defaults to arm64 for quick local packaging. The automated
+  release script passes `ARCHS="arm64 x86_64"` to produce a universal binary.

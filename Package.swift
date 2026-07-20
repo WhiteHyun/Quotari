@@ -48,6 +48,7 @@ let package = Package(
     .testTarget(
       name: "QuotariCoreTests",
       dependencies: ["QuotariCore"],
+      exclude: ["Fixtures"],
       plugins: [
         .plugin(name: "SwiftLintBuildToolPlugin", package: "SwiftLintPlugins"),
       ]
