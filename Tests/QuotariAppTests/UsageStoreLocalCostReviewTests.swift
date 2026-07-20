@@ -5,32 +5,6 @@ import Testing
 
 @MainActor
 struct UsageStoreLocalCostReviewTests {
-  @Test func mockProviderCostIsReplacedByLocalCost() async throws {
-    let mockCost = Self.costSummary(
-      todaySpend: 9.00,
-      monthSpend: 18.00,
-      monthTokens: 9000,
-      latestTokens: 900,
-      sourceDescription: "Mock",
-      daily: Self.dailySeries(tokens: 9000)
-    )
-    let localCost = Self.costSummary(
-      todaySpend: 1.25,
-      monthSpend: 2.50,
-      monthTokens: 1000,
-      latestTokens: 200,
-      daily: Self.dailySeries(tokens: 1000)
-    )
-    let store = UsageStore.isolatedForTesting(
-      providers: [Self.descriptor(cost: mockCost, kind: .mock)],
-      costEstimator: ReviewStubCostEstimator(cost: localCost)
-    )
-
-    let snapshot = try await Self.waitForCost(in: store, matching: localCost)
-
-    #expect(snapshot.cost == localCost)
-  }
-
   @Test func emptyLocalCostScanClearsPreviousLocalChart() async throws {
     let localCost = Self.costSummary(
       todaySpend: 1.25,

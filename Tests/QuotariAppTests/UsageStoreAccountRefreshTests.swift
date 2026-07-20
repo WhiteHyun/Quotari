@@ -286,7 +286,7 @@ private actor CapturedRegistryIDRecorder {
 private struct RecordingCapturedRegistryIDStrategy: ProviderFetchStrategy {
   let recorder: CapturedRegistryIDRecorder
   let id = "recording-captured-registry-id"
-  let kind = ProviderFetchKind.mock
+  let kind = ProviderFetchKind.api
 
   func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
     await recorder.record(context.capturedRegistryID)

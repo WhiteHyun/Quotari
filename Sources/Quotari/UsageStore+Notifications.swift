@@ -49,12 +49,11 @@ extension UsageStore {
     credentialScopeID: String?
   ) {
     guard isProviderEnabled(provider) else { return }
-    // Automatic mode has no selected account to establish scope. Its real
-    // results update scope inside the serial notification tail below: this
-    // keeps a reactivation's nil-scope drain ahead of the fresh identity and
-    // prevents a pre-disable snapshot from being revived. A transient mock
-    // fallback preserves the last real scope and cannot notify.
-    let updatesNotificationScope = account == nil && sourceKind != .mock
+    // Automatic mode has no selected account to establish scope. Its results
+    // update scope inside the serial notification tail below: this keeps a
+    // reactivation's nil-scope drain ahead of the fresh identity and prevents
+    // a pre-disable snapshot from being revived.
+    let updatesNotificationScope = account == nil
     let revision = accountRevisions[provider] ?? 0
     let previous = quotaNotificationTask
     quotaNotificationTask = Task { [weak self] in
@@ -162,7 +161,7 @@ extension UsageStore {
       }
       return true
     case .unattributed:
-      if provider == .claude, request.sourceKind != .mock {
+      if provider == .claude {
         removeDeferredClaudeQuotaNotification(for: request)
         if request.account != nil, !request.updatesNotificationScope {
           removeStaleQuotaNotificationScope(for: request)

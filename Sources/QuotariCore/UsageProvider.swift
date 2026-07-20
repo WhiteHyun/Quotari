@@ -1,6 +1,6 @@
 import Foundation
 
-/// Demo/mock providers. Replace with real ones as fetch strategies are added.
+/// Provider families supported by Quotari's live usage integrations.
 public enum UsageProvider: String, CaseIterable, Sendable, Codable, Hashable, Identifiable {
   case codex
   case claude

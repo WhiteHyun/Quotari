@@ -10,7 +10,7 @@ extension UsageStore {
   /// The explicitly selected account, or the discovered account the current
   /// provider snapshot confidently names. Without either there is no active
   /// account — guessing would mark the wrong account as active and let
-  /// unattributed (or demo) provider data surface under a real account.
+  /// unattributed provider data surface under a real account.
   func activeAccount(for provider: UsageProvider) -> ProviderAccount? {
     guard isProviderEnabled(provider) else { return nil }
     if let selected = selectedAccounts[provider] {
@@ -177,11 +177,6 @@ extension UsageStore {
   ) -> UsageSnapshot {
     let usage = Self.normalizedSnapshot(value.usage, account: account)
     guard isProviderEnabled(provider) else { return usage }
-    // The automatic pipeline falls back to demo data when the live fetch
-    // fails; its fabricated snapshot must never be stored under a real account.
-    if account == nil, value.sourceKind == .mock {
-      return usage
-    }
     if let resolvedAccount = account
       ?? accountIdentified(by: value, provider: provider)
       ?? matchedAccount(for: usage, provider: provider) {
@@ -233,11 +228,7 @@ extension UsageStore {
       sourceLabels[provider] = nil
       return
     }
-    let hidesProviderCost = Self.shouldHideProviderCost(sourceKind: usage.sourceKind)
-    let needsLocalCost = Self.shouldUseLocalCost(
-      existing: snapshot.cost,
-      sourceKind: usage.sourceKind
-    )
+    let needsLocalCost = Self.shouldUseLocalCost(existing: snapshot.cost)
     let cachedCost = needsLocalCost
       ? costEstimator.cachedCostSummary(
         provider: provider,
@@ -250,8 +241,7 @@ extension UsageStore {
       from: snapshot,
       previous: previous,
       cachedCost: cachedCost,
-      prefersLocalCost: needsLocalCost,
-      hidesProviderCost: hidesProviderCost
+      prefersLocalCost: needsLocalCost
     )
     errors[provider] = usage.error
     sourceLabels[provider] = usage.sourceLabel

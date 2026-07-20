@@ -35,7 +35,7 @@ struct CodexAutomaticCredentialTests {
       environment: environment,
       home: home.url
     )
-    let pipeline = ProviderFetchPipeline { _ in [strategy, MockProviders.codexStrategy] }
+    let pipeline = ProviderFetchPipeline { _ in [strategy] }
 
     let result = try await pipeline.fetch(context).get()
     let accounts = await ProviderAccountDiscovery(
@@ -152,11 +152,14 @@ struct CodexAutomaticCredentialTests {
       environment: ["CODEX_HOME": codexHome.path],
       home: home.url
     )
-    let pipeline = ProviderFetchPipeline { _ in [strategy, MockProviders.codexStrategy] }
+    let pipeline = ProviderFetchPipeline { _ in [strategy] }
 
-    let result = try await pipeline.fetch(context).get()
-
-    #expect(result.sourceLabel == "Mock")
+    let result = await pipeline.fetch(context)
+    guard case let .failure(ProviderFetchError.missingCredential(provider)) = result else {
+      Issue.record("Expected invalid CODEX_HOME credentials to remain unavailable")
+      return
+    }
+    #expect(provider == .codex)
   }
 
   private var context: ProviderFetchContext {

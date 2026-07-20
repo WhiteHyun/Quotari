@@ -219,7 +219,6 @@ extension UsageStore {
             !excludingCredentialScopeIDs.contains(account.credentialScopeID),
             let usage = accountUsage[provider]?[account.id],
             let snapshot = usage.snapshot,
-            usage.sourceKind != .mock,
             !hasElapsedNotificationWindow(snapshot, at: now),
             usage.sourceKind != .oauth || usage.credentialScopeID != nil
       else { continue }

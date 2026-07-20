@@ -4,46 +4,112 @@ import AppKit
 import SwiftUI
 import Testing
 
-/// Renders the dashboard (with mock data) to light + dark PNGs for visual
-/// review. Not an assertion of pixels — a convenience so `swift test` refreshes
-/// the previews. Output goes to `$QUOTARI_SNAPSHOT_DIR` or `<package>/Snapshots`.
+/// Renders loaded, stale, no-account, and fetch-error dashboard states to light
+/// + dark PNGs for visual review. Not an assertion of pixels — a convenience so
+/// `swift test` refreshes the previews. Output goes to `$QUOTARI_SNAPSHOT_DIR`
+/// or `<package>/Snapshots`.
 @MainActor
 struct DashboardSnapshotTests {
   @Test func renderDashboardSnapshots() async throws {
     _ = NSApplication.shared
-    // A deterministic estimator keeps CostSectionView in the render without
-    // scanning the machine's real usage logs (mock provider cost is discarded,
-    // so a null estimator would drop the section entirely).
-    let store = UsageStore.isolatedForTesting(
-      providers: MockProviders.descriptors,
+    let states = await Self.snapshotStates()
+    let providerStatus = Self.providerStatusFixture()
+    let outputDirectory = Self.outputDirectory()
+    try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+
+    for state in states {
+      for (appearanceName, appearance) in Self.appearances {
+        let png = Self.renderPNG(
+          store: state.store,
+          providerStatus: providerStatus,
+          appearance: appearance
+        )
+        let filename = "dashboard-\(state.name)-\(appearanceName).png"
+        let url = outputDirectory.appendingPathComponent(filename)
+        try png.write(to: url)
+        print("📸 \(filename) → \(url.path)")
+        #expect(png.count > 1000)
+      }
+    }
+  }
+
+  private static func snapshotStates() async -> [DashboardSnapshotState] {
+    let loadedStore = await makeLoadedStore()
+    return await [
+      DashboardSnapshotState(name: "loaded", store: loadedStore),
+      DashboardSnapshotState(name: "stale", store: makeStaleStore()),
+      DashboardSnapshotState(name: "no-account", store: makeNoAccountStore()),
+      DashboardSnapshotState(name: "error", store: makeErrorStore()),
+    ]
+  }
+
+  private static func makeLoadedStore() async -> UsageStore {
+    let loadedStore = UsageStore.isolatedForTesting(
+      providers: ProviderFixtures.descriptors,
       costEstimator: SnapshotCostEstimator()
     )
     for _ in 0 ..< 100 {
-      if store.snapshots.count >= ProviderRegistry.all.count,
-         store.snapshots.values.allSatisfy({ $0.cost != nil }) {
+      if loadedStore.snapshots.count >= ProviderRegistry.all.count,
+         loadedStore.snapshots.values.allSatisfy({ $0.cost != nil }) {
         break
       }
       try? await Task.sleep(for: .milliseconds(50))
     }
-    #expect(store.snapshots.count == ProviderRegistry.all.count)
-    #expect(store.snapshots.values.allSatisfy { $0.cost != nil })
-    let providerStatus = Self.providerStatusFixture()
-
-    let outputDirectory = Self.outputDirectory()
-    try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
-
-    for (name, appearance) in Self.appearances {
-      let png = Self.renderPNG(
-        store: store,
-        providerStatus: providerStatus,
-        appearance: appearance
-      )
-      let url = outputDirectory.appendingPathComponent("dashboard-\(name).png")
-      try png.write(to: url)
-      print("📸 dashboard-\(name).png → \(url.path)")
-      #expect(png.count > 1000)
-    }
+    #expect(loadedStore.snapshots.count == ProviderRegistry.all.count)
+    #expect(loadedStore.snapshots.values.allSatisfy { $0.cost != nil })
+    return loadedStore
   }
+
+  private static func makeStaleStore() async -> UsageStore {
+    let staleStore = UsageStore.isolatedForTesting(
+      providers: [ProviderFixtures.descriptors[0]],
+      costEstimator: SnapshotCostEstimator()
+    )
+    for _ in 0 ..< 100 {
+      if staleStore.snapshots[.codex]?.cost != nil {
+        break
+      }
+      try? await Task.sleep(for: .milliseconds(50))
+    }
+    #expect(staleStore.snapshots[.codex] != nil)
+    staleStore.errors[.codex] = "The provider could not be reached."
+    return staleStore
+  }
+
+  private static func makeNoAccountStore() async -> UsageStore {
+    let noAccountStore = UsageStore.isolatedForTesting(
+      providers: [ProviderFixtures.descriptors[0]],
+      startsAutomatically: false
+    )
+    await noAccountStore.reloadAccounts()
+    #expect(noAccountStore.credentialDiscoveryState(for: .codex) == .absent)
+    return noAccountStore
+  }
+
+  private static func makeErrorStore() async -> UsageStore {
+    let account = ProviderAccount(
+      provider: .codex,
+      displayName: "Unavailable",
+      detail: "auth.json",
+      credentialSource: .codexAuthFile(path: "/tmp/codex/auth.json")
+    )
+    let errorStore = UsageStore.isolatedForTesting(
+      providers: [Self.errorDescriptor],
+      accountDiscovery: StaticAccountDiscovery(accounts: [.codex: [account]]),
+      startsAutomatically: false
+    )
+    await errorStore.reloadAccounts()
+    await errorStore.refresh(provider: .codex)
+    #expect(errorStore.snapshots[.codex] == nil)
+    #expect(errorStore.errors[.codex] != nil)
+    return errorStore
+  }
+
+  private static let errorDescriptor = ProviderDescriptor(
+    id: .codex,
+    metadata: ProviderRegistry.descriptor(for: .codex).metadata,
+    pipeline: ProviderFetchPipeline { _ in [DashboardFailureStrategy()] }
+  )
 
   private static let appearances: [(name: String, appearance: NSAppearance)] = [
     ("light", NSAppearance(named: .aqua)!),
@@ -143,5 +209,25 @@ struct DashboardSnapshotTests {
     guard let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else { return Data() }
     hosting.cacheDisplay(in: hosting.bounds, to: rep)
     return rep.representation(using: .png, properties: [:]) ?? Data()
+  }
+}
+
+private struct DashboardSnapshotState {
+  let name: String
+  let store: UsageStore
+}
+
+private struct DashboardFailureStrategy: ProviderFetchStrategy {
+  let id = "dashboard.failure"
+  let kind = ProviderFetchKind.api
+
+  func fetch(_: ProviderFetchContext) async throws -> ProviderFetchResult {
+    throw DashboardFixtureError()
+  }
+}
+
+private struct DashboardFixtureError: LocalizedError {
+  var errorDescription: String? {
+    "The provider could not be reached. Check your connection and try again."
   }
 }

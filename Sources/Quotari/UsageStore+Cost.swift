@@ -32,15 +32,8 @@ extension UsageStore {
       sourceKind: value.sourceKind,
       credentialScopeID: value.credentialScopeID
     )
-    let hidesProviderCost = Self.shouldHideProviderCost(sourceKind: value.sourceKind)
-    let reportedCostFallback = Self.reportedCostFallback(
-      from: usage.cost,
-      hidesProviderCost: hidesProviderCost
-    )
-    let needsLocalCost = Self.shouldUseLocalCost(
-      existing: usage.cost,
-      sourceKind: value.sourceKind
-    )
+    let reportedCostFallback = Self.reportedCostFallback(from: usage.cost)
+    let needsLocalCost = Self.shouldUseLocalCost(existing: usage.cost)
     let selectedAccount = selectedAccounts[provider]
     let cachedCost = needsLocalCost
       ? costEstimator.cachedCostSummary(
@@ -54,8 +47,7 @@ extension UsageStore {
       from: usage,
       previous: snapshots[provider],
       cachedCost: cachedCost,
-      prefersLocalCost: needsLocalCost,
-      hidesProviderCost: hidesProviderCost
+      prefersLocalCost: needsLocalCost
     )
     sourceLabels[provider] = value.sourceLabel
     errors[provider] = nil
@@ -75,29 +67,14 @@ extension UsageStore {
     from snapshot: UsageSnapshot,
     previous: UsageSnapshot?,
     cachedCost: CostSummary?,
-    prefersLocalCost: Bool,
-    hidesProviderCost: Bool
+    prefersLocalCost: Bool
   ) -> UsageSnapshot {
     guard prefersLocalCost else { return snapshot }
     var display = snapshot
     display.cost = cachedCost
       ?? previous?.cost.flatMap { shouldCarryForwardCost($0) ? $0 : nil }
-      ?? snapshot.cost.flatMap { hidesProviderCost || shouldHideSparseReportedCost($0) ? nil : $0 }
+      ?? snapshot.cost.flatMap { shouldHideSparseReportedCost($0) ? nil : $0 }
     return display
-  }
-
-  nonisolated static func shouldUseLocalCost(
-    existing cost: CostSummary?,
-    sourceKind: ProviderFetchKind?
-  ) -> Bool {
-    if shouldHideProviderCost(sourceKind: sourceKind) {
-      return true
-    }
-    return shouldUseLocalCost(existing: cost)
-  }
-
-  nonisolated static func shouldHideProviderCost(sourceKind: ProviderFetchKind?) -> Bool {
-    sourceKind == .mock
   }
 
   private func updateCostRefresh(
@@ -231,7 +208,7 @@ extension UsageStore {
     snapshots[provider] = snapshot
   }
 
-  private nonisolated static func shouldUseLocalCost(existing cost: CostSummary?) -> Bool {
+  nonisolated static func shouldUseLocalCost(existing cost: CostSummary?) -> Bool {
     guard let cost else { return true }
     return !cost.hasTokenMetrics || cost.daily.count <= 1
   }
@@ -244,12 +221,8 @@ extension UsageStore {
     !cost.hasTokenMetrics && cost.daily.count <= 1 && cost.monthSpend == 0 && cost.todaySpend == 0
   }
 
-  private nonisolated static func reportedCostFallback(
-    from cost: CostSummary?,
-    hidesProviderCost: Bool
-  ) -> CostSummary? {
-    guard !hidesProviderCost,
-          let cost,
+  private nonisolated static func reportedCostFallback(from cost: CostSummary?) -> CostSummary? {
+    guard let cost,
           !cost.sourceDescription.localizedCaseInsensitiveContains("local"),
           !shouldHideSparseReportedCost(cost)
     else { return nil }

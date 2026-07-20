@@ -13,7 +13,7 @@ struct ProviderFetchTransitionTests {
 
     let result = try await pipeline.fetch(context()).get()
 
-    #expect(result.sourceKind == .mock)
+    #expect(result.sourceKind == .api)
     #expect(result.credentialScopeID == nil)
     #expect(result.credentialTransitionTargetScopeID == "scope-b")
     #expect(result.credentialTransitionSourceScopeIDs == ["scope-a"])
@@ -192,7 +192,7 @@ private struct TransitionFailureStrategy: ProviderFetchStrategy {
 
 private struct TransitionFallbackStrategy: ProviderFetchStrategy {
   let id = "transition-fallback"
-  let kind = ProviderFetchKind.mock
+  let kind = ProviderFetchKind.api
 
   func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
     ProviderFetchResult(

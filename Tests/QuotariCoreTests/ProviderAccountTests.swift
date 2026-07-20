@@ -217,7 +217,7 @@ struct ProviderAccountStrategyTests {
     #expect(result.usage.plan == "Max 20x")
   }
 
-  @Test func missingSelectedCodexCredentialDoesNotFallBackToMock() async {
+  @Test func missingSelectedCodexCredentialFails() async {
     let account = ProviderAccount(
       provider: .codex,
       displayName: "Missing",
@@ -228,7 +228,7 @@ struct ProviderAccountStrategyTests {
       transport: StubTransport(json: Self.codexUsageJSON),
       loadCredentials: { CodexCredentials(accessToken: "default-token", accountID: "default-account") }
     )
-    let pipeline = ProviderFetchPipeline { _ in [live, MockProviders.codexStrategy] }
+    let pipeline = ProviderFetchPipeline { _ in [live] }
 
     do {
       _ = try await pipeline.fetch(
@@ -242,7 +242,7 @@ struct ProviderAccountStrategyTests {
     }
   }
 
-  @Test func missingSelectedClaudeCredentialDoesNotFallBackToMock() async {
+  @Test func missingSelectedClaudeCredentialFails() async {
     let account = ProviderAccount(
       provider: .claude,
       displayName: "Missing",
@@ -258,7 +258,7 @@ struct ProviderAccountStrategyTests {
         )
       }
     )
-    let pipeline = ProviderFetchPipeline { _ in [live, MockProviders.claudeStrategy] }
+    let pipeline = ProviderFetchPipeline { _ in [live] }
 
     do {
       _ = try await pipeline.fetch(

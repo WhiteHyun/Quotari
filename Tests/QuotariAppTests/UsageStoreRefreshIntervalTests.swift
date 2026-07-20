@@ -55,7 +55,7 @@ struct UsageStoreRefreshIntervalTests {
     let selectionURL = FileManager.default.temporaryDirectory
       .appendingPathComponent("quotari-refresh-interval-\(UUID().uuidString).json")
     return UsageStore.isolatedForTesting(
-      providers: MockProviders.descriptors,
+      providers: ProviderFixtures.descriptors,
       accountSelectionStore: ProviderAccountSelectionStore(url: selectionURL),
       defaults: defaults,
       startsAutomatically: false

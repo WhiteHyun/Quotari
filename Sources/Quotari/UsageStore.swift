@@ -146,7 +146,7 @@ final class UsageStore {
   var notificationScopeIDsByAccountID: [String: String] = [:]
   var scopedNotificationAccountIDs: [UsageProvider: Set<String>] = [:]
 
-  /// Tests inject mock descriptors so results don't depend on credentials
+  /// Tests inject fixture descriptors so results don't depend on credentials
   /// present on the machine running them.
   init(
     providers: [ProviderDescriptor] = ProviderRegistry.all,

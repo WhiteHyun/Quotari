@@ -313,7 +313,7 @@ actor AccountRecorder {
 struct RecordingAccountStrategy: ProviderFetchStrategy {
   let recorder: AccountRecorder
   let id = "recording"
-  let kind = ProviderFetchKind.mock
+  let kind = ProviderFetchKind.api
 
   func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
     await recorder.record(context.account)

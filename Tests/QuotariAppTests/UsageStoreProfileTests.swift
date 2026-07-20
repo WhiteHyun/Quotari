@@ -56,7 +56,7 @@ final class Gate: @unchecked Sendable {
 // Profile fetch, cache, and identity matching share the same scripted fixtures.
 // swiftlint:disable:next type_body_length
 struct UsageStoreProfileTests {
-  private static let claudeProviders = MockProviders.descriptors.filter { $0.id == .claude }
+  private static let claudeProviders = ProviderFixtures.descriptors.filter { $0.id == .claude }
 
   private static func claudeAccount() -> ProviderAccount {
     ProviderAccount(

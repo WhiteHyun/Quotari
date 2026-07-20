@@ -78,18 +78,13 @@ struct UsageStoreNotificationTests {
     #expect(controller.ledger.windows.keys.contains { $0.logicalAccountID == second.id })
   }
 
-  @Test func mockAndUnattributedAutomaticResultsDoNotNotify() async throws {
+  @Test func unattributedAutomaticResultsDoNotNotify() async throws {
     let harness = try await makeStore("unattributed")
     let store = harness.store
     let controller = harness.controller
     let center = harness.center
     let snapshot = usage(accountName: nil)
 
-    store.applySuccessfulFetch(
-      ProviderFetchResult(usage: snapshot, sourceLabel: "Demo", sourceKind: .mock),
-      provider: .codex,
-      account: nil
-    )
     store.applySuccessfulFetch(
       ProviderFetchResult(usage: snapshot, sourceLabel: "Live", sourceKind: .api),
       provider: .codex,

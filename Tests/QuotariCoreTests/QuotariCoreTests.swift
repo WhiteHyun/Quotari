@@ -13,17 +13,6 @@ struct RegistryTests {
       #expect(ProviderRegistry.descriptor(for: provider).id == provider)
     }
   }
-
-  @Test func mockPipelineReturnsUsage() async throws {
-    // Exercise the mock strategy directly so the result doesn't depend on
-    // whether real credentials happen to exist in the test environment.
-    let value = try await MockProviders.codexStrategy
-      .fetch(ProviderFetchContext(provider: .codex, now: Date()))
-    #expect(value.usage.primary?.usedPercent == 73)
-    #expect(value.usage.plan == "Pro 5x")
-    #expect(!value.usage.extraWindows.isEmpty)
-    #expect(value.sourceLabel == "Mock")
-  }
 }
 
 struct UsagePaceTests {
@@ -77,17 +66,5 @@ struct FormatterTests {
     #expect(UsageFormatter.tokens(32000) == "32K")
     #expect(UsageFormatter.tokens(1_200_000_000) == "1.2B")
     #expect(UsageFormatter.tokens(500) == "500")
-  }
-}
-
-struct CostTests {
-  @Test func mockCostSummaryIsPopulated() async throws {
-    let result = try await MockProviders.codexStrategy
-      .fetch(ProviderFetchContext(provider: .codex, now: Date()))
-    let cost = try #require(result.usage.cost)
-    #expect(cost.daily.count == 30)
-    #expect(cost.monthSpend > 0)
-    #expect(cost.peakSpend >= cost.todaySpend)
-    #expect(cost.topModel == "gpt-5.5")
   }
 }
