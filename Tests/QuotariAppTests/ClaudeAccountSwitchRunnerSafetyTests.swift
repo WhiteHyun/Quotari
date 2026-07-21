@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import Testing
 
+@Suite(.serialized)
 struct ClaudeAccountSwitchRunnerSafetyTests {
   @Test
   func signalsAndForcedTerminationPreserveLockSafety() throws {
@@ -12,7 +13,11 @@ struct ClaudeAccountSwitchRunnerSafetyTests {
     defer { try? fileManager.removeItem(at: temporaryDirectory) }
 
     try writeExecutable("#!/bin/zsh\nexit 0\n", named: "claude", in: temporaryDirectory)
-    try writeExecutable("#!/bin/zsh\nexit 1\n", named: "pgrep", in: temporaryDirectory)
+    try writeExecutable(
+      "#!/bin/zsh\nexit \"${QUOTARI_PGREP_TEST_STATUS:-1}\"\n",
+      named: "pgrep",
+      in: temporaryDirectory
+    )
     try writeExecutable(
       "#!/bin/zsh\nprint \"started:$$\" > \"$QUOTARI_SIGNAL_TEST_LOG\"\n"
         + "sleep 0.3\nprint restored >> \"$QUOTARI_SIGNAL_TEST_LOG\"\n",
@@ -25,6 +30,34 @@ struct ClaudeAccountSwitchRunnerSafetyTests {
       try exerciseRunner(signal: signal, executableDirectory: temporaryDirectory)
     }
     try exerciseForcedTermination(executableDirectory: temporaryDirectory)
+  }
+
+  @Test
+  func processInspectionFailureStopsBeforeLaunchingTheLiveTest() throws {
+    let fileManager = FileManager.default
+    let temporaryDirectory = fileManager.temporaryDirectory
+      .appending(path: "QuotariRunnerPgrep-\(UUID().uuidString)", directoryHint: .isDirectory)
+    try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+    defer { try? fileManager.removeItem(at: temporaryDirectory) }
+
+    try writeExecutable("#!/bin/zsh\nexit 0\n", named: "claude", in: temporaryDirectory)
+    try writeExecutable("#!/bin/zsh\nexit 2\n", named: "pgrep", in: temporaryDirectory)
+    try writeExecutable(
+      "#!/bin/zsh\nprint launched > \"$QUOTARI_SIGNAL_TEST_LOG\"\n",
+      named: "swift",
+      in: temporaryDirectory
+    )
+    let logURL = temporaryDirectory.appending(path: "unexpected-launch.log")
+    let (process, output) = makeRunner(logURL: logURL, executableDirectory: temporaryDirectory)
+
+    try process.run()
+    process.waitUntilExit()
+    let outputData = output.fileHandleForReading.readDataToEndOfFile()
+    let outputText = try #require(String(bytes: outputData, encoding: .utf8))
+
+    #expect(process.terminationStatus == 1)
+    #expect(outputText.contains("process inspection failed with status 2"))
+    #expect(!fileManager.fileExists(atPath: logURL.path))
   }
 
   private func exerciseRunner(signal: Int32, executableDirectory: URL) throws {

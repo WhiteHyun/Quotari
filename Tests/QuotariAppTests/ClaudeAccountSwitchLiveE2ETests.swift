@@ -70,11 +70,14 @@ struct ClaudeAccountSwitchLiveE2ETests {
   private func originalAccountState(
     _ context: ClaudeSwitchLiveE2EContext
   ) async throws -> ClaudeOriginalAccountState {
+    let originalCredentials = try await refreshedOriginalClaudeCredentialsIfNeeded(
+      context.originalCredentials
+    )
     let originalFingerprint = ProviderCredentialIdentity.fingerprint(
-      of: context.originalCredentials.credentials.accessToken
+      of: originalCredentials.credentials.accessToken
     )
     var originalProfile = try await ClaudeProfileFetcher().fetchProfile(
-      accessToken: context.originalCredentials.credentials.accessToken
+      accessToken: originalCredentials.credentials.accessToken
     )
     originalProfile.fingerprint = originalFingerprint
     guard originalProfile.hasStableAccountIdentity else {
@@ -89,8 +92,8 @@ struct ClaudeAccountSwitchLiveE2ETests {
       throw ClaudeSwitchLiveE2EError.initialCLIIdentityMismatch
     }
     let originalIdentity = ProviderCredentialIdentity.claudeIdentity(
-      refreshToken: context.originalCredentials.credentials.refreshToken,
-      accessToken: context.originalCredentials.credentials.accessToken
+      refreshToken: originalCredentials.credentials.refreshToken,
+      accessToken: originalCredentials.credentials.accessToken
     )
     guard let originalIdentity else {
       throw ClaudeSwitchLiveE2EError.originalIdentityUnavailable

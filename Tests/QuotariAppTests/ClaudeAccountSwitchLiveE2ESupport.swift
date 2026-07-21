@@ -45,6 +45,7 @@ enum ClaudeSwitchLiveE2EError: LocalizedError {
   case missingEnvironment(String)
   case claudeExecutableUnavailable
   case quotariIsRunning
+  case quotariProcessInspectionFailed(Int32)
   case claudeIsRunning
   case environmentCredentialUnsupported
   case targetNotFound
@@ -70,6 +71,8 @@ enum ClaudeSwitchLiveE2EError: LocalizedError {
     case let .missingEnvironment(name): "Set \(name) before running the live E2E test."
     case .claudeExecutableUnavailable: "The Claude Code executable could not be found."
     case .quotariIsRunning: "Quit the packaged Quotari app before running the live E2E test."
+    case let .quotariProcessInspectionFailed(status):
+      "Quotari process inspection failed with status \(status); the live E2E will not mutate credentials."
     case .claudeIsRunning: "Quit every Claude Code session before running the live E2E test."
     case .environmentCredentialUnsupported: "Unset QUOTARI_CLAUDE_OAUTH_TOKEN before the live E2E test."
     case .targetNotFound: "The requested saved Claude account was not found."
@@ -136,7 +139,7 @@ func claudeAuthStatus(executable: URL) throws -> ClaudeCLIAuthStatus {
   process.arguments = ["auth", "status", "--json"]
   let output = Pipe()
   process.standardOutput = output
-  process.standardError = Pipe()
+  process.standardError = FileHandle.nullDevice
   try process.run()
   let data = output.fileHandleForReading.readDataToEndOfFile()
   process.waitUntilExit()
@@ -152,17 +155,54 @@ func requireClaudeIsNotRunning(_ detector: CLIActivityDetector) throws {
   }
 }
 
-func requireQuotariIsNotRunning() throws {
+func requireQuotariIsNotRunning(
+  pgrepExecutable: URL = URL(fileURLWithPath: "/usr/bin/pgrep")
+) throws {
   let process = Process()
-  process.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+  process.executableURL = pgrepExecutable
   process.arguments = ["-x", "Quotari"]
-  process.standardOutput = Pipe()
-  process.standardError = Pipe()
+  process.standardOutput = FileHandle.nullDevice
+  process.standardError = FileHandle.nullDevice
   try process.run()
   process.waitUntilExit()
-  if process.terminationStatus == 0 {
+  switch process.terminationStatus {
+  case 0:
     throw ClaudeSwitchLiveE2EError.quotariIsRunning
+  case 1:
+    return
+  default:
+    throw ClaudeSwitchLiveE2EError.quotariProcessInspectionFailed(process.terminationStatus)
   }
+}
+
+@MainActor
+func refreshedOriginalClaudeCredentialsIfNeeded(
+  _ resolved: ResolvedClaudeCredentials,
+  now: Date = Date(),
+  refresh: (ProviderAccount, Date) async throws -> Void = { account, now in
+    _ = try await ProviderRegistry.descriptor(for: .claude).fetch(
+      now: now,
+      account: account,
+      interaction: .userInitiated
+    ).get()
+  },
+  reload: (ProviderCredentialSource) throws -> ClaudeCredentials = { source in
+    try ClaudeCredentialsStore.load(source: source)
+  }
+) async throws -> ResolvedClaudeCredentials {
+  guard resolved.credentials.isExpired(now: now) else { return resolved }
+  let account = ProviderAccount(
+    provider: .claude,
+    displayName: "Claude Code",
+    detail: resolved.source.detail,
+    credentialSource: resolved.source,
+    credentialIdentity: resolved.credentials.accessToken
+  )
+  try await refresh(account, now)
+  return try ResolvedClaudeCredentials(
+    credentials: reload(resolved.source),
+    source: resolved.source
+  )
 }
 
 func removeTestCreatedOriginalBackup(

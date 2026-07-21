@@ -55,6 +55,12 @@ record_interruption() {
 if pgrep -x Quotari >/dev/null; then
   print -u2 "Quit Quotari before running the live Claude account-switch E2E test."
   exit 1
+else
+  pgrep_status=$?
+  if (( pgrep_status != 1 )); then
+    print -u2 "Quotari process inspection failed with status $pgrep_status; refusing to mutate credentials."
+    exit 1
+  fi
 fi
 
 claude_path="$(command -v claude || true)"
