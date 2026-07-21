@@ -8,6 +8,7 @@ struct ProviderCardView: View {
   let snapshot: UsageSnapshot?
   let sourceLabel: String?
   let error: String?
+  let providerStatus: ProviderStatusController
   var showSettings: () -> Void = {}
 
   @State private var isShowingAccounts = false
@@ -89,6 +90,10 @@ struct ProviderCardView: View {
             .foregroundStyle(.secondary)
         }
         Spacer()
+        ProviderStatusDisclosureButton(
+          descriptor: descriptor,
+          controller: providerStatus
+        )
       }
     }
   }

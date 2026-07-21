@@ -8,17 +8,21 @@ struct DashboardView: View {
   /// The menu bar window resolves flexible height ranges to their minimum, so
   /// the window height must be a single measured value, not a min/max span.
   @State private var contentHeight: CGFloat = 100
+  @State private var providerStatus = ProviderStatusController()
 
   let menuBarPresentation: MenuBarPresentationController
 
   var body: some View {
     ScrollView {
-      DashboardContent(showSettings: showSettings)
-        .onGeometryChange(for: CGFloat.self) { proxy in
-          proxy.size.height
-        } action: { height in
-          contentHeight = height
-        }
+      DashboardContent(
+        providerStatus: providerStatus,
+        showSettings: showSettings
+      )
+      .onGeometryChange(for: CGFloat.self) { proxy in
+        proxy.size.height
+      } action: { height in
+        contentHeight = height
+      }
     }
     .frame(width: 300)
     .frame(height: min(max(contentHeight, 100), 560))
@@ -36,7 +40,16 @@ struct DashboardView: View {
 struct DashboardContent: View {
   @Environment(UsageStore.self) private var store
 
+  let providerStatus: ProviderStatusController
   var showSettings: () -> Void = {}
+
+  init(
+    providerStatus: ProviderStatusController = ProviderStatusController(),
+    showSettings: @escaping () -> Void = {}
+  ) {
+    self.providerStatus = providerStatus
+    self.showSettings = showSettings
+  }
 
   var body: some View {
     VStack(spacing: 0) {
@@ -68,6 +81,7 @@ struct DashboardContent: View {
             snapshot: store.snapshots[descriptor.id],
             sourceLabel: store.sourceLabels[descriptor.id],
             error: store.errors[descriptor.id],
+            providerStatus: providerStatus,
             showSettings: showSettings
           )
           if index < providers.count - 1 {
