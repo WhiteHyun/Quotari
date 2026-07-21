@@ -52,7 +52,7 @@ enum L10n {
   private static var appPreferredLanguages: [String] {
     // A test host has no app-level language selection. Keep non-localization
     // tests deterministic while the real executable follows user preferences.
-    if Bundle.main.bundleURL.pathExtension == "xctest" {
+    if ProcessInfo.processInfo.processName != "Quotari" {
       return [sourceLanguage]
     }
     if let advertised = Bundle.main.object(
