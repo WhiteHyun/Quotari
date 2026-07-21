@@ -50,6 +50,37 @@ Automatic mode selects the effective live CLI credential; it does not generate
 sample usage when no account is available. The app runs as an accessory app,
 so look for the flame mascot in the menu bar rather than a Dock icon.
 
+### Live Claude account-switch E2E
+
+The regular test suite never reads or changes live credentials. An explicit
+operator-only E2E exercises the production `UsageStore` path across a real saved
+Claude account: it switches the shared Claude Code credential, performs the
+immediate Anthropic usage fetch, starts a new `claude auth status` process to
+verify that the target is still logged in, switches back, verifies the restored
+login in another fresh process, and removes a newly created original-login
+backup only when its account identity proves that the round trip created it.
+
+Quit the Quotari app and every Claude Code session first. The target must already
+be saved in Quotari, have a verified email identity, and differ from the current
+CLI login. Then run:
+
+```sh
+./Scripts/run-claude-switch-e2e.sh \
+  --target-id '<saved-account-registry-id>' \
+  --confirm-live-switch
+```
+
+This test calls live Anthropic profile and usage endpoints and mutates the real
+Claude Code Keychain/credentials slots. It is disabled unless the script's
+explicit opt-in environment is present and should not run in CI. The runner
+accepts only the non-secret registry identifier, so an account email does not
+appear in shell history or the process list. A per-user machine lock rejects
+overlapping runners before either process can touch the shared credential slots.
+The lock is kernel-managed, so a stale lock file after a crash does not block the
+next run. If the runner receives HUP, INT, or TERM after the test starts, it keeps
+the test in a separate process session and holds that lock until credential
+restoration finishes, then exits with status 130.
+
 ## Structure
 
 ```text
