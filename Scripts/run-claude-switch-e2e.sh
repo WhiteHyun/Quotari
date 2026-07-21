@@ -42,7 +42,14 @@ release_lock() {
   rmdir "$lock_directory" 2>/dev/null || true
 }
 trap release_lock EXIT
-trap 'exit 130' HUP INT TERM
+
+interrupted=0
+record_interruption() {
+  if (( interrupted == 0 )); then
+    print -u2 "Interrupt received; waiting for Claude credential restoration to finish."
+  fi
+  interrupted=1
+}
 
 if pgrep -x Quotari >/dev/null; then
   print -u2 "Quit Quotari before running the live Claude account-switch E2E test."
@@ -54,9 +61,42 @@ if [[ -z "$claude_path" ]]; then
   print -u2 "Claude Code is not available on PATH."
   exit 1
 fi
+swift_path="$(command -v swift || true)"
+python_path="$(command -v python3 || true)"
+if [[ -z "$swift_path" || -z "$python_path" ]]; then
+  print -u2 "Swift and Python 3 are required to run the live E2E test safely."
+  exit 1
+fi
 
 export QUOTARI_RUN_CLAUDE_SWITCH_E2E=1
 export QUOTARI_E2E_CLAUDE_TARGET_ID="$target"
 export QUOTARI_E2E_CLAUDE_PATH="$claude_path"
 
-swift test --filter ClaudeAccountSwitchLiveE2ETests
+# The test owns restoration once it starts mutating the shared credential slot.
+# Keep it alive across terminal/process signals, while the runner records the
+# interruption and holds the machine lock until restoration has completed.
+trap '' HUP INT TERM
+"$python_path" -c \
+  'import os, sys; os.setsid(); os.execv(sys.argv[1], sys.argv[1:])' \
+  "$swift_path" test --filter ClaudeAccountSwitchLiveE2ETests &
+test_pid=$!
+trap record_interruption HUP INT TERM
+
+test_status=0
+while true; do
+  if wait "$test_pid"; then
+    test_status=0
+    break
+  else
+    test_status=$?
+  fi
+
+  if (( interrupted == 0 )) || ! kill -0 "$test_pid" 2>/dev/null; then
+    break
+  fi
+done
+
+if (( interrupted )); then
+  exit 130
+fi
+exit "$test_status"
