@@ -9,6 +9,7 @@ struct LocalizationTests {
   }
 
   @Test func resolvesTheLanguageSelectedForTheAppInsteadOfTheFormattingLocale() {
+    #expect(L10n.supportedLanguageCodes.contains("ko"))
     #expect(
       L10n.preferredLanguageCode(
         supportedLocalizations: ["en", "ko"],

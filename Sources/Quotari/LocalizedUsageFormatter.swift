@@ -8,7 +8,7 @@ enum LocalizedUsageFormatter {
 
   static func compactDuration(
     _ seconds: TimeInterval,
-    locale: Locale = .current
+    locale: Locale? = nil
   ) -> String? {
     let total = Int(seconds)
     guard total > 0 else { return nil }
@@ -26,7 +26,7 @@ enum LocalizedUsageFormatter {
   static func resetCountdown(
     to date: Date?,
     now: Date = Date(),
-    locale: Locale = .current
+    locale: Locale? = nil
   ) -> String? {
     guard let date else { return nil }
     let seconds = date.timeIntervalSince(now)
@@ -40,7 +40,7 @@ enum LocalizedUsageFormatter {
 
   static func paceTrend(
     _ pace: UsagePace,
-    locale: Locale = .current
+    locale: Locale? = nil
   ) -> String? {
     let magnitude = Int(abs(pace.deltaPercent).rounded())
     guard magnitude >= 1 else { return nil }
@@ -51,7 +51,7 @@ enum LocalizedUsageFormatter {
 
   static func paceProjection(
     _ pace: UsagePace,
-    locale: Locale = .current
+    locale: Locale? = nil
   ) -> String {
     if let runsOut = pace.runsOutIn,
        let text = compactDuration(runsOut, locale: locale) {
@@ -60,6 +60,7 @@ enum LocalizedUsageFormatter {
     if let headroom = pace.headroomMultiplier,
        headroom >= 1.2,
        headroom <= 5 {
+      let locale = locale ?? L10n.appLocale
       let value = headroom.formatted(
         .number
           .locale(locale)
@@ -73,12 +74,12 @@ enum LocalizedUsageFormatter {
   static func currency(
     _ amount: Double,
     code: String = "USD",
-    locale: Locale = .current
+    locale: Locale? = nil
   ) -> String {
     let formatter = NumberFormatter()
     formatter.numberStyle = .currency
     formatter.currencyCode = code
-    formatter.locale = locale
+    formatter.locale = locale ?? L10n.appLocale
     return formatter.string(from: amount as NSNumber) ?? "\(amount)"
   }
 
