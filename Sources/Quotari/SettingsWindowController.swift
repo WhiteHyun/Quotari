@@ -44,7 +44,7 @@ final class SettingsWindowController {
         .environment(store)
     )
     let settingsWindow = NSWindow(contentViewController: controller)
-    settingsWindow.title = "Settings"
+    settingsWindow.title = L10n.string("Settings")
     settingsWindow.identifier = NSUserInterfaceItemIdentifier("Quotari.Settings")
     settingsWindow.styleMask = [.titled, .closable, .resizable, .fullSizeContentView]
     settingsWindow.titleVisibility = .hidden

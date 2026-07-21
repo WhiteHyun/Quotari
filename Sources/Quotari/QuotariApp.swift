@@ -16,6 +16,14 @@ private enum QuotariEntrypoint {
       }
       Darwin.exit(EXIT_SUCCESS)
     }
+    if CommandLine.arguments.contains("--verify-korean-localization") {
+      guard L10n.string("General") == "일반" else {
+        let message = "Packaged app did not honor the selected Korean language.\n"
+        try? FileHandle.standardError.write(contentsOf: Data(message.utf8))
+        Darwin.exit(EXIT_FAILURE)
+      }
+      Darwin.exit(EXIT_SUCCESS)
+    }
     if CommandLine.arguments.contains("--verify-packaged-settings") {
       Darwin.exit(verifyPackagedSettings() ? EXIT_SUCCESS : EXIT_FAILURE)
     }

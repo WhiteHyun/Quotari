@@ -12,8 +12,12 @@ extension UsageStore {
     else { return nil }
     guard let postLoginSnapshot = registryBaseline.claudePostLoginSnapshot else {
       beginAccountRediscovery()
-      return "Quotari couldn’t verify the post-login Claude credential and account state, so it left the current "
-        + "CLI login untouched instead of risking a newer external generation."
+      return L10n.string(
+        """
+        Quotari couldn’t verify the post-login Claude credential and account state, so it left the current CLI login \
+        untouched instead of risking a newer external generation.
+        """
+      )
     }
     return await restoreExactClaudeLoginState(
       keychainSnapshot,

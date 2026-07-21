@@ -26,10 +26,10 @@ struct ProviderCardView: View {
       header
       if let snapshot {
         if let primary = snapshot.primary {
-          windowRow("Session", primary)
+          windowRow(L10n.string("Session"), primary)
         }
         if let secondary = snapshot.secondary {
-          windowRow("Weekly", secondary)
+          windowRow(L10n.string("Weekly"), secondary)
         }
         ForEach(snapshot.extraWindows) { named in windowRow(named.title, named.window) }
         if let cost = snapshot.cost {
@@ -130,8 +130,8 @@ struct ProviderCardView: View {
         )
         .environment(store)
       }
-      .accessibilityLabel("\(descriptor.metadata.displayName) account")
-      .accessibilityHint("Shows usage for available accounts")
+      .accessibilityLabel(L10n.string("\(descriptor.metadata.displayName) account"))
+      .accessibilityHint(L10n.string("Shows usage for available accounts"))
     } else if accountDisplayName != nil || snapshot?.plan != nil {
       accountLabels
     }
@@ -178,39 +178,41 @@ struct ProviderCardView: View {
       Text(title).font(.subheadline)
       bar(window.remainingPercent)
       HStack(spacing: 6) {
-        Text("\(UsageFormatter.percent(window.remainingPercent)) left")
+        Text(L10n.string("\(LocalizedUsageFormatter.percent(window.remainingPercent)) left"))
           .font(.footnote)
           .foregroundStyle(.secondary)
           .contentTransition(.numericText())
         Spacer()
-        if let reset = UsageFormatter.resetCountdown(to: window.resetsAt) {
-          Text("Resets \(reset)").font(.footnote).foregroundStyle(.secondary)
+        if let reset = LocalizedUsageFormatter.resetCountdown(to: window.resetsAt) {
+          Text(L10n.string("Resets \(reset)")).font(.footnote).foregroundStyle(.secondary)
         }
       }
       if window.usedPercent < 100, let pace,
-         UsageFormatter.paceTrend(pace) != nil || pace.runsOutIn != nil {
+         LocalizedUsageFormatter.paceTrend(pace) != nil || pace.runsOutIn != nil {
         HStack(spacing: 6) {
-          if let trend = UsageFormatter.paceTrend(pace) {
+          if let trend = LocalizedUsageFormatter.paceTrend(pace) {
             Text(trend)
               .font(.caption)
               .foregroundStyle(.tertiary)
           }
           Spacer()
-          Text(UsageFormatter.paceProjection(pace))
+          Text(LocalizedUsageFormatter.paceProjection(pace))
             .font(.caption)
             .foregroundStyle(.tertiary)
         }
       }
     }
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel("\(title) usage")
+    .accessibilityLabel(L10n.string("\(title) usage"))
     .accessibilityValue(accessibilityValue(for: window))
   }
 
   private func accessibilityValue(for window: RateWindow) -> String {
-    var value = "\(UsageFormatter.percent(window.remainingPercent)) left, \(Theme.statusWord(window.usedPercent))"
-    if let reset = UsageFormatter.resetCountdown(to: window.resetsAt) {
-      value += ", resets \(reset)"
+    let remaining = LocalizedUsageFormatter.percent(window.remainingPercent)
+    let status = Theme.statusWord(window.usedPercent)
+    var value = L10n.string("\(remaining) left, \(status)")
+    if let reset = LocalizedUsageFormatter.resetCountdown(to: window.resetsAt) {
+      value = L10n.string("\(value), resets \(reset)")
     }
     return value
   }

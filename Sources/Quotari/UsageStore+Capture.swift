@@ -5,7 +5,9 @@ import QuotariCore
 
 extension UsageStore {
   static let activeAccountRemovalMessage =
-    "This account is still present in a CLI credential slot. Switch to another account or sign out before removing it."
+    L10n.string(
+      "This account is still present in a CLI credential slot. Switch to another account or sign out before removing it."
+    )
 
   func removeCapturedAccount(_ account: ProviderAccount) async {
     guard case let .quotariRegistry(id) = account.credentialSource else { return }
@@ -100,7 +102,7 @@ extension UsageStore {
     guard case let .quotariRegistry(id) = account.credentialSource else { return }
     let provider = account.provider
     guard !isSwitching else {
-      captureErrors[provider] = "Another account switch is already in progress."
+      captureErrors[provider] = L10n.string("Another account switch is already in progress.")
       return
     }
     // Close the gate FIRST so no new fetch can start while we drain the
@@ -155,7 +157,9 @@ extension UsageStore {
         // The write succeeded but discovery didn't surface the switched-in
         // login (transient read miss); don't claim success on a stale
         // selection — surface it so the user can retry.
-        captureErrors[provider] = "Switched the CLI login, but Quotari couldn't confirm it yet. Reload accounts."
+        captureErrors[provider] = L10n.string(
+          "Switched the CLI login, but Quotari couldn't confirm it yet. Reload accounts."
+        )
         return
       }
       captureErrors[provider] = nil

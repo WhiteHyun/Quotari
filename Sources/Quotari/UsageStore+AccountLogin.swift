@@ -11,29 +11,29 @@ enum AccountLoginPhase: Equatable {
 
   var title: String {
     switch self {
-    case .preservingCurrentAccount: "Saving current CLI account…"
-    case .waitingForBrowser: "Waiting for browser login…"
-    case .waitingForAuthenticationCode: "Authentication code required"
-    case .completingLogin: "Completing sign-in…"
-    case .savingAccount: "Adding the new account…"
-    case .restoringPreviousAccount: "Restoring the previous CLI account…"
+    case .preservingCurrentAccount: L10n.string("Saving current CLI account…")
+    case .waitingForBrowser: L10n.string("Waiting for browser login…")
+    case .waitingForAuthenticationCode: L10n.string("Authentication code required")
+    case .completingLogin: L10n.string("Completing sign-in…")
+    case .savingAccount: L10n.string("Adding the new account…")
+    case .restoringPreviousAccount: L10n.string("Restoring the previous CLI account…")
     }
   }
 
   var detail: String? {
     switch self {
     case .preservingCurrentAccount:
-      "Quotari is preserving the current renewable credential before adding another account."
+      L10n.string("Quotari is preserving the current renewable credential before adding another account.")
     case .waitingForBrowser:
-      "Finish signing in with a different account in the browser. Keep this window open."
+      L10n.string("Finish signing in with a different account in the browser. Keep this window open.")
     case .waitingForAuthenticationCode:
-      "Paste the authentication code shown in the browser to continue the Claude Code login."
+      L10n.string("Paste the authentication code shown in the browser to continue the Claude Code login.")
     case .completingLogin:
-      "Claude Code accepted the browser sign-in and Quotari is waiting for it to finish."
+      L10n.string("Claude Code accepted the browser sign-in and Quotari is waiting for it to finish.")
     case .savingAccount:
-      "The new renewable credential is being saved to Quotari and linked to the live CLI account."
+      L10n.string("The new renewable credential is being saved to Quotari and linked to the live CLI account.")
     case .restoringPreviousAccount:
-      "Login did not complete, so Quotari is putting the preserved account back into the CLI slot."
+      L10n.string("Login did not complete, so Quotari is putting the preserved account back into the CLI slot.")
     }
   }
 
@@ -69,11 +69,15 @@ extension UsageStore {
 
   func addAccount(for provider: UsageProvider) async {
     guard addingAccountProviders.isEmpty else {
-      accountLoginErrors[provider] = "Finish the account login already in progress before starting another one."
+      accountLoginErrors[provider] = L10n.string(
+        "Finish the account login already in progress before starting another one."
+      )
       return
     }
     guard !isSwitching else {
-      accountLoginErrors[provider] = "Finish the account switch already in progress before starting a new login."
+      accountLoginErrors[provider] = L10n.string(
+        "Finish the account switch already in progress before starting a new login."
+      )
       return
     }
 
@@ -148,7 +152,7 @@ extension UsageStore {
         registryBaseline: registryBaseline
       )
       accountLoginErrors[provider] = combinedLoginError(
-        "Account login was cancelled.",
+        L10n.string("Account login was cancelled."),
         restorationError: restorationError
       )
     } catch {

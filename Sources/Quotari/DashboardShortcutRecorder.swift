@@ -26,8 +26,8 @@ final class DashboardShortcutRecorderButton: NSButton {
     setButtonType(.momentaryPushIn)
     target = self
     action = #selector(beginRecording)
-    toolTip = "Click, then press a shortcut. Press Delete to clear it."
-    setAccessibilityLabel("Open dashboard shortcut")
+    toolTip = L10n.string("Click, then press a shortcut. Press Delete to clear it.")
+    setAccessibilityLabel(L10n.string("Open dashboard shortcut"))
     refreshTitle()
   }
 
@@ -57,14 +57,14 @@ final class DashboardShortcutRecorderButton: NSButton {
     if let shortcut = KeyboardShortcuts.getShortcut(for: shortcutName) {
       title = "\(shortcut)"
     } else {
-      title = "Record Shortcut"
+      title = L10n.string("Record Shortcut")
     }
   }
 
   @objc private func beginRecording() {
     guard !isRecording else { return }
     isRecording = true
-    title = "Press Shortcut"
+    title = L10n.string("Press Shortcut")
     guard window?.makeFirstResponder(self) == true else {
       isRecording = false
       refreshTitle()

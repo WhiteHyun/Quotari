@@ -10,10 +10,10 @@ enum PreferencesTab: CaseIterable, Hashable {
 
   var title: String {
     switch self {
-    case .general: "General"
-    case .accounts: "Accounts"
-    case .notifications: "Notifications"
-    case .about: "About"
+    case .general: L10n.string("General")
+    case .accounts: L10n.string("Accounts")
+    case .notifications: L10n.string("Notifications")
+    case .about: L10n.string("About")
     }
   }
 
@@ -111,7 +111,7 @@ struct PreferencesView: View {
         Button {
           moveSelection(by: -1)
         } label: {
-          Label("Previous Section", systemImage: "chevron.left")
+          Label(L10n.string("Previous Section"), systemImage: "chevron.left")
         }
         .labelStyle(.iconOnly)
         .disabled(!canMoveSelection(by: -1))
@@ -119,7 +119,7 @@ struct PreferencesView: View {
         Button {
           moveSelection(by: 1)
         } label: {
-          Label("Next Section", systemImage: "chevron.right")
+          Label(L10n.string("Next Section"), systemImage: "chevron.right")
         }
         .labelStyle(.iconOnly)
         .disabled(!canMoveSelection(by: 1))

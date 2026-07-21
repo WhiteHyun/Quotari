@@ -52,10 +52,10 @@ struct ProviderAccountPopover: View {
     let monitoredCount = accounts.filter(store.isMonitoring).count
     return HStack(alignment: .firstTextBaseline) {
       ProviderIconView(descriptor: descriptor, size: 24)
-      Text("\(descriptor.metadata.displayName) Accounts")
+      Text(L10n.string("\(descriptor.metadata.displayName) Accounts"))
         .font(.headline)
       Spacer()
-      Text("\(monitoredCount)/\(accounts.count) monitored")
+      Text(L10n.string("\(monitoredCount)/\(accounts.count) monitored"))
         .font(.caption)
         .foregroundStyle(.secondary)
     }
@@ -113,7 +113,11 @@ struct ProviderAccountPopover: View {
 
   @ViewBuilder
   private func accountMenu(_ account: ProviderAccount) -> some View {
-    Button(store.isMonitoring(account) ? "Stop Monitoring" : "Monitor Account") {
+    Button(
+      store.isMonitoring(account)
+        ? L10n.string("Stop Monitoring")
+        : L10n.string("Monitor Account")
+    ) {
       let shouldMonitor = !store.isMonitoring(account)
       store.setMonitoring(shouldMonitor, for: account)
       if shouldMonitor {
@@ -121,16 +125,16 @@ struct ProviderAccountPopover: View {
       }
     }
     if store.capturedEquivalents.keys.contains(account.id) {
-      Button("Remove Account (Still in CLI)", role: .destructive) {}
+      Button(L10n.string("Remove Account (Still in CLI)"), role: .destructive) {}
         .disabled(true)
         .help(UsageStore.activeAccountRemovalMessage)
     }
     if account.credentialSource.isCaptured {
-      Button("Use in CLI (Switch)") {
+      Button(L10n.string("Use in CLI (Switch)")) {
         startSwitchingCLI(to: account)
       }
       .disabled(store.isSwitching || !store.addingAccountProviders.isEmpty)
-      Button("Remove Account", role: .destructive) {
+      Button(L10n.string("Remove Account"), role: .destructive) {
         Task { await store.removeCapturedAccount(account) }
       }
     }
@@ -140,7 +144,7 @@ struct ProviderAccountPopover: View {
     let canAddAccount = store.canAddAccount(for: descriptor.id)
     return VStack(spacing: 2) {
       PopoverActionButton(
-        title: canAddAccount ? accountLoginTitle : "\(accountLoginTitle) (Unavailable)",
+        title: canAddAccount ? accountLoginTitle : L10n.string("\(accountLoginTitle) (Unavailable)"),
         systemImage: "plus",
         busy: !store.addingAccountProviders.isEmpty,
         disabled: !canAddAccount
@@ -149,7 +153,7 @@ struct ProviderAccountPopover: View {
       }
       .help(store.addAccountUnavailableReason(for: descriptor.id) ?? accountLoginHelp)
       PopoverActionButton(
-        title: "Scan & Add Current Account",
+        title: L10n.string("Scan & Add Current Account"),
         systemImage: "arrow.clockwise",
         busy: isReloadingAccounts || store.refreshingAccountUsageProviders.contains(descriptor.id)
       ) {
@@ -165,7 +169,7 @@ struct ProviderAccountPopover: View {
         }
       }
       PopoverActionButton(
-        title: "Manage in Settings…",
+        title: L10n.string("Manage in Settings…"),
         systemImage: "gearshape",
         busy: false
       ) {
@@ -176,13 +180,13 @@ struct ProviderAccountPopover: View {
   }
 
   private var accountLoginTitle: String {
-    descriptor.id == .claude ? "Login New Account" : "Add Account"
+    descriptor.id == .claude ? L10n.string("Login New Account") : L10n.string("Add Account")
   }
 
   private var accountLoginHelp: String {
     descriptor.id == .claude
-      ? "Preserve the current Claude account, then sign in with a new one in the browser"
-      : "Add another managed account"
+      ? L10n.string("Preserve the current Claude account, then sign in with a new one in the browser")
+      : L10n.string("Add another managed account")
   }
 }
 
@@ -222,13 +226,13 @@ private struct ProviderAccountUsageRow: View {
         }
         Spacer()
         if isCLIActive {
-          accountBadge("CLI Active", color: .secondary)
+          accountBadge(L10n.string("CLI Active"), color: .secondary)
         }
         if isMonitored {
-          accountBadge("Monitored", color: accent)
+          accountBadge(L10n.string("Monitored"), color: accent)
         }
         if account.credentialSource.isCaptured {
-          accountBadge("Saved", color: accent)
+          accountBadge(L10n.string("Saved"), color: accent)
         }
         if let plan = usage?.snapshot?.plan {
           Text(plan)
@@ -266,13 +270,13 @@ private struct ProviderAccountUsageRow: View {
     if let snapshot = usage?.snapshot {
       VStack(spacing: 9) {
         if let primary = snapshot.primary {
-          compactWindow("Session", primary)
+          compactWindow(L10n.string("Session"), primary)
         }
         if let secondary = snapshot.secondary {
-          compactWindow("Weekly", secondary)
+          compactWindow(L10n.string("Weekly"), secondary)
         }
         if snapshot.primary == nil, snapshot.secondary == nil {
-          Text("No usage windows available")
+          Text(L10n.string("No usage windows available"))
             .font(.caption)
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -289,7 +293,7 @@ private struct ProviderAccountUsageRow: View {
         if isLoading {
           ProgressView().controlSize(.small)
         }
-        Text(isLoading ? "Loading usage…" : "Usage not loaded")
+        Text(isLoading ? L10n.string("Loading usage…") : L10n.string("Usage not loaded"))
           .font(.caption)
           .foregroundStyle(.secondary)
       }
@@ -302,10 +306,10 @@ private struct ProviderAccountUsageRow: View {
       Text(title).font(.caption.weight(.medium))
       AccountUsageBar(remainingPercent: window.remainingPercent, accent: accent)
       HStack(spacing: 6) {
-        Text("\(UsageFormatter.percent(window.remainingPercent)) left")
+        Text(L10n.string("\(LocalizedUsageFormatter.percent(window.remainingPercent)) left"))
         Spacer()
-        if let reset = UsageFormatter.resetCountdown(to: window.resetsAt) {
-          Text("Resets \(reset)")
+        if let reset = LocalizedUsageFormatter.resetCountdown(to: window.resetsAt) {
+          Text(L10n.string("Resets \(reset)"))
         }
       }
       .font(.caption)

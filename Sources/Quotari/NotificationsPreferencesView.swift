@@ -8,12 +8,12 @@ struct NotificationsPreferencesView: View {
 
     VStack(spacing: 16) {
       PreferencesCard(
-        "Quota Alerts",
-        subtitle: "Get notified before a provider reaches its usage limit."
+        L10n.string("Quota Alerts"),
+        subtitle: L10n.string("Get notified before a provider reaches its usage limit.")
       ) {
         PreferencesToggleRow(
-          "Quota alerts",
-          detail: "Deliver warning, critical, and reset notifications.",
+          L10n.string("Quota alerts"),
+          detail: L10n.string("Deliver warning, critical, and reset notifications."),
           isOn: $notifications.notificationsEnabled
         )
         if let message = notifications.authorizationMessage {
@@ -28,37 +28,37 @@ struct NotificationsPreferencesView: View {
       }
 
       PreferencesCard(
-        "Thresholds",
-        subtitle: "Set the usage levels that trigger each alert."
+        L10n.string("Thresholds"),
+        subtitle: L10n.string("Set the usage levels that trigger each alert.")
       ) {
         VStack(spacing: 14) {
-          PreferencesControlRow("Warning at \(notifications.warningThreshold)%") {
+          PreferencesControlRow(L10n.string("Warning at \(notifications.warningThreshold)%")) {
             Stepper(
-              "Warning threshold",
+              L10n.string("Warning threshold"),
               value: $notifications.warningThreshold,
               in: 1 ... max(1, notifications.criticalThreshold - 1)
             )
             .labelsHidden()
-            .accessibilityLabel("Warning threshold")
+            .accessibilityLabel(L10n.string("Warning threshold"))
           }
           .disabled(!controlsEnabled)
           PreferencesRowDivider()
-          PreferencesControlRow("Critical at \(notifications.criticalThreshold)%") {
+          PreferencesControlRow(L10n.string("Critical at \(notifications.criticalThreshold)%")) {
             Stepper(
-              "Critical threshold",
+              L10n.string("Critical threshold"),
               value: $notifications.criticalThreshold,
               in: min(100, notifications.warningThreshold + 1) ... 100
             )
             .labelsHidden()
-            .accessibilityLabel("Critical threshold")
+            .accessibilityLabel(L10n.string("Critical threshold"))
           }
           .disabled(!controlsEnabled)
         }
       }
 
       PreferencesCard(
-        "Providers",
-        subtitle: "Choose which enabled providers can send quota alerts."
+        L10n.string("Providers"),
+        subtitle: L10n.string("Choose which enabled providers can send quota alerts.")
       ) {
         VStack(spacing: 14) {
           ForEach(Array(store.providers.enumerated()), id: \.element.id) { index, descriptor in
@@ -68,7 +68,7 @@ struct NotificationsPreferencesView: View {
                 .font(.body.weight(.medium))
               Spacer()
               Toggle(
-                "\(descriptor.metadata.displayName) alerts",
+                L10n.string("\(descriptor.metadata.displayName) alerts"),
                 isOn: $notifications[providerEnabled: descriptor.id]
               )
               .labelsHidden()

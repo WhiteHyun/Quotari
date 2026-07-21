@@ -15,7 +15,7 @@ struct CostSectionView: View {
         chart
       }
       if let model = cost.topModel {
-        Text("Top model: \(model)")
+        Text(L10n.string("Top model: \(model)"))
           .font(.caption).foregroundStyle(.secondary)
       }
       if let pricingStatusMessage {
@@ -24,11 +24,11 @@ struct CostSectionView: View {
           .foregroundStyle(.orange)
       }
       if cost.estimateCoverage?.usesStalePricing == true {
-        Text("Using cached pricing")
+        Text(L10n.string("Using cached pricing"))
           .font(.caption2)
           .foregroundStyle(.secondary)
       }
-      Text(cost.sourceDescription)
+      Text(localizedCostMetadata(cost.sourceDescription))
         .font(.caption2).foregroundStyle(.tertiary)
     }
   }
@@ -37,14 +37,20 @@ struct CostSectionView: View {
     Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 6) {
       if showsMonetaryMetrics {
         GridRow {
-          metric(cost.todaySpendLabel, UsageFormatter.currency(cost.todaySpend, code: cost.currencyCode))
-          metric(cost.monthSpendLabel, UsageFormatter.currency(cost.monthSpend, code: cost.currencyCode))
+          metric(
+            localizedCostMetadata(cost.todaySpendLabel),
+            LocalizedUsageFormatter.currency(cost.todaySpend, code: cost.currencyCode)
+          )
+          metric(
+            localizedCostMetadata(cost.monthSpendLabel),
+            LocalizedUsageFormatter.currency(cost.monthSpend, code: cost.currencyCode)
+          )
         }
       }
       if cost.hasTokenMetrics {
         GridRow {
-          metric("30d tokens", UsageFormatter.tokens(cost.monthTokens))
-          metric("Latest tokens", UsageFormatter.tokens(cost.latestTokens))
+          metric(L10n.string("30d tokens"), LocalizedUsageFormatter.tokens(cost.monthTokens))
+          metric(L10n.string("Latest tokens"), LocalizedUsageFormatter.tokens(cost.latestTokens))
         }
       }
     }
@@ -68,9 +74,9 @@ struct CostSectionView: View {
     case .complete:
       return nil
     case .partial:
-      return "Partial estimate\(unavailableDetail)"
+      return L10n.string("Partial estimate\(unavailableDetail)")
     case .unavailable:
-      return "Cost unavailable\(unavailableDetail)"
+      return L10n.string("Cost unavailable\(unavailableDetail)")
     }
   }
 
@@ -80,14 +86,39 @@ struct CostSectionView: View {
     let names = visibleModels.joined(separator: ", ")
     let remaining = coverage.unpricedModels.count - visibleModels.count
     let suffix = remaining > 0 ? " +\(remaining)" : ""
-    return " · pricing unavailable for \(names)\(suffix)"
+    return L10n.string(" · pricing unavailable for \(names)\(suffix)")
+  }
+
+  private func localizedCostMetadata(_ value: String) -> String {
+    let localizedValues = [
+      "Today": L10n.string("Today"),
+      "30d cost": L10n.string("30d cost"),
+      "Reported": L10n.string("Reported"),
+      "Period cost": L10n.string("Period cost"),
+      "Estimated from local logs": L10n.string("Estimated from local logs"),
+      "Estimated from local Codex logs": L10n.string("Estimated from local Codex logs"),
+      "Estimated from local Claude cache logs": L10n.string("Estimated from local Claude cache logs"),
+      "Estimated from selected account's local Codex logs":
+        L10n.string("Estimated from selected account's local Codex logs"),
+      "Estimated from selected account's local Claude cache logs":
+        L10n.string("Estimated from selected account's local Claude cache logs"),
+      "Estimated from local Claude cache logs (not account-specific)":
+        L10n.string("Estimated from local Claude cache logs (not account-specific)"),
+      "Saved account — local Codex cost estimate unavailable":
+        L10n.string("Saved account — local Codex cost estimate unavailable"),
+      "Saved account — local Claude cost estimate unavailable":
+        L10n.string("Saved account — local Claude cost estimate unavailable"),
+      "Reported usage credits": L10n.string("Reported usage credits"),
+      "Reported by provider": L10n.string("Reported by provider"),
+    ]
+    return localizedValues[value] ?? value
   }
 
   private var chart: some View {
     Chart(cost.daily) { day in
       BarMark(
-        x: .value("Day", day.date, unit: .day),
-        y: .value("Spend", day.spend)
+        x: .value(L10n.string("Day"), day.date, unit: .day),
+        y: .value(L10n.string("Spend"), day.spend)
       )
       .foregroundStyle(Theme.accent(accent, intensity: cost.peakSpend > 0 ? day.spend / cost.peakSpend : 0))
       .cornerRadius(1)

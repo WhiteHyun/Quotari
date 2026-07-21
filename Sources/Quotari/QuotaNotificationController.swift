@@ -32,7 +32,7 @@ final class QuotaNotificationController {
 
   var authorizationMessage: String? {
     authorizationStatus == .denied
-      ? "Allow notifications for Quotari in System Settings to enable quota alerts."
+      ? L10n.string("Allow notifications for Quotari in System Settings to enable quota alerts.")
       : nil
   }
 
