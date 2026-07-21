@@ -112,6 +112,19 @@ struct PreferencesSnapshotTests {
     RunLoop.current.run(until: Date().addingTimeInterval(0.35))
     defer { window.orderOut(nil) }
 
+    if ProcessInfo.processInfo.environment["QUOTARI_SNAPSHOT_SCREEN_CAPTURE"] == "1" {
+      return screenCapture(window: window)
+    }
+
+    hosting.layoutSubtreeIfNeeded()
+    guard let representation = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
+      return Data()
+    }
+    hosting.cacheDisplay(in: hosting.bounds, to: representation)
+    return representation.representation(using: .png, properties: [:]) ?? Data()
+  }
+
+  private static func screenCapture(window: NSWindow) -> Data {
     let captureURL = FileManager.default.temporaryDirectory
       .appendingPathComponent("quotari-settings-\(UUID().uuidString).png")
     defer { try? FileManager.default.removeItem(at: captureURL) }
