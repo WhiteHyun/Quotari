@@ -3,6 +3,26 @@ import Foundation
 import Testing
 
 struct ProviderStatusTests {
+  @Test func codexStatusAllowsOmittedIncidents() async throws {
+    let transport = ProviderStatusTransportStub(json: """
+    {
+      "page": { "updated_at": "2026-07-20T03:25:54Z" },
+      "status": { "description": "All Systems Operational", "indicator": "none" },
+      "components": [
+        { "id": "codex-desktop", "name": "Codex in ChatGPT Desktop", "status": "operational" },
+        { "id": "codex-api", "name": "Codex API", "status": "operational" }
+      ]
+    }
+    """)
+    let service = ProviderStatusService(transport: transport)
+
+    let status = try await service.status(for: .codex)
+
+    #expect(status.state == .operational)
+    #expect(status.components.map(\.name) == ["Codex in ChatGPT Desktop", "Codex API"])
+    #expect(status.incident == nil)
+  }
+
   @Test func codexIncidentRaisesAnOtherwiseOperationalComponent() async throws {
     let transport = ProviderStatusTransportStub(json: """
     {

@@ -295,4 +295,15 @@ private struct StatusPagePayload: Decodable {
   let page: StatusPage
   let components: [StatusPageComponent]
   let incidents: [StatusPageIncident]
+
+  private enum CodingKeys: String, CodingKey {
+    case page, components, incidents
+  }
+
+  init(from decoder: any Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    page = try container.decode(StatusPage.self, forKey: .page)
+    components = try container.decode([StatusPageComponent].self, forKey: .components)
+    incidents = try container.decodeIfPresent([StatusPageIncident].self, forKey: .incidents) ?? []
+  }
 }
