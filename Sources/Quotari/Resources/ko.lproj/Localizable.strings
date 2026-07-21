@@ -1,0 +1,464 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key> · pricing unavailable for %@%@</key>
+	<string> · %@%@ 가격 정보 없음</string>
+	<key>%@ (Unavailable)</key>
+	<string>%@ (사용할 수 없음)</string>
+	<key>%@ Accounts</key>
+	<string>%@ 계정</string>
+	<key>%@ Dashboard</key>
+	<string>%@ 대시보드</string>
+	<key>%@ Quotari also encountered a recovery error: %@</key>
+	<string>%@ Quotari에서 복구 오류도 발생했습니다: %@</string>
+	<key>%@ Status</key>
+	<string>%@ 상태</string>
+	<key>%@ account</key>
+	<string>%@ 계정</string>
+	<key>%@ alerts</key>
+	<string>%@ 알림</string>
+	<key>%@ dashboard account</key>
+	<string>%@ 대시보드 계정</string>
+	<key>%@ left</key>
+	<string>%@ 남음</string>
+	<key>%@ left, %@</key>
+	<string>%@ 남음, %@</string>
+	<key>%@ quota almost exhausted</key>
+	<string>%@ 사용 한도 거의 소진</string>
+	<key>%@ quota warning</key>
+	<string>%@ 사용 한도 경고</string>
+	<key>%@ remaining quota</key>
+	<string>%@ 남은 사용량</string>
+	<key>%@ service status, %@</key>
+	<string>%@ 서비스 상태, %@</string>
+	<key>%@ service status: %@</key>
+	<string>%@ 서비스 상태: %@</string>
+	<key>%@ usage</key>
+	<string>%@ 사용량</string>
+	<key>%@ usage is at %@%%.</key>
+	<string>%@ 사용량이 %@%%입니다.</string>
+	<key>%@ weekly quota reset</key>
+	<string>%@ 주간 사용 한도 초기화</string>
+	<key>%@, %@</key>
+	<string>%@, %@</string>
+	<key>%@, resets %@</key>
+	<string>%@, %@에 초기화</string>
+	<key>%lld%% in deficit</key>
+	<string>예상보다 %lld%% 빠름</string>
+	<key>%lld%% in reserve</key>
+	<string>예상보다 %lld%% 여유</string>
+	<key>%lld/%lld monitored</key>
+	<string>%lld/%lld개 모니터링</string>
+	<key>%lldd %lldh</key>
+	<string>%lld일 %lld시간</string>
+	<key>%lldh %lldm</key>
+	<string>%lld시간 %lld분</string>
+	<key>%lldm</key>
+	<string>%lld분</string>
+	<key>1m</key>
+	<string>1분</string>
+	<key>30d cost</key>
+	<string>30일 비용</string>
+	<key>30d tokens</key>
+	<string>30일 토큰</string>
+	<key>30m</key>
+	<string>30분</string>
+	<key>About</key>
+	<string>정보</string>
+	<key>About Quotari</key>
+	<string>Quotari 정보</string>
+	<key>Account login was cancelled.</key>
+	<string>계정 로그인이 취소되었습니다.</string>
+	<key>Accounts</key>
+	<string>계정</string>
+	<key>Add Account</key>
+	<string>계정 추가</string>
+	<key>Add another managed account</key>
+	<string>관리할 계정 추가</string>
+	<key>Adding the new account…</key>
+	<string>새 계정을 추가하는 중…</string>
+	<key>Allow notifications for Quotari in System Settings to enable quota alerts.</key>
+	<string>사용 한도 알림을 사용하려면 시스템 설정에서 Quotari 알림을 허용하세요.</string>
+	<key>Animate mascot</key>
+	<string>마스코트 애니메이션</string>
+	<key>Another account switch is already in progress.</key>
+	<string>다른 계정 전환이 이미 진행 중입니다.</string>
+	<key>Another account switch started while Quotari was preserving the current account. Try adding the account again.</key>
+	<string>Quotari가 현재 계정을 보존하는 동안 다른 계정 전환이 시작되었습니다. 계정 추가를 다시 시도하세요.</string>
+	<key>Approval is required in System Settings › Login Items.</key>
+	<string>시스템 설정 › 로그인 항목에서 승인이 필요합니다.</string>
+	<key>Authentication Code</key>
+	<string>인증 코드</string>
+	<key>Authentication code required</key>
+	<string>인증 코드 필요</string>
+	<key>Automatic</key>
+	<string>자동</string>
+	<key>Automatic updates are available in packaged releases.</key>
+	<string>자동 업데이트는 패키징된 릴리스에서 사용할 수 있습니다.</string>
+	<key>CLI Active</key>
+	<string>CLI 사용 중</string>
+	<key>Cancel</key>
+	<string>취소</string>
+	<key>Check %@ service status</key>
+	<string>%@ 서비스 상태 확인</string>
+	<key>Check for Updates…</key>
+	<string>업데이트 확인…</string>
+	<key>Check provider status</key>
+	<string>서비스 상태 확인</string>
+	<key>Check the provider’s live service health when you need it.</key>
+	<string>필요할 때 서비스의 실시간 상태를 확인하세요.</string>
+	<key>Checked accounts refresh in the background. The dashboard account and CLI active account remain single choices.</key>
+	<string>선택한 계정은 백그라운드에서 새로 고쳐집니다. 대시보드 계정과 CLI 활성 계정은 각각 하나만 선택할 수 있습니다.</string>
+	<key>Checking credentials…</key>
+	<string>인증 정보 확인 중…</string>
+	<key>Checking service health…</key>
+	<string>서비스 상태 확인 중…</string>
+	<key>Checking the official provider status…</key>
+	<string>공식 서비스 상태 확인 중…</string>
+	<key>Choose how Quotari starts and stays available.</key>
+	<string>Quotari의 실행 및 상시 사용 방식을 설정합니다.</string>
+	<key>Choose the AI services that appear throughout Quotari.</key>
+	<string>Quotari에 표시할 AI 서비스를 선택합니다.</string>
+	<key>Choose which enabled providers can send quota alerts.</key>
+	<string>사용 한도 알림을 보낼 서비스를 선택합니다.</string>
+	<key>Choose which provider drives the menu-bar percentage.</key>
+	<string>메뉴 막대 비율에 사용할 서비스를 선택합니다.</string>
+	<key>Claude Code accepted the browser sign-in and Quotari is waiting for it to finish.</key>
+	<string>Claude Code가 브라우저 로그인을 승인했습니다. Quotari가 완료를 기다리는 중입니다.</string>
+	<key>Claude keeps one shared CLI login. Quotari saves the current account before browser login, then adds the new account automatically.</key>
+	<string>Claude는 하나의 공유 CLI 로그인을 사용합니다. Quotari가 브라우저 로그인 전에 현재 계정을 저장하고 새 계정을 자동으로 추가합니다.</string>
+	<key>Click, then press a shortcut. Press Delete to clear it.</key>
+	<string>클릭한 다음 단축키를 누르세요. Delete 키를 누르면 지워집니다.</string>
+	<key>Completing sign-in…</key>
+	<string>로그인 완료 중…</string>
+	<key>Connected</key>
+	<string>연결됨</string>
+	<key>Control how often Quotari checks provider usage.</key>
+	<string>Quotari가 서비스 사용량을 확인하는 주기를 설정합니다.</string>
+	<key>Cost unavailable%@</key>
+	<string>비용을 확인할 수 없음%@</string>
+	<key>Critical at %lld%%</key>
+	<string>%lld%%에서 위험</string>
+	<key>Critical threshold</key>
+	<string>위험 기준</string>
+	<key>Day</key>
+	<string>날짜</string>
+	<key>Degraded</key>
+	<string>성능 저하</string>
+	<key>Deliver warning, critical, and reset notifications.</key>
+	<string>경고, 위험 및 초기화 알림을 보냅니다.</string>
+	<key>Detailed component status is unavailable.</key>
+	<string>세부 구성 요소 상태를 확인할 수 없습니다.</string>
+	<key>Details</key>
+	<string>세부 정보</string>
+	<key>Display the current remaining percentage in the menu bar.</key>
+	<string>메뉴 막대에 현재 남은 비율을 표시합니다.</string>
+	<key>Enable one in Settings to show usage.</key>
+	<string>사용량을 표시하려면 설정에서 서비스를 활성화하세요.</string>
+	<key>Estimated from local Claude cache logs</key>
+	<string>로컬 Claude 캐시 로그에서 추정</string>
+	<key>Estimated from local Claude cache logs (not account-specific)</key>
+	<string>로컬 Claude 캐시 로그에서 추정(계정별 데이터 아님)</string>
+	<key>Estimated from local Codex logs</key>
+	<string>로컬 Codex 로그에서 추정</string>
+	<key>Estimated from local logs</key>
+	<string>로컬 로그에서 추정</string>
+	<key>Estimated from selected account's local Claude cache logs</key>
+	<string>선택한 계정의 로컬 Claude 캐시 로그에서 추정</string>
+	<key>Estimated from selected account's local Codex logs</key>
+	<string>선택한 계정의 로컬 Codex 로그에서 추정</string>
+	<key>Every %lld minute(s)</key>
+	<string>%lld분마다</string>
+	<key>Finish signing in with a different account in the browser. Keep this window open.</key>
+	<string>브라우저에서 다른 계정으로 로그인을 완료하세요. 이 창을 열어 두세요.</string>
+	<key>Finish the account login already in progress before starting another one.</key>
+	<string>다른 로그인을 시작하기 전에 진행 중인 계정 로그인을 완료하세요.</string>
+	<key>Finish the account switch already in progress before starting a new login.</key>
+	<string>새 로그인을 시작하기 전에 진행 중인 계정 전환을 완료하세요.</string>
+	<key>General</key>
+	<string>일반</string>
+	<key>Get notified before a provider reaches its usage limit.</key>
+	<string>서비스가 사용 한도에 도달하기 전에 알림을 받습니다.</string>
+	<key>Keep quota status ready from the moment you sign in.</key>
+	<string>로그인하는 순간부터 사용 한도 상태를 확인할 수 있습니다.</string>
+	<key>Lasts until reset</key>
+	<string>초기화까지 유지</string>
+	<key>Lasts until reset · %@x headroom</key>
+	<string>초기화까지 유지 · %@배 여유</string>
+	<key>Latest tokens</key>
+	<string>최근 토큰</string>
+	<key>Launch at Login</key>
+	<string>로그인 시 실행</string>
+	<key>Launch at Login is available in packaged releases.</key>
+	<string>로그인 시 실행은 패키징된 릴리스에서 사용할 수 있습니다.</string>
+	<key>Let the flame react as usage approaches its limit.</key>
+	<string>사용 한도에 가까워질수록 불꽃이 반응합니다.</string>
+	<key>Live usage unavailable</key>
+	<string>실시간 사용량을 확인할 수 없음</string>
+	<key>Loading live usage…</key>
+	<string>실시간 사용량 불러오는 중…</string>
+	<key>Loading usage…</key>
+	<string>사용량 불러오는 중…</string>
+	<key>Login New Account</key>
+	<string>새 계정 로그인</string>
+	<key>Login did not complete, so Quotari is putting the preserved account back into the CLI slot.</key>
+	<string>로그인이 완료되지 않아 Quotari가 보존한 계정을 CLI 슬롯에 복원하고 있습니다.</string>
+	<key>Major outage</key>
+	<string>대규모 장애</string>
+	<key>Manage in Settings…</key>
+	<string>설정에서 관리…</string>
+	<key>Menu Bar</key>
+	<string>메뉴 막대</string>
+	<key>Monitor %@</key>
+	<string>%@ 모니터링</string>
+	<key>Monitor Account</key>
+	<string>계정 모니터링</string>
+	<key>Monitor usage across accounts and switch the shared CLI login.</key>
+	<string>여러 계정의 사용량을 모니터링하고 공유 CLI 로그인을 전환합니다.</string>
+	<key>Monitor usage, accounts, and local estimated cost at a glance.</key>
+	<string>사용량, 계정 및 로컬 예상 비용을 한눈에 확인하세요.</string>
+	<key>Monitored</key>
+	<string>모니터링 중</string>
+	<key>Monitored Accounts</key>
+	<string>모니터링할 계정</string>
+	<key>Most constrained</key>
+	<string>남은 사용량이 가장 적은 서비스</string>
+	<key>Next Section</key>
+	<string>다음 섹션</string>
+	<key>No account connected</key>
+	<string>연결된 계정 없음</string>
+	<key>No accounts available</key>
+	<string>사용 가능한 계정 없음</string>
+	<key>No credentials detected</key>
+	<string>인증 정보가 감지되지 않음</string>
+	<key>No providers enabled</key>
+	<string>활성화된 서비스 없음</string>
+	<key>No usage windows available</key>
+	<string>사용 가능한 사용량 구간 없음</string>
+	<key>Not available</key>
+	<string>사용할 수 없음</string>
+	<key>Not checked yet</key>
+	<string>아직 확인하지 않음</string>
+	<key>Notifications</key>
+	<string>알림</string>
+	<key>Open Settings…</key>
+	<string>설정 열기…</string>
+	<key>Open System Settings…</key>
+	<string>시스템 설정 열기…</string>
+	<key>Open dashboard</key>
+	<string>대시보드 열기</string>
+	<key>Open dashboard shortcut</key>
+	<string>대시보드 열기 단축키</string>
+	<key>Opens incident details</key>
+	<string>장애 세부 정보를 엽니다</string>
+	<key>Operational</key>
+	<string>정상</string>
+	<key>Partial estimate%@</key>
+	<string>일부 추정%@</string>
+	<key>Partial outage</key>
+	<string>일부 장애</string>
+	<key>Paste the authentication code shown in the browser to continue the Claude Code login.</key>
+	<string>Claude Code 로그인을 계속하려면 브라우저에 표시된 인증 코드를 붙여 넣으세요.</string>
+	<key>Period cost</key>
+	<string>기간 비용</string>
+	<key>Preserve the current Claude account, then sign in with a new one in the browser</key>
+	<string>현재 Claude 계정을 보존한 다음 브라우저에서 새 계정으로 로그인</string>
+	<key>Press Shortcut</key>
+	<string>단축키 입력</string>
+	<key>Previous Section</key>
+	<string>이전 섹션</string>
+	<key>Providers</key>
+	<string>서비스</string>
+	<key>Quit Quotari</key>
+	<string>Quotari 종료</string>
+	<key>Quit active Claude Code or Codex sessions first. Quotari will preserve the current login, then put %@ into the shared CLI slot.</key>
+	<string>먼저 실행 중인 Claude Code 또는 Codex 세션을 종료하세요. Quotari가 현재 로그인을 보존한 다음 %@ 계정을 공유 CLI 슬롯에 적용합니다.</string>
+	<key>Quota Alerts</key>
+	<string>사용 한도 알림</string>
+	<key>Quota alerts</key>
+	<string>사용 한도 알림</string>
+	<key>Quota source</key>
+	<string>사용량 기준</string>
+	<key>Quotari couldn’t preserve the current CLI account. Resolve the account scan error, then try again.</key>
+	<string>Quotari가 현재 CLI 계정을 보존하지 못했습니다. 계정 검색 오류를 해결한 다음 다시 시도하세요.</string>
+	<key>Quotari couldn’t safely read the saved-account registry, so it did not open a new login.</key>
+	<string>Quotari가 저장된 계정 레지스트리를 안전하게 읽지 못해 새 로그인을 열지 않았습니다.</string>
+	<key>Quotari couldn’t verify every saved Claude account, so it did not create a potentially duplicate account.</key>
+	<string>Quotari가 저장된 모든 Claude 계정을 확인하지 못해 중복 가능성이 있는 계정을 만들지 않았습니다.</string>
+	<key>Quotari couldn’t verify the current Claude account identity, so it did not open a new login.</key>
+	<string>Quotari가 현재 Claude 계정의 신원을 확인하지 못해 새 로그인을 열지 않았습니다.</string>
+	<key>Quotari couldn’t verify the new Claude account identity, so it restored the previous login.</key>
+	<string>Quotari가 새 Claude 계정의 신원을 확인하지 못해 이전 로그인을 복원했습니다.</string>
+	<key>Quotari couldn’t verify the post-login Claude credential and account state, so it left the current CLI login untouched instead of risking a newer external generation.</key>
+	<string>Quotari가 로그인 후 Claude 인증 정보와 계정 상태를 확인하지 못했습니다. 외부에서 갱신된 로그인에 영향을 주지 않도록 현재 CLI 로그인을 그대로 두었습니다.</string>
+	<key>Quotari couldn’t verify the saved copy of the current Claude account, so it did not open a new login.</key>
+	<string>Quotari가 현재 Claude 계정의 저장된 사본을 확인하지 못해 새 로그인을 열지 않았습니다.</string>
+	<key>Quotari is preserving the current renewable credential before adding another account.</key>
+	<string>다른 계정을 추가하기 전에 현재 갱신 가능한 인증 정보를 보존하고 있습니다.</string>
+	<key>Quotari, %@ %lld percent, %@</key>
+	<string>Quotari, %@ %lld퍼센트, %@</string>
+	<key>Quotari, loading %@ usage</key>
+	<string>Quotari, %@ 사용량 불러오는 중</string>
+	<key>Quotari, loading usage</key>
+	<string>Quotari, 사용량 불러오는 중</string>
+	<key>Quotari, no providers enabled</key>
+	<string>Quotari, 활성화된 서비스 없음</string>
+	<key>Record Shortcut</key>
+	<string>단축키 기록</string>
+	<key>Refresh</key>
+	<string>새로 고침</string>
+	<key>Refresh failed — showing the last live data.</key>
+	<string>새로 고침 실패 — 마지막 실시간 데이터를 표시합니다.</string>
+	<key>Refresh interval</key>
+	<string>새로 고침 주기</string>
+	<key>Remove</key>
+	<string>삭제</string>
+	<key>Remove Account</key>
+	<string>계정 삭제</string>
+	<key>Remove Account (Still in CLI)</key>
+	<string>계정 삭제(CLI에서 사용 중)</string>
+	<key>Remove saved account</key>
+	<string>저장된 계정 삭제</string>
+	<key>Remove saved account?</key>
+	<string>저장된 계정을 삭제할까요?</string>
+	<key>Reported</key>
+	<string>보고됨</string>
+	<key>Reported by provider</key>
+	<string>서비스에서 보고</string>
+	<key>Reported usage credits</key>
+	<string>보고된 사용 크레딧</string>
+	<key>Resets %@</key>
+	<string>%@에 초기화</string>
+	<key>Restoring the previous CLI account…</key>
+	<string>이전 CLI 계정 복원 중…</string>
+	<key>Retry</key>
+	<string>다시 시도</string>
+	<key>Runs out in %@</key>
+	<string>%@ 후 소진 예상</string>
+	<key>Saved</key>
+	<string>저장됨</string>
+	<key>Saved account — local Claude cost estimate unavailable</key>
+	<string>저장된 계정 — 로컬 Claude 비용 추정 불가</string>
+	<key>Saved account — local Codex cost estimate unavailable</key>
+	<string>저장된 계정 — 로컬 Codex 비용 추정 불가</string>
+	<key>Saving current CLI account…</key>
+	<string>현재 CLI 계정 저장 중…</string>
+	<key>Scan &amp; Add Current Account</key>
+	<string>현재 계정 검색 및 추가</string>
+	<key>Scan &amp; Add Current Accounts</key>
+	<string>현재 계정 검색 및 추가</string>
+	<key>Selects this account and updates the dashboard</key>
+	<string>이 계정을 선택하고 대시보드를 업데이트합니다</string>
+	<key>Service status is unavailable.</key>
+	<string>서비스 상태를 확인할 수 없습니다.</string>
+	<key>Session</key>
+	<string>세션</string>
+	<key>Set the usage levels that trigger each alert.</key>
+	<string>각 알림을 보낼 사용량 기준을 설정합니다.</string>
+	<key>Settings</key>
+	<string>설정</string>
+	<key>Settings…</key>
+	<string>설정…</string>
+	<key>Show remaining quota</key>
+	<string>남은 사용량 표시</string>
+	<key>Shows live service health and the official status page</key>
+	<string>실시간 서비스 상태와 공식 상태 페이지를 표시합니다</string>
+	<key>Shows usage for available accounts</key>
+	<string>사용 가능한 계정의 사용량을 표시합니다</string>
+	<key>Sign in to %@ or add an account in Settings.</key>
+	<string>%@에 로그인하거나 설정에서 계정을 추가하세요.</string>
+	<key>Source: %@</key>
+	<string>출처: %@</string>
+	<key>Spend</key>
+	<string>비용</string>
+	<key>Stale</key>
+	<string>업데이트 필요</string>
+	<key>Stale, %@</key>
+	<string>업데이트가 필요한 데이터, %@</string>
+	<key>Status Page</key>
+	<string>상태 페이지</string>
+	<key>Stop Monitoring</key>
+	<string>모니터링 중지</string>
+	<key>Submit</key>
+	<string>제출</string>
+	<key>Switch</key>
+	<string>전환</string>
+	<key>Switch Account</key>
+	<string>계정 전환</string>
+	<key>Switch CLI account?</key>
+	<string>CLI 계정을 전환할까요?</string>
+	<key>Switched the CLI login, but Quotari couldn't confirm it yet. Reload accounts.</key>
+	<string>CLI 로그인을 전환했지만 Quotari가 아직 확인하지 못했습니다. 계정을 다시 불러오세요.</string>
+	<key>Switches the CLI to this saved account</key>
+	<string>CLI를 이 저장된 계정으로 전환합니다</string>
+	<key>The login item could not be found. Toggling it again or reinstalling the app should restore it.</key>
+	<string>로그인 항목을 찾을 수 없습니다. 다시 전환하거나 앱을 재설치하면 복구됩니다.</string>
+	<key>The new login didn’t provide a renewable credential, so Quotari didn’t add it.</key>
+	<string>새 로그인에서 갱신 가능한 인증 정보를 제공하지 않아 Quotari가 계정을 추가하지 않았습니다.</string>
+	<key>The new renewable credential is being saved to Quotari and linked to the live CLI account.</key>
+	<string>새 갱신 가능 인증 정보를 Quotari에 저장하고 현재 CLI 계정에 연결하는 중입니다.</string>
+	<key>This account is still present in a CLI credential slot. Switch to another account or sign out before removing it.</key>
+	<string>이 계정은 아직 CLI 인증 슬롯에서 사용 중입니다. 삭제하기 전에 다른 계정으로 전환하거나 로그아웃하세요.</string>
+	<key>This removes %@ from Quotari. The provider account remains intact.</key>
+	<string>Quotari에서 %@ 계정만 삭제합니다. 서비스 계정 자체는 유지됩니다.</string>
+	<key>Thresholds</key>
+	<string>기준값</string>
+	<key>Today</key>
+	<string>오늘</string>
+	<key>Top model: %@</key>
+	<string>주요 모델: %@</string>
+	<key>Try Again</key>
+	<string>다시 시도</string>
+	<key>Tune the compact status shown beside the Quotari mascot.</key>
+	<string>Quotari 마스코트 옆에 표시되는 간략한 상태를 설정합니다.</string>
+	<key>Unknown</key>
+	<string>알 수 없음</string>
+	<key>Updated %@</key>
+	<string>업데이트: %@</string>
+	<key>Updated %lldd ago</key>
+	<string>%lld일 전에 업데이트됨</string>
+	<key>Updated %lldh ago</key>
+	<string>%lld시간 전에 업데이트됨</string>
+	<key>Updated %lldm ago</key>
+	<string>%lld분 전에 업데이트됨</string>
+	<key>Updated just now</key>
+	<string>방금 업데이트됨</string>
+	<key>Updates</key>
+	<string>업데이트</string>
+	<key>Usage Dashboard</key>
+	<string>사용량 대시보드</string>
+	<key>Usage not loaded</key>
+	<string>사용량을 불러오지 않음</string>
+	<key>Use in CLI (Switch)</key>
+	<string>CLI에서 사용(전환)</string>
+	<key>Using cached pricing</key>
+	<string>캐시된 가격 정보 사용 중</string>
+	<key>Version</key>
+	<string>버전</string>
+	<key>Waiting for browser login…</key>
+	<string>브라우저 로그인 대기 중…</string>
+	<key>Warning at %lld%%</key>
+	<string>%lld%%에서 경고</string>
+	<key>Warning threshold</key>
+	<string>경고 기준</string>
+	<key>Weekly</key>
+	<string>주간</string>
+	<key>Your Claude and Codex quota companion for the macOS menu bar.</key>
+	<string>macOS 메뉴 막대에서 Claude와 Codex 사용 한도를 확인하세요.</string>
+	<key>Your weekly quota has reset.</key>
+	<string>주간 사용 한도가 초기화되었습니다.</string>
+	<key>critical</key>
+	<string>위험</string>
+	<key>in %@</key>
+	<string>%@ 후</string>
+	<key>lowest remaining quota</key>
+	<string>가장 적은 남은 사용량</string>
+	<key>normal</key>
+	<string>정상</string>
+	<key>now</key>
+	<string>지금</string>
+	<key>warning</key>
+	<string>경고</string>
+</dict>
+</plist>

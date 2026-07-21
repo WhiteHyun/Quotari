@@ -13,9 +13,9 @@ enum Theme {
   /// Status word for VoiceOver, so severity isn't conveyed by color alone.
   static func statusWord(_ usedPercent: Double) -> String {
     switch usedPercent {
-    case ..<70: "normal"
-    case ..<90: "warning"
-    default: "critical"
+    case ..<70: L10n.string("normal")
+    case ..<90: L10n.string("warning")
+    default: L10n.string("critical")
     }
   }
 

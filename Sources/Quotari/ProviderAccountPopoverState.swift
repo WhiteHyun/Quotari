@@ -12,9 +12,9 @@ enum ProviderAccountPopoverAction: Equatable {
   var accessibilityHint: String {
     switch self {
     case .selectDashboard:
-      "Selects this account and updates the dashboard"
+      L10n.string("Selects this account and updates the dashboard")
     case .switchCLI:
-      "Switches the CLI to this saved account"
+      L10n.string("Switches the CLI to this saved account")
     }
   }
 }

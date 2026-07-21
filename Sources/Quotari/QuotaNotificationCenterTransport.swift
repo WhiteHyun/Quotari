@@ -121,11 +121,11 @@ private extension QuotaNotificationRequest {
   var notificationTitle: String {
     switch kind {
     case .warning:
-      "\(providerName) quota warning"
+      L10n.string("\(providerName) quota warning")
     case .critical:
-      "\(providerName) quota almost exhausted"
+      L10n.string("\(providerName) quota almost exhausted")
     case .weeklyReset:
-      "\(providerName) weekly quota reset"
+      L10n.string("\(providerName) weekly quota reset")
     }
   }
 
@@ -133,9 +133,9 @@ private extension QuotaNotificationRequest {
     switch kind {
     case .warning, .critical:
       let used = observedUsedPercent.map { String(format: "%.0f", $0) } ?? "—"
-      return "\(windowName) usage is at \(used)%."
+      return L10n.string("\(windowName) usage is at \(used)%.")
     case .weeklyReset:
-      return "Your weekly quota has reset."
+      return L10n.string("Your weekly quota has reset.")
     }
   }
 
@@ -157,8 +157,8 @@ private extension QuotaNotificationRequest {
 
   private var windowName: String {
     switch key.window {
-    case .session: "Session"
-    case .weekly: "Weekly"
+    case .session: L10n.string("Session")
+    case .weekly: L10n.string("Weekly")
     }
   }
 }

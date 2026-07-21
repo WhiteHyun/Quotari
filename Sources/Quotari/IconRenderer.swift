@@ -30,6 +30,7 @@ enum IconRenderer {
     guard let resourceURL = Bundle.main.resourceURL else { return false }
     return frameCount > 1
       && ProviderIconAsset.resourcesAreReady
+      && L10n.packagedResourcesAreReady
       && resourceBundle.bundleURL.deletingLastPathComponent().standardizedFileURL
       == resourceURL.standardizedFileURL
   }

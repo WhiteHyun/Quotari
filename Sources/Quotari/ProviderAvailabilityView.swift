@@ -28,7 +28,7 @@ struct ProviderAvailabilityView: View {
     HStack(spacing: 8) {
       ProgressView()
         .controlSize(.small)
-      Text("Loading live usage…")
+      Text(L10n.string("Loading live usage…"))
         .font(.footnote)
         .foregroundStyle(.secondary)
     }
@@ -39,13 +39,13 @@ struct ProviderAvailabilityView: View {
 
   private var noAccountContent: some View {
     VStack(alignment: .leading, spacing: 8) {
-      Label("No account connected", systemImage: "person.crop.circle.badge.exclamationmark")
+      Label(L10n.string("No account connected"), systemImage: "person.crop.circle.badge.exclamationmark")
         .font(.subheadline.weight(.medium))
-      Text("Sign in to \(descriptor.metadata.displayName) or add an account in Settings.")
+      Text(L10n.string("Sign in to \(descriptor.metadata.displayName) or add an account in Settings."))
         .font(.footnote)
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
-      Button("Open Settings…", action: showSettings)
+      Button(L10n.string("Open Settings…"), action: showSettings)
         .buttonStyle(.bordered)
         .controlSize(.small)
     }
@@ -55,7 +55,7 @@ struct ProviderAvailabilityView: View {
 
   private func errorContent(_ message: String) -> some View {
     VStack(alignment: .leading, spacing: 8) {
-      Label("Live usage unavailable", systemImage: "exclamationmark.triangle.fill")
+      Label(L10n.string("Live usage unavailable"), systemImage: "exclamationmark.triangle.fill")
         .font(.subheadline.weight(.medium))
         .foregroundStyle(.orange)
       Text(message)
@@ -63,9 +63,9 @@ struct ProviderAvailabilityView: View {
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
       HStack(spacing: 8) {
-        Button("Retry", action: retry)
+        Button(L10n.string("Retry"), action: retry)
           .buttonStyle(.borderedProminent)
-        Button("Settings…", action: showSettings)
+        Button(L10n.string("Settings…"), action: showSettings)
           .buttonStyle(.bordered)
       }
       .controlSize(.small)
@@ -83,10 +83,10 @@ struct ProviderStaleDataNotice: View {
     HStack(spacing: 7) {
       Image(systemName: "exclamationmark.triangle.fill")
         .foregroundStyle(.orange)
-      Text("Refresh failed — showing the last live data.")
+      Text(L10n.string("Refresh failed — showing the last live data."))
         .foregroundStyle(.secondary)
       Spacer(minLength: 4)
-      Button("Retry", action: retry)
+      Button(L10n.string("Retry"), action: retry)
         .buttonStyle(.borderless)
     }
     .font(.caption)

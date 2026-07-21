@@ -6,11 +6,11 @@ struct ProviderStatusPresentation: Equatable {
 
   var title: String {
     switch state {
-    case .unknown: "Unknown"
-    case .operational: "Operational"
-    case .degradedPerformance: "Degraded"
-    case .partialOutage: "Partial outage"
-    case .majorOutage: "Major outage"
+    case .unknown: L10n.string("Unknown")
+    case .operational: L10n.string("Operational")
+    case .degradedPerformance: L10n.string("Degraded")
+    case .partialOutage: L10n.string("Partial outage")
+    case .majorOutage: L10n.string("Major outage")
     }
   }
 
@@ -65,7 +65,7 @@ struct ProviderStatusDisclosureButton: View {
     }
     .help(helpText)
     .accessibilityLabel(accessibilityLabel)
-    .accessibilityHint("Shows live service health and the official status page")
+    .accessibilityHint(L10n.string("Shows live service health and the official status page"))
   }
 
   @ViewBuilder
@@ -103,16 +103,16 @@ struct ProviderStatusDisclosureButton: View {
 
   private var helpText: String {
     if let presentation {
-      return "\(descriptor.metadata.displayName) service status: \(presentation.title)"
+      return L10n.string("\(descriptor.metadata.displayName) service status: \(presentation.title)")
     }
-    return "Check \(descriptor.metadata.displayName) service status"
+    return L10n.string("Check \(descriptor.metadata.displayName) service status")
   }
 
   private var accessibilityLabel: String {
     if let presentation {
-      return "\(descriptor.metadata.displayName) service status, \(presentation.title)"
+      return L10n.string("\(descriptor.metadata.displayName) service status, \(presentation.title)")
     }
-    return "Check \(descriptor.metadata.displayName) service status"
+    return L10n.string("Check \(descriptor.metadata.displayName) service status")
   }
 }
 
@@ -176,7 +176,7 @@ struct ProviderStatusDetailView: View {
     HStack(spacing: 9) {
       ProviderIconView(descriptor: descriptor, size: 24)
       VStack(alignment: .leading, spacing: 2) {
-        Text("\(descriptor.metadata.displayName) Status")
+        Text(L10n.string("\(descriptor.metadata.displayName) Status"))
           .font(.headline)
         if let status {
           TimelineView(.periodic(from: .now, by: 60)) { context in
@@ -191,9 +191,13 @@ struct ProviderStatusDetailView: View {
           .font(.caption)
           .foregroundStyle(.secondary)
         } else {
-          Text(controller.isRefreshing(descriptor.id) ? "Checking service health…" : "Not checked yet")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+          Text(
+            controller.isRefreshing(descriptor.id)
+              ? L10n.string("Checking service health…")
+              : L10n.string("Not checked yet")
+          )
+          .font(.caption)
+          .foregroundStyle(.secondary)
         }
       }
       Spacer(minLength: 8)
@@ -207,7 +211,7 @@ struct ProviderStatusDetailView: View {
           Image(systemName: "arrow.clockwise")
         }
         .buttonStyle(.borderless)
-        .help("Check provider status")
+        .help(L10n.string("Check provider status"))
       }
     }
   }
@@ -217,7 +221,7 @@ struct ProviderStatusDetailView: View {
     if let status {
       VStack(alignment: .leading, spacing: 9) {
         if status.components.isEmpty {
-          Text("Detailed component status is unavailable.")
+          Text(L10n.string("Detailed component status is unavailable."))
             .font(.footnote)
             .foregroundStyle(.secondary)
         } else {
@@ -232,20 +236,20 @@ struct ProviderStatusDetailView: View {
         }
       }
     } else if controller.isRefreshing(descriptor.id) {
-      Text("Checking the official provider status…")
+      Text(L10n.string("Checking the official provider status…"))
         .font(.footnote)
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
     } else if controller.failedProviders.contains(descriptor.id) {
       VStack(alignment: .leading, spacing: 7) {
-        Text("Service status is unavailable.")
+        Text(L10n.string("Service status is unavailable."))
           .font(.footnote)
           .foregroundStyle(.secondary)
-        Button("Try Again", action: refresh)
+        Button(L10n.string("Try Again"), action: refresh)
           .buttonStyle(.link)
       }
     } else {
-      Text("Check the provider’s live service health when you need it.")
+      Text(L10n.string("Check the provider’s live service health when you need it."))
         .font(.footnote)
         .foregroundStyle(.secondary)
     }
@@ -256,12 +260,12 @@ struct ProviderStatusDetailView: View {
       Button {
         openURL(descriptor.id.usageDashboardURL)
       } label: {
-        Label("Usage Dashboard", systemImage: "chart.bar.xaxis")
+        Label(L10n.string("Usage Dashboard"), systemImage: "chart.bar.xaxis")
       }
       Button {
         openURL(status?.statusPageURL ?? descriptor.id.statusPageURL)
       } label: {
-        Label("Status Page", systemImage: "arrow.up.right.square")
+        Label(L10n.string("Status Page"), systemImage: "arrow.up.right.square")
       }
     }
     .font(.caption)
@@ -283,7 +287,7 @@ struct ProviderStatusDetailView: View {
     }
     .font(.footnote)
     .accessibilityElement(children: .combine)
-    .accessibilityLabel("\(component.name), \(componentPresentation.title)")
+    .accessibilityLabel(L10n.string("\(component.name), \(componentPresentation.title)"))
   }
 
   private func statusBadge(_ presentation: ProviderStatusPresentation) -> some View {
@@ -329,6 +333,6 @@ struct ProviderStatusDetailView: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
-    .accessibilityHint("Opens incident details")
+    .accessibilityHint(L10n.string("Opens incident details"))
   }
 }

@@ -7,8 +7,8 @@ struct AboutPreferencesView: View {
   var body: some View {
     VStack(spacing: 16) {
       PreferencesCard(
-        "About Quotari",
-        subtitle: "Your Claude and Codex quota companion for the macOS menu bar."
+        L10n.string("About Quotari"),
+        subtitle: L10n.string("Your Claude and Codex quota companion for the macOS menu bar.")
       ) {
         HStack(spacing: 16) {
           Image(nsImage: IconRenderer.mascotArtwork(frame: 0))
@@ -19,31 +19,31 @@ struct AboutPreferencesView: View {
           VStack(alignment: .leading, spacing: 3) {
             Text("Quotari")
               .font(.title2.weight(.bold))
-            Text("Monitor usage, accounts, and local estimated cost at a glance.")
+            Text(L10n.string("Monitor usage, accounts, and local estimated cost at a glance."))
               .font(.subheadline)
               .foregroundStyle(.secondary)
           }
         }
       }
 
-      PreferencesCard("Details") {
+      PreferencesCard(L10n.string("Details")) {
         VStack(spacing: 14) {
-          PreferencesControlRow("Version") {
-            Text(appVersionInfo?.displayVersion ?? "Not available")
+          PreferencesControlRow(L10n.string("Version")) {
+            Text(appVersionInfo?.displayVersion ?? L10n.string("Not available"))
               .foregroundStyle(.secondary)
           }
           PreferencesRowDivider()
-          PreferencesControlRow("Providers") {
+          PreferencesControlRow(L10n.string("Providers")) {
             Text("\(store.providers.count)")
               .foregroundStyle(.secondary)
           }
           PreferencesRowDivider()
-          PreferencesControlRow("Updates") {
-            Button("Check for Updates…") { UpdaterController.shared.checkForUpdates() }
+          PreferencesControlRow(L10n.string("Updates")) {
+            Button(L10n.string("Check for Updates…")) { UpdaterController.shared.checkForUpdates() }
               .disabled(!UpdaterController.shared.isAvailable)
           }
           if !UpdaterController.shared.isAvailable {
-            Text("Automatic updates are available in packaged releases.")
+            Text(L10n.string("Automatic updates are available in packaged releases."))
               .font(.caption)
               .foregroundStyle(.secondary)
               .frame(maxWidth: .infinity, alignment: .leading)

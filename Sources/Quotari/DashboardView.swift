@@ -65,9 +65,9 @@ struct DashboardContent: View {
       let providers = store.enabledProviderDescriptors
       if providers.isEmpty {
         VStack(spacing: 4) {
-          Text("No providers enabled")
+          Text(L10n.string("No providers enabled"))
             .font(.headline)
-          Text("Enable one in Settings to show usage.")
+          Text(L10n.string("Enable one in Settings to show usage."))
             .font(.footnote)
             .foregroundStyle(.secondary)
         }
@@ -97,7 +97,7 @@ struct DashboardContent: View {
     VStack(spacing: 1) {
       MenuActionRow(
         icon: "arrow.clockwise",
-        title: "Refresh",
+        title: L10n.string("Refresh"),
         shortcut: "⌘R",
         busy: store.isRefreshing
       ) {
@@ -107,14 +107,14 @@ struct DashboardContent: View {
 
       MenuActionRow(
         icon: "gearshape",
-        title: "Settings…",
+        title: L10n.string("Settings…"),
         shortcut: "⌘,"
       ) { showSettings() }
         .keyboardShortcut(",")
 
       MenuActionRow(
         icon: "power",
-        title: "Quit Quotari",
+        title: L10n.string("Quit Quotari"),
         shortcut: "⌘Q"
       ) {
         NSApplication.shared.terminate(nil)

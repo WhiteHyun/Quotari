@@ -16,8 +16,8 @@ struct AccountsPreferencesView: View {
   private var providersCard: some View {
     @Bindable var store = store
     return PreferencesCard(
-      "Providers",
-      subtitle: "Choose the AI services that appear throughout Quotari."
+      L10n.string("Providers"),
+      subtitle: L10n.string("Choose the AI services that appear throughout Quotari.")
     ) {
       VStack(spacing: 14) {
         ForEach(Array(store.providers.enumerated()), id: \.element.id) { index, descriptor in
@@ -32,8 +32,8 @@ struct AccountsPreferencesView: View {
 
   private var accountsCard: some View {
     PreferencesCard(
-      "Accounts",
-      subtitle: "Monitor usage across accounts and switch the shared CLI login."
+      L10n.string("Accounts"),
+      subtitle: L10n.string("Monitor usage across accounts and switch the shared CLI login.")
     ) {
       VStack(spacing: 20) {
         ForEach(Array(store.providers.enumerated()), id: \.element.id) { index, descriptor in
@@ -44,7 +44,7 @@ struct AccountsPreferencesView: View {
         }
         HStack {
           Spacer()
-          Button("Scan & Add Current Accounts") {
+          Button(L10n.string("Scan & Add Current Accounts")) {
             Task { await scanAccountsButtonTapped() }
           }
           .buttonStyle(.borderedProminent)
@@ -58,23 +58,29 @@ struct AccountsPreferencesView: View {
     switch confirmation {
     case let .switchCLI(account):
       Alert(
-        title: Text("Switch CLI account?"),
+        title: Text(L10n.string("Switch CLI account?")),
         message: Text(
-          "Quit active Claude Code or Codex sessions first. Quotari will preserve the current login, then put "
-            + "\(store.accountLabel(for: account)) into the shared CLI slot."
+          L10n.string(
+            """
+            Quit active Claude Code or Codex sessions first. Quotari will preserve the current login, then put \
+            \(store.accountLabel(for: account)) into the shared CLI slot.
+            """
+          )
         ),
-        primaryButton: .default(Text("Switch Account")) {
+        primaryButton: .default(Text(L10n.string("Switch Account"))) {
           Task { await store.switchCLIAccount(to: account) }
         },
         secondaryButton: .cancel()
       )
     case let .remove(account):
       Alert(
-        title: Text("Remove saved account?"),
+        title: Text(L10n.string("Remove saved account?")),
         message: Text(
-          "This removes \(store.accountLabel(for: account)) from Quotari. The provider account remains intact."
+          L10n.string(
+            "This removes \(store.accountLabel(for: account)) from Quotari. The provider account remains intact."
+          )
         ),
-        primaryButton: .destructive(Text("Remove")) {
+        primaryButton: .destructive(Text(L10n.string("Remove"))) {
           Task { await store.removeCapturedAccount(account) }
         },
         secondaryButton: .cancel()
@@ -161,8 +167,12 @@ private extension AccountsPreferencesView {
   private func providerAccountGuidance(_ descriptor: ProviderDescriptor) -> some View {
     if descriptor.id == .claude {
       Text(
-        "Claude keeps one shared CLI login. Quotari saves the current account before browser login, "
-          + "then adds the new account automatically."
+        L10n.string(
+          """
+          Claude keeps one shared CLI login. Quotari saves the current account before browser login, \
+          then adds the new account automatically.
+          """
+        )
       )
       .font(.caption)
       .foregroundStyle(.secondary)
@@ -183,8 +193,8 @@ private extension AccountsPreferencesView {
     let provider = descriptor.id
     let accounts = displayedAccounts(for: provider)
 
-    return Picker("\(descriptor.metadata.displayName) Dashboard", selection: selection) {
-      Text("Automatic")
+    return Picker(L10n.string("\(descriptor.metadata.displayName) Dashboard"), selection: selection) {
+      Text(L10n.string("Automatic"))
         .tag("")
       ForEach(accounts) { account in
         Text(accountLabel(account))
@@ -194,7 +204,7 @@ private extension AccountsPreferencesView {
     .labelsHidden()
     .frame(width: 190)
     .disabled(accounts.isEmpty)
-    .accessibilityLabel("\(descriptor.metadata.displayName) dashboard account")
+    .accessibilityLabel(L10n.string("\(descriptor.metadata.displayName) dashboard account"))
   }
 }
 
@@ -203,11 +213,11 @@ private extension AccountsPreferencesView {
     let accounts = displayedAccounts(for: descriptor.id)
     let activeCLIID = store.activeCLIAccount(for: descriptor.id)?.id
     return VStack(alignment: .leading, spacing: 4) {
-      Text("Monitored Accounts")
+      Text(L10n.string("Monitored Accounts"))
         .font(.subheadline.weight(.medium))
         .foregroundStyle(.secondary)
       if accounts.isEmpty {
-        Text("No accounts available")
+        Text(L10n.string("No accounts available"))
           .font(.caption)
           .foregroundStyle(.secondary)
       } else {
@@ -225,16 +235,16 @@ private extension AccountsPreferencesView {
       Toggle(label, isOn: monitoringBinding(for: account))
         .labelsHidden()
         .toggleStyle(.checkbox)
-        .accessibilityLabel("Monitor \(label)")
+        .accessibilityLabel(L10n.string("Monitor \(label)"))
       VStack(alignment: .leading, spacing: 1) {
         HStack(spacing: 7) {
           Text(label)
             .lineLimit(1)
           if account.id == activeCLIID {
-            PreferencesBadge(title: "CLI Active", color: .blue)
+            PreferencesBadge(title: L10n.string("CLI Active"), color: .blue)
           }
           if account.credentialSource.isCaptured {
-            PreferencesBadge(title: "Saved", color: Theme.brandAccent)
+            PreferencesBadge(title: L10n.string("Saved"), color: Theme.brandAccent)
           }
         }
         if let detail = account.detail {
@@ -253,7 +263,7 @@ private extension AccountsPreferencesView {
 
   private func savedAccountActions(_ account: ProviderAccount) -> some View {
     Group {
-      Button("Switch") {
+      Button(L10n.string("Switch")) {
         confirmation = .switchCLI(account)
       }
       .controlSize(.small)
@@ -263,14 +273,16 @@ private extension AccountsPreferencesView {
         Image(systemName: "minus.circle")
       }
       .buttonStyle(.borderless)
-      .help("Remove saved account")
+      .help(L10n.string("Remove saved account"))
     }
     .disabled(store.isSwitching || !store.addingAccountProviders.isEmpty)
   }
 
   private var monitoringFooter: some View {
     Text(
-      "Checked accounts refresh in the background. The dashboard account and CLI active account remain single choices."
+      L10n.string(
+        "Checked accounts refresh in the background. The dashboard account and CLI active account remain single choices."
+      )
     )
     .font(.caption)
     .foregroundStyle(.secondary)
@@ -279,9 +291,9 @@ private extension AccountsPreferencesView {
 
   private func providerStatusTitle(for provider: UsageProvider) -> String {
     switch store.credentialDiscoveryState(for: provider) {
-    case .unknown: "Checking credentials…"
-    case .present: "Connected"
-    case .absent: "No credentials detected"
+    case .unknown: L10n.string("Checking credentials…")
+    case .present: L10n.string("Connected")
+    case .absent: L10n.string("No credentials detected")
     }
   }
 
@@ -328,13 +340,13 @@ private extension AccountsPreferencesView {
   }
 
   private func accountLoginTitle(for provider: UsageProvider) -> String {
-    provider == .claude ? "Login New Account" : "Add Account"
+    provider == .claude ? L10n.string("Login New Account") : L10n.string("Add Account")
   }
 
   private func accountLoginHelp(for provider: UsageProvider) -> String {
     provider == .claude
-      ? "Preserve the current Claude account, then sign in with a new one in the browser"
-      : "Add another managed account"
+      ? L10n.string("Preserve the current Claude account, then sign in with a new one in the browser")
+      : L10n.string("Add another managed account")
   }
 }
 

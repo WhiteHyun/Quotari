@@ -4,7 +4,7 @@ import QuotariCore
 extension UsageStore {
   func combinedLoginError(_ loginError: String, restorationError: String?) -> String {
     guard let restorationError else { return loginError }
-    return "\(loginError) Quotari also encountered a recovery error: \(restorationError)"
+    return L10n.string("\(loginError) Quotari also encountered a recovery error: \(restorationError)")
   }
 
   func accountRegistryBaseline(for provider: UsageProvider) async throws -> AccountLoginRegistryBaseline? {

@@ -25,6 +25,8 @@ if [[ ! -f "$APP_ICON" ]]; then
   exit 1
 fi
 
+Scripts/check-localizations.sh
+
 echo "▸ building release binary"
 ARCH_LIST=(${(z)ARCHS})
 BINARY_PATHS=()
@@ -81,6 +83,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>Quotari</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>Quotari.icns</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>ko</string>
+  </array>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
@@ -128,6 +136,7 @@ ditto "$APP" "$VERIFY_APP"
 codesign --verify --deep --strict "$VERIFY_APP"
 "$VERIFY_APP/Contents/MacOS/Quotari" --verify-packaged-resources
 "$VERIFY_APP/Contents/MacOS/Quotari" --verify-packaged-settings
+"$VERIFY_APP/Contents/MacOS/Quotari" -AppleLanguages '(ko)' --verify-packaged-settings
 rm -rf "$VERIFY_ROOT"
 trap - EXIT
 

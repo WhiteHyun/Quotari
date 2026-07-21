@@ -39,7 +39,7 @@ struct AccountLoginStatusView: View {
         }
         Spacer(minLength: 8)
         if phase.allowsCancellation {
-          Button("Cancel") {
+          Button(L10n.string("Cancel")) {
             store.cancelAccountLogin(for: provider)
           }
           .controlSize(.small)
@@ -47,11 +47,11 @@ struct AccountLoginStatusView: View {
       }
       if phase == .waitingForAuthenticationCode {
         HStack(spacing: 8) {
-          SecureField("Authentication Code", text: $authenticationCode)
+          SecureField(L10n.string("Authentication Code"), text: $authenticationCode)
             .textFieldStyle(.roundedBorder)
             .focused($isAuthenticationCodeFocused)
             .onSubmit(submitAuthenticationCode)
-          Button("Submit", action: submitAuthenticationCode)
+          Button(L10n.string("Submit"), action: submitAuthenticationCode)
             .disabled(authenticationCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .onAppear { isAuthenticationCodeFocused = true }

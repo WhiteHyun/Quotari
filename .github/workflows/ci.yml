@@ -23,6 +23,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           clean: true
+      - run: Scripts/check-localizations.sh
       - run: swift build
       - run: swift test --no-parallel
 

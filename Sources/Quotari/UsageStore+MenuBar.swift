@@ -42,25 +42,25 @@ extension UsageStore {
 
   var menuBarAccessibilityLabel: String {
     guard !enabledProviderDescriptors.isEmpty else {
-      return "Quotari, no providers enabled"
+      return L10n.string("Quotari, no providers enabled")
     }
     guard let usedPercent = menuBarUsedPercent,
           let remaining = menuBarRemainingPercent
     else {
       return switch menuBarPreferences.preferences.usageSource {
       case .mostConstrained:
-        "Quotari, loading usage"
+        L10n.string("Quotari, loading usage")
       case let .provider(provider):
-        "Quotari, loading \(providerDisplayName(provider)) usage"
+        L10n.string("Quotari, loading \(providerDisplayName(provider)) usage")
       }
     }
     let source = switch menuBarPreferences.preferences.usageSource {
     case .mostConstrained:
-      "lowest remaining quota"
+      L10n.string("lowest remaining quota")
     case let .provider(provider):
-      "\(providerDisplayName(provider)) remaining quota"
+      L10n.string("\(providerDisplayName(provider)) remaining quota")
     }
-    return "Quotari, \(source) \(remaining) percent, \(Theme.statusWord(usedPercent))"
+    return L10n.string("Quotari, \(source) \(remaining) percent, \(Theme.statusWord(usedPercent))")
   }
 
   private func menuBarUsedPercent(for snapshot: UsageSnapshot) -> Double? {

@@ -10,12 +10,12 @@ struct GeneralPreferencesView: View {
 
     VStack(spacing: 16) {
       PreferencesCard(
-        "General",
-        subtitle: "Choose how Quotari starts and stays available."
+        L10n.string("General"),
+        subtitle: L10n.string("Choose how Quotari starts and stays available.")
       ) {
         PreferencesToggleRow(
-          "Launch at Login",
-          detail: "Keep quota status ready from the moment you sign in.",
+          L10n.string("Launch at Login"),
+          detail: L10n.string("Keep quota status ready from the moment you sign in."),
           isOn: $loginItems.launchesAtLogin
         )
         .disabled(!loginItems.isAvailable)
@@ -23,40 +23,40 @@ struct GeneralPreferencesView: View {
       }
 
       PreferencesCard(
-        "Refresh",
-        subtitle: "Control how often Quotari checks provider usage."
+        L10n.string("Refresh"),
+        subtitle: L10n.string("Control how often Quotari checks provider usage.")
       ) {
         VStack(alignment: .leading, spacing: 10) {
           Slider(value: $intervalMinutes, in: 1 ... 30, step: 1) {
-            Text("Refresh interval")
+            Text(L10n.string("Refresh interval"))
           } minimumValueLabel: {
-            Text("1m")
+            Text(L10n.string("1m"))
           } maximumValueLabel: {
-            Text("30m")
+            Text(L10n.string("30m"))
           }
-          Text("Every \(Int(intervalMinutes)) minute(s)")
+          Text(L10n.string("Every \(Int(intervalMinutes)) minute(s)"))
             .font(.caption)
             .foregroundStyle(.secondary)
         }
       }
 
       PreferencesCard(
-        "Menu Bar",
-        subtitle: "Tune the compact status shown beside the Quotari mascot."
+        L10n.string("Menu Bar"),
+        subtitle: L10n.string("Tune the compact status shown beside the Quotari mascot.")
       ) {
         VStack(spacing: 16) {
           PreferencesToggleRow(
-            "Show remaining quota",
-            detail: "Display the current remaining percentage in the menu bar.",
+            L10n.string("Show remaining quota"),
+            detail: L10n.string("Display the current remaining percentage in the menu bar."),
             isOn: $menuBarPreferences.showsRemainingPercent
           )
           PreferencesRowDivider()
           PreferencesControlRow(
-            "Quota source",
-            detail: "Choose which provider drives the menu-bar percentage."
+            L10n.string("Quota source"),
+            detail: L10n.string("Choose which provider drives the menu-bar percentage.")
           ) {
-            Picker("Quota source", selection: $menuBarPreferences.usageSource) {
-              Text("Most constrained")
+            Picker(L10n.string("Quota source"), selection: $menuBarPreferences.usageSource) {
+              Text(L10n.string("Most constrained"))
                 .tag(MenuBarUsageSource.mostConstrained)
               ForEach(store.enabledProviderDescriptors, id: \.id) { descriptor in
                 Text(descriptor.metadata.displayName)
@@ -68,12 +68,12 @@ struct GeneralPreferencesView: View {
           }
           PreferencesRowDivider()
           PreferencesToggleRow(
-            "Animate mascot",
-            detail: "Let the flame react as usage approaches its limit.",
+            L10n.string("Animate mascot"),
+            detail: L10n.string("Let the flame react as usage approaches its limit."),
             isOn: $menuBarPreferences.animatesMascot
           )
           PreferencesRowDivider()
-          PreferencesControlRow("Open dashboard") {
+          PreferencesControlRow(L10n.string("Open dashboard")) {
             DashboardShortcutRecorder()
               .frame(width: 130)
           }
@@ -88,20 +88,21 @@ struct GeneralPreferencesView: View {
 
   @ViewBuilder private var loginItemStatus: some View {
     if !loginItems.isAvailable {
-      Text("Launch at Login is available in packaged releases.")
+      Text(L10n.string("Launch at Login is available in packaged releases."))
         .font(.caption)
         .foregroundStyle(.secondary)
     } else if loginItems.requiresApproval {
       HStack(alignment: .firstTextBaseline) {
-        Text("Approval is required in System Settings › Login Items.")
+        Text(L10n.string("Approval is required in System Settings › Login Items."))
           .font(.caption)
           .foregroundStyle(.secondary)
         Spacer()
-        Button("Open System Settings…") { loginItems.openSystemSettings() }
+        Button(L10n.string("Open System Settings…")) { loginItems.openSystemSettings() }
           .controlSize(.small)
       }
     } else if loginItems.serviceNotFound {
-      Text("The login item could not be found. Toggling it again or reinstalling the app should restore it.")
+      Text(L10n
+        .string("The login item could not be found. Toggling it again or reinstalling the app should restore it."))
         .font(.caption)
         .foregroundStyle(.secondary)
     } else if let error = loginItems.lastError {
