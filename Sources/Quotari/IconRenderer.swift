@@ -18,6 +18,7 @@ enum IconRenderer {
     NSRect(x: CGFloat(index) * frameSize, y: 0, width: frameSize, height: frameSize)
   }
 
+  private static let artworkFrames = makeArtworkFrames()
   private static let frames = makeFrames()
   static var frameCount: Int {
     frames.count
@@ -38,6 +39,14 @@ enum IconRenderer {
     return frames[frame % frames.count]
   }
 
+  /// A high-resolution mascot frame for Settings and other large surfaces.
+  /// Menu-bar callers should keep using `mascotIcon(frame:)`, which is tuned
+  /// for the 18-point status item instead.
+  static func mascotArtwork(frame: Int) -> NSImage {
+    guard !artworkFrames.isEmpty else { return NSImage(size: NSSize(width: frameSize, height: frameSize)) }
+    return artworkFrames[frame % artworkFrames.count]
+  }
+
   static func animationInterval(usedPercent: Double) -> TimeInterval {
     switch usedPercent {
     case ..<70: 0.22
@@ -47,24 +56,48 @@ enum IconRenderer {
   }
 
   private static func makeFrames() -> [NSImage] {
-    guard let url = resourceBundle.url(forResource: "flame-mascot-sprite", withExtension: "png"),
-          let data = try? Data(contentsOf: url),
-          let sprite = NSBitmapImageRep(data: data),
-          sprite.hasAlpha
-    else { return [] }
-
-    return frameBounds.map { bounds in
+    artworkFrames.map { artwork in
       let frame = NSImage(size: iconSize)
       frame.lockFocus()
-      sprite.draw(
+      artwork.draw(
         in: NSRect(origin: .zero, size: iconSize),
-        from: bounds,
+        from: NSRect(origin: .zero, size: artwork.size),
         operation: .sourceOver,
         fraction: 1,
         respectFlipped: false,
         hints: [.interpolation: NSImageInterpolation.high]
       )
       frame.unlockFocus()
+      frame.isTemplate = false
+      return frame
+    }
+  }
+
+  private static func makeArtworkFrames() -> [NSImage] {
+    guard let url = resourceBundle.url(forResource: "flame-mascot-sprite", withExtension: "png"),
+          let data = try? Data(contentsOf: url),
+          let sprite = NSBitmapImageRep(data: data),
+          let source = sprite.cgImage,
+          sprite.hasAlpha,
+          sprite.pixelsWide.isMultiple(of: frameBounds.count)
+    else { return [] }
+
+    let pixelFrameWidth = sprite.pixelsWide / frameBounds.count
+    guard pixelFrameWidth == sprite.pixelsHigh else { return [] }
+
+    return frameBounds.indices.compactMap { index in
+      let crop = CGRect(
+        x: CGFloat(index * pixelFrameWidth),
+        y: 0,
+        width: CGFloat(pixelFrameWidth),
+        height: CGFloat(sprite.pixelsHigh)
+      )
+      guard let cropped = source.cropping(to: crop) else { return nil }
+
+      let representation = NSBitmapImageRep(cgImage: cropped)
+      representation.size = NSSize(width: frameSize, height: frameSize)
+      let frame = NSImage(size: representation.size)
+      frame.addRepresentation(representation)
       frame.isTemplate = false
       return frame
     }

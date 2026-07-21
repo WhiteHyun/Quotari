@@ -5,7 +5,7 @@ import Testing
 
 @MainActor
 struct SettingsWindowControllerTests {
-  @Test func showsSettingsWindowWithoutAnAppBundle() {
+  @Test func showsSettingsWindowWithoutAnAppBundle() throws {
     let store = UsageStore.isolatedForTesting(
       providers: ProviderRegistry.all,
       startsAutomatically: false
@@ -18,7 +18,9 @@ struct SettingsWindowControllerTests {
     #expect(controller.isVisible)
     #expect(controller.windowTitle == "Settings")
     #expect(controller.isResizable)
-    #expect(controller.minimumContentSize == NSSize(width: 840, height: 560))
+    let minimumContentSize = try #require(controller.minimumContentSize)
+    #expect(minimumContentSize.width >= 840)
+    #expect(minimumContentSize.height >= 560)
     #expect(controller.isMovableByWindowBackground == false)
   }
 

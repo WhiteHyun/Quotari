@@ -13,6 +13,15 @@ struct MenuBarMascotSnapshotTests {
     #expect(Set(pngs).count == IconRenderer.frameCount)
   }
 
+  @Test func settingsArtworkPreservesSourceResolution() throws {
+    let artwork = IconRenderer.mascotArtwork(frame: 0)
+    let bitmap = try #require(artwork.representations.compactMap { $0 as? NSBitmapImageRep }.first)
+
+    #expect(artwork.size == NSSize(width: 256, height: 256))
+    #expect(bitmap.pixelsWide == 512)
+    #expect(bitmap.pixelsHigh == 512)
+  }
+
   @Test func renderMascotFrames() throws {
     let preview = NSImage(size: NSSize(width: 242, height: 40))
     preview.lockFocus()
