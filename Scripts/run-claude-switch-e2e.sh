@@ -33,15 +33,16 @@ if [[ -n "${CI:-}" ]]; then
   exit 1
 fi
 
-lock_directory="/tmp/com.whitehyun.Quotari.ClaudeSwitchE2E.${EUID}.lock"
-if ! mkdir "$lock_directory" 2>/dev/null; then
+user_temp_directory="$(getconf DARWIN_USER_TEMP_DIR)"
+lock_file="${user_temp_directory%/}/com.whitehyun.Quotari.ClaudeSwitchE2E.${EUID}.lock"
+if ! exec 9>"$lock_file"; then
+  print -u2 "The live E2E lock file could not be opened."
+  exit 1
+fi
+if ! /usr/bin/lockf -s -t 0 9; then
   print -u2 "Another live Claude account-switch E2E test is already running."
   exit 1
 fi
-release_lock() {
-  rmdir "$lock_directory" 2>/dev/null || true
-}
-trap release_lock EXIT
 
 interrupted=0
 record_interruption() {

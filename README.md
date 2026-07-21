@@ -76,9 +76,10 @@ explicit opt-in environment is present and should not run in CI. The runner
 accepts only the non-secret registry identifier, so an account email does not
 appear in shell history or the process list. A per-user machine lock rejects
 overlapping runners before either process can touch the shared credential slots.
-If the runner receives HUP, INT, or TERM after the test starts, it keeps the test
-in a separate process session and holds that lock until credential restoration
-finishes, then exits with status 130.
+The lock is kernel-managed, so a stale lock file after a crash does not block the
+next run. If the runner receives HUP, INT, or TERM after the test starts, it keeps
+the test in a separate process session and holds that lock until credential
+restoration finishes, then exits with status 130.
 
 ## Structure
 
