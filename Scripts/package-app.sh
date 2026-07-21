@@ -136,6 +136,7 @@ ditto "$APP" "$VERIFY_APP"
 codesign --verify --deep --strict "$VERIFY_APP"
 "$VERIFY_APP/Contents/MacOS/Quotari" --verify-packaged-resources
 "$VERIFY_APP/Contents/MacOS/Quotari" --verify-packaged-settings
+"$VERIFY_APP/Contents/MacOS/Quotari" -AppleLanguages '(ko)' --verify-korean-localization
 "$VERIFY_APP/Contents/MacOS/Quotari" -AppleLanguages '(ko)' --verify-packaged-settings
 rm -rf "$VERIFY_ROOT"
 trap - EXIT

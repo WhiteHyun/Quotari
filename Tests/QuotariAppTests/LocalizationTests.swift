@@ -8,6 +8,31 @@ struct LocalizationTests {
     #expect(L10n.string("General", locale: Locale(identifier: "ko")) == "일반")
   }
 
+  @Test func resolvesTheLanguageSelectedForTheAppInsteadOfTheFormattingLocale() {
+    #expect(
+      L10n.preferredLanguageCode(
+        supportedLocalizations: ["en", "ko"],
+        preferredLanguages: ["ko-KR", "en-US"]
+      ) == "ko"
+    )
+    #expect(
+      L10n.preferredLanguageCode(
+        supportedLocalizations: ["en", "ko"],
+        preferredLanguages: ["ja-JP"]
+      ) == "en"
+    )
+  }
+
+  @Test func localizesTheDuplicateClaudeAccountError() {
+    let korean = Locale(identifier: "ko")
+    #expect(
+      L10n.string(
+        "More than one saved Claude account has this identity. Resolve the duplicate accounts before logging in again.",
+        locale: korean
+      ) == "같은 신원을 가진 저장된 Claude 계정이 둘 이상입니다. 다시 로그인하기 전에 중복 계정을 정리하세요."
+    )
+  }
+
   @Test func localizesUsageDurationsAndCountdowns() {
     let korean = Locale(identifier: "ko")
     let now = Date(timeIntervalSince1970: 1_800_000_000)
