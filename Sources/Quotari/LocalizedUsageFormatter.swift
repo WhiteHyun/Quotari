@@ -42,8 +42,9 @@ enum LocalizedUsageFormatter {
     _ pace: UsagePace,
     locale: Locale? = nil
   ) -> String? {
-    let magnitude = Int(abs(pace.deltaPercent).rounded())
-    guard magnitude >= 1 else { return nil }
+    let rawMagnitude = abs(pace.deltaPercent)
+    guard rawMagnitude >= 1 else { return nil }
+    let magnitude = Int(rawMagnitude.rounded())
     return pace.isDeficit
       ? L10n.string("\(magnitude)% in deficit", locale: locale)
       : L10n.string("\(magnitude)% in reserve", locale: locale)

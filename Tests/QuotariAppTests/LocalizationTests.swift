@@ -1,5 +1,6 @@
 import Foundation
 @testable import Quotari
+import QuotariCore
 import Testing
 
 struct LocalizationTests {
@@ -52,6 +53,12 @@ struct LocalizationTests {
     #expect(L10n.string("Every \(5) minute(s)", locale: korean) == "5분마다")
     #expect(L10n.string("\(20)% in deficit", locale: korean) == "예상보다 20% 빠름")
     #expect(L10n.string("\("Codex") usage is at \("80")%.", locale: korean) == "Codex 사용량이 80%입니다.")
+  }
+
+  @Test func hidesPaceTrendsBelowOnePercentBeforeRounding() {
+    let pace = UsagePace(deltaPercent: 0.75, runsOutIn: nil, headroomMultiplier: nil)
+
+    #expect(LocalizedUsageFormatter.paceTrend(pace, locale: Locale(identifier: "en")) == nil)
   }
 
   @Test func localizesWrappedAccountConfirmationText() {
