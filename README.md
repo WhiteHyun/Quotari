@@ -74,7 +74,8 @@ This test calls live Anthropic profile and usage endpoints and mutates the real
 Claude Code Keychain/credentials slots. It is disabled unless the script's
 explicit opt-in environment is present and should not run in CI. The runner
 accepts only the non-secret registry identifier, so an account email does not
-appear in shell history or the process list.
+appear in shell history or the process list. A per-user machine lock rejects
+overlapping runners before either process can touch the shared credential slots.
 
 ## Structure
 

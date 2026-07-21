@@ -33,6 +33,17 @@ if [[ -n "${CI:-}" ]]; then
   exit 1
 fi
 
+lock_directory="/tmp/com.whitehyun.Quotari.ClaudeSwitchE2E.${EUID}.lock"
+if ! mkdir "$lock_directory" 2>/dev/null; then
+  print -u2 "Another live Claude account-switch E2E test is already running."
+  exit 1
+fi
+release_lock() {
+  rmdir "$lock_directory" 2>/dev/null || true
+}
+trap release_lock EXIT
+trap 'exit 130' HUP INT TERM
+
 if pgrep -x Quotari >/dev/null; then
   print -u2 "Quit Quotari before running the live Claude account-switch E2E test."
   exit 1
