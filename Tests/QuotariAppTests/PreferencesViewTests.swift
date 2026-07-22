@@ -40,4 +40,26 @@ struct PreferencesViewTests {
     #expect(matchingBuild?.displayVersion == "0.1.2")
     #expect(AppVersionInfo(infoDictionary: [:]) == nil)
   }
+
+  @Test func warningSliderCannotReachOrPassCriticalThreshold() {
+    let critical = 95
+    let warning = QuotaThresholdSliderLimits.clampedValue(
+      100,
+      to: QuotaThresholdSliderLimits.warningRange(critical: critical)
+    )
+
+    #expect(warning == 94)
+    #expect(warning < critical)
+  }
+
+  @Test func criticalSliderCannotReachOrPassBelowWarningThreshold() {
+    let warning = 80
+    let critical = QuotaThresholdSliderLimits.clampedValue(
+      1,
+      to: QuotaThresholdSliderLimits.criticalRange(warning: warning)
+    )
+
+    #expect(critical == 81)
+    #expect(critical > warning)
+  }
 }
