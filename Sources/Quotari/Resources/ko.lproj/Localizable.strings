@@ -62,6 +62,8 @@
 	<string>30일 토큰</string>
 	<key>30m</key>
 	<string>30분</string>
+	<key>A custom mascot needs between 2 and 32 frames.</key>
+	<string>커스텀 마스코트에는 2개에서 32개의 프레임이 필요합니다.</string>
 	<key>About</key>
 	<string>정보</string>
 	<key>About Quotari</key>
@@ -96,6 +98,8 @@
 	<string>자동</string>
 	<key>Automatic updates are available in packaged releases.</key>
 	<string>자동 업데이트는 패키징된 릴리스에서 사용할 수 있습니다.</string>
+	<key>Built-in Flame</key>
+	<string>기본 불꽃</string>
 	<key>CLI Active</key>
 	<string>CLI 사용 중</string>
 	<key>Cancel</key>
@@ -118,6 +122,10 @@
 	<string>Quotari의 실행 및 상시 사용 방식을 설정합니다.</string>
 	<key>Choose the AI services that appear throughout Quotari.</key>
 	<string>Quotari에 표시할 AI 서비스를 선택합니다.</string>
+	<key>Choose the built-in flame or your imported mascot.</key>
+	<string>기본 불꽃 또는 가져온 마스코트를 선택합니다.</string>
+	<key>Choose valid PNG images.</key>
+	<string>올바른 PNG 이미지를 선택하세요.</string>
 	<key>Choose which enabled providers can send quota alerts.</key>
 	<string>사용 한도 알림을 보낼 서비스를 선택합니다.</string>
 	<key>Choose which provider drives the menu-bar percentage.</key>
@@ -136,10 +144,20 @@
 	<string>Quotari가 서비스 사용량을 확인하는 주기를 설정합니다.</string>
 	<key>Cost unavailable%@</key>
 	<string>비용을 확인할 수 없음%@</string>
+	<key>Couldn’t import mascot</key>
+	<string>마스코트를 가져올 수 없음</string>
 	<key>Critical at %lld%%</key>
 	<string>%lld%%에서 위험</string>
 	<key>Critical threshold</key>
 	<string>위험 기준</string>
+	<key>Custom</key>
+	<string>커스텀</string>
+	<key>Custom mascot</key>
+	<string>커스텀 마스코트</string>
+	<key>Custom mascot files must total 10 MB or less.</key>
+	<string>커스텀 마스코트 파일의 총용량은 10MB 이하여야 합니다.</string>
+	<key>Custom mascot frames use unsupported dimensions.</key>
+	<string>커스텀 마스코트 프레임의 크기를 지원하지 않습니다.</string>
 	<key>Day</key>
 	<string>날짜</string>
 	<key>Degraded</key>
@@ -168,6 +186,8 @@
 	<string>선택한 계정의 로컬 Codex 로그에서 추정</string>
 	<key>Every %lld minute(s)</key>
 	<string>%lld분마다</string>
+	<key>Every custom mascot frame must have the same pixel size.</key>
+	<string>모든 커스텀 마스코트 프레임의 픽셀 크기가 같아야 합니다.</string>
 	<key>Finish signing in with a different account in the browser. Keep this window open.</key>
 	<string>브라우저에서 다른 계정으로 로그인을 완료하세요. 이 창을 열어 두세요.</string>
 	<key>Finish the account login already in progress before starting another one.</key>
@@ -178,6 +198,10 @@
 	<string>일반</string>
 	<key>Get notified before a provider reaches its usage limit.</key>
 	<string>서비스가 사용 한도에 도달하기 전에 알림을 받습니다.</string>
+	<key>Import 2–32 same-size PNG frames, or one horizontal sprite sheet with square frames.</key>
+	<string>크기가 같은 PNG 프레임 2~32개 또는 정사각형 프레임으로 구성된 가로 스프라이트 시트 하나를 가져오세요.</string>
+	<key>Import…</key>
+	<string>가져오기…</string>
 	<key>Keep quota status ready from the moment you sign in.</key>
 	<string>로그인하는 순간부터 사용 한도 상태를 확인할 수 있습니다.</string>
 	<key>Lasts until reset</key>
@@ -206,6 +230,8 @@
 	<string>대규모 장애</string>
 	<key>Manage in Settings…</key>
 	<string>설정에서 관리…</string>
+	<key>Mascot</key>
+	<string>마스코트</string>
 	<key>Menu Bar</key>
 	<string>메뉴 막대</string>
 	<key>Monitor %@</key>
@@ -236,6 +262,8 @@
 	<string>아직 확인하지 않음</string>
 	<key>Notifications</key>
 	<string>알림</string>
+	<key>OK</key>
+	<string>확인</string>
 	<key>Open Settings…</key>
 	<string>설정 열기…</string>
 	<key>Open System Settings…</key>
@@ -278,6 +306,8 @@
 	<string>Quotari가 현재 CLI 계정을 보존하지 못했습니다. 계정 검색 오류를 해결한 다음 다시 시도하세요.</string>
 	<key>Quotari couldn’t safely read the saved-account registry, so it did not open a new login.</key>
 	<string>Quotari가 저장된 계정 레지스트리를 안전하게 읽지 못해 새 로그인을 열지 않았습니다.</string>
+	<key>Quotari couldn’t save the custom mascot.</key>
+	<string>Quotari가 커스텀 마스코트를 저장하지 못했습니다.</string>
 	<key>Quotari couldn’t verify every saved Claude account, so it did not create a potentially duplicate account.</key>
 	<string>Quotari가 저장된 모든 Claude 계정을 확인하지 못해 중복 가능성이 있는 계정을 만들지 않았습니다.</string>
 	<key>Quotari couldn’t verify the current Claude account identity, so it did not open a new login.</key>
@@ -316,6 +346,8 @@
 	<string>저장된 계정 삭제</string>
 	<key>Remove saved account?</key>
 	<string>저장된 계정을 삭제할까요?</string>
+	<key>Replace…</key>
+	<string>교체…</string>
 	<key>Reported</key>
 	<string>보고됨</string>
 	<key>Reported by provider</key>

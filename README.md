@@ -30,7 +30,7 @@ remaining quota, reset times, and estimated local API cost at a glance.
   local logs.
 - Provides persistent provider toggles, account selection, configurable refresh
   intervals, launch at login in packaged app builds, menu-bar display options,
-  mascot animation, and a global dashboard shortcut.
+  built-in or user-created mascot animation, and a global dashboard shortcut.
 - Sends optional quota warning, critical, and reset notifications with
   per-provider controls.
 - Integrates Sparkle update checks in packaged builds that include feed
@@ -49,6 +49,22 @@ The source build uses the same live-only provider catalog as the packaged app.
 Automatic mode selects the effective live CLI credential; it does not generate
 sample usage when no account is available. The app runs as an accessory app,
 so look for the flame mascot in the menu bar rather than a Dock icon.
+
+### Custom mascots
+
+Open **Settings → General → Menu Bar → Custom mascot** to import an animation.
+Quotari accepts either format:
+
+- 2–32 separate PNG frames with identical pixel dimensions. Files play in
+  natural filename order, so names such as `owl-frame-0.png`,
+  `owl-frame-1.png`, and `owl-frame-2.png` are recommended.
+- One horizontal PNG sprite sheet containing 2–32 square frames. The sheet
+  width must be an exact multiple of its height.
+
+PNG files may total up to 10 MB. A transparent background is recommended.
+Quotari scales frames to 18 points high in the menu bar, preserves wider
+characters up to 50 points, and stores an app-owned copy in Application
+Support so the source files can be moved or deleted after import.
 
 ### Live Claude account-switch E2E
 

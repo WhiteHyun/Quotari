@@ -55,6 +55,15 @@ struct LocalizationTests {
     #expect(L10n.string("\("Codex") usage is at \("80")%.", locale: korean) == "Codex 사용량이 80%입니다.")
   }
 
+  @Test func localizesCustomMascotSettings() {
+    let korean = Locale(identifier: "ko")
+
+    #expect(L10n.string("Mascot", locale: korean) == "마스코트")
+    #expect(L10n.string("Built-in Flame", locale: korean) == "기본 불꽃")
+    #expect(L10n.string("Custom mascot", locale: korean) == "커스텀 마스코트")
+    #expect(L10n.string("Import…", locale: korean) == "가져오기…")
+  }
+
   @Test func hidesPaceTrendsBelowOnePercentBeforeRounding() {
     let pace = UsagePace(deltaPercent: 0.75, runsOutIn: nil, headroomMultiplier: nil)
 

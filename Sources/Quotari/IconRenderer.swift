@@ -40,6 +40,17 @@ enum IconRenderer {
     return frames[frame % frames.count]
   }
 
+  @MainActor
+  static func customMascotFrames(from framePNGs: [Data]) throws -> [NSImage] {
+    try CustomMascotFrameDecoder.decode(framePNGs).map { decoded in
+      makeMenuBarFrame(
+        image: decoded.image,
+        pixelWidth: decoded.width,
+        pixelHeight: decoded.height
+      )
+    }
+  }
+
   /// A high-resolution mascot frame for Settings and other large surfaces.
   /// Menu-bar callers should keep using `mascotIcon(frame:)`, which is tuned
   /// for the 18-point status item instead.
@@ -72,6 +83,35 @@ enum IconRenderer {
       frame.isTemplate = false
       return frame
     }
+  }
+
+  private static func makeMenuBarFrame(
+    image: CGImage,
+    pixelWidth: Int,
+    pixelHeight: Int
+  ) -> NSImage {
+    let aspectRatio = CGFloat(pixelWidth) / CGFloat(pixelHeight)
+    let size = NSSize(
+      width: min(50, max(8, iconSize.height * aspectRatio)),
+      height: iconSize.height
+    )
+    let source = NSImage(
+      cgImage: image,
+      size: NSSize(width: pixelWidth, height: pixelHeight)
+    )
+    let frame = NSImage(size: size)
+    frame.lockFocus()
+    source.draw(
+      in: NSRect(origin: .zero, size: size),
+      from: NSRect(origin: .zero, size: source.size),
+      operation: .sourceOver,
+      fraction: 1,
+      respectFlipped: false,
+      hints: [.interpolation: NSImageInterpolation.high]
+    )
+    frame.unlockFocus()
+    frame.isTemplate = false
+    return frame
   }
 
   private static func makeArtworkFrames() -> [NSImage] {

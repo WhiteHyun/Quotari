@@ -1,8 +1,11 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct GeneralPreferencesView: View {
   @Environment(UsageStore.self) private var store
   @State private var intervalMinutes: Double = 1
+  @State private var importsCustomMascot = false
+  @State private var mascotImportError: String?
   @Bindable private var loginItems = LoginItemController.shared
 
   var body: some View {
@@ -73,6 +76,51 @@ struct GeneralPreferencesView: View {
             isOn: $menuBarPreferences.animatesMascot
           )
           PreferencesRowDivider()
+          PreferencesControlRow(
+            L10n.string("Mascot"),
+            detail: L10n.string("Choose the built-in flame or your imported mascot.")
+          ) {
+            Picker(L10n.string("Mascot"), selection: $menuBarPreferences.mascot) {
+              Text(L10n.string("Built-in Flame"))
+                .tag(MenuBarMascot.builtIn)
+              if menuBarPreferences.hasCustomMascot {
+                Text(menuBarPreferences.customMascotName ?? L10n.string("Custom"))
+                  .tag(MenuBarMascot.custom)
+              }
+            }
+            .labelsHidden()
+            .frame(width: 190, alignment: .trailing)
+          }
+          PreferencesRowDivider()
+          PreferencesControlRow(
+            L10n.string("Custom mascot"),
+            detail: L10n.string(
+              "Import 2–32 same-size PNG frames, or one horizontal sprite sheet with square frames."
+            )
+          ) {
+            HStack(spacing: 8) {
+              if menuBarPreferences.hasCustomMascot {
+                Image(nsImage: menuBarPreferences.mascotIcon(frame: 0))
+              }
+              Button(
+                menuBarPreferences.hasCustomMascot
+                  ? L10n.string("Replace…")
+                  : L10n.string("Import…")
+              ) {
+                importsCustomMascot = true
+              }
+              if menuBarPreferences.hasCustomMascot {
+                Button(L10n.string("Remove"), role: .destructive) {
+                  do {
+                    try menuBarPreferences.removeCustomMascot()
+                  } catch {
+                    mascotImportError = error.localizedDescription
+                  }
+                }
+              }
+            }
+          }
+          PreferencesRowDivider()
           PreferencesControlRow(L10n.string("Open dashboard")) {
             DashboardShortcutRecorder()
               .frame(width: 130)
@@ -84,6 +132,36 @@ struct GeneralPreferencesView: View {
     .onChange(of: intervalMinutes) { _, newValue in
       store.refreshInterval = newValue * 60
     }
+    .fileImporter(
+      isPresented: $importsCustomMascot,
+      allowedContentTypes: [.png],
+      allowsMultipleSelection: true
+    ) { result in
+      do {
+        try menuBarPreferences.importCustomMascot(from: result.get())
+      } catch {
+        mascotImportError = error.localizedDescription
+      }
+    }
+    .alert(
+      L10n.string("Couldn’t import mascot"),
+      isPresented: mascotImportErrorIsPresented
+    ) {
+      Button(L10n.string("OK"), role: .cancel) {}
+    } message: {
+      Text(mascotImportError ?? "")
+    }
+  }
+
+  private var mascotImportErrorIsPresented: Binding<Bool> {
+    Binding(
+      get: { mascotImportError != nil },
+      set: { isPresented in
+        if !isPresented {
+          mascotImportError = nil
+        }
+      }
+    )
   }
 
   @ViewBuilder private var loginItemStatus: some View {
