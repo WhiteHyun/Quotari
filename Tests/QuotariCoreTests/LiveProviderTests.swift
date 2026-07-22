@@ -299,6 +299,10 @@ struct PlanLabelTests {
 }
 
 struct ProviderCatalogTests {
+  @Test func presentsClaudeBeforeCodex() {
+    #expect(ProviderRegistry.all.map(\.id) == [.claude, .codex])
+  }
+
   @Test func unavailableLiveStrategyReturnsMissingCredential() async {
     let unavailableLive = CodexUsageStrategy(
       transport: StubTransport(json: "{}"),

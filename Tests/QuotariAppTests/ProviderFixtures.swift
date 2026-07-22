@@ -4,12 +4,20 @@ import Foundation
 /// Deterministic usage fixtures available only to the app test target.
 /// Production descriptors always resolve live OAuth strategies.
 enum ProviderFixtures {
-  static let descriptors: [ProviderDescriptor] = UsageProvider.allCases.map { provider in
-    ProviderDescriptor(
+  static let descriptors: [ProviderDescriptor] = ProviderRegistry.all.map { descriptor in
+    let provider = descriptor.id
+    return ProviderDescriptor(
       id: provider,
-      metadata: ProviderRegistry.descriptor(for: provider).metadata,
+      metadata: descriptor.metadata,
       pipeline: ProviderFetchPipeline { _ in [FixtureUsageStrategy()] }
     )
+  }
+
+  static func descriptor(for provider: UsageProvider) -> ProviderDescriptor {
+    guard let descriptor = descriptors.first(where: { $0.id == provider }) else {
+      preconditionFailure("Missing fixture descriptor for \(provider.rawValue)")
+    }
+    return descriptor
   }
 }
 

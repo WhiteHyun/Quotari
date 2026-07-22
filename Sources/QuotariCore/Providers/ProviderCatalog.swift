@@ -6,15 +6,6 @@ import Foundation
 public enum ProviderCatalog {
   public static let descriptors: [ProviderDescriptor] = [
     ProviderDescriptor(
-      id: .codex,
-      metadata: .init(
-        displayName: "Codex",
-        accent: .init(0.063, 0.639, 0.498),
-        supportsWeekly: true
-      ), // OpenAI #10A37F
-      pipeline: ProviderFetchPipeline { _ in [CodexUsageStrategy()] }
-    ),
-    ProviderDescriptor(
       id: .claude,
       metadata: .init(
         displayName: "Claude",
@@ -29,6 +20,15 @@ public enum ProviderCatalog {
           ),
         ]
       }
+    ),
+    ProviderDescriptor(
+      id: .codex,
+      metadata: .init(
+        displayName: "Codex",
+        accent: .init(0.063, 0.639, 0.498),
+        supportsWeekly: true
+      ), // OpenAI #10A37F
+      pipeline: ProviderFetchPipeline { _ in [CodexUsageStrategy()] }
     ),
   ]
 }
