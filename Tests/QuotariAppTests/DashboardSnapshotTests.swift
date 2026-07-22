@@ -82,7 +82,7 @@ struct DashboardSnapshotTests {
 
   private static func makeStaleStore() async -> UsageStore {
     let staleStore = UsageStore.isolatedForTesting(
-      providers: [ProviderFixtures.descriptors[0]],
+      providers: [ProviderFixtures.descriptor(for: .codex)],
       costEstimator: SnapshotCostEstimator()
     )
     for _ in 0 ..< 100 {
@@ -98,7 +98,7 @@ struct DashboardSnapshotTests {
 
   private static func makeNoAccountStore() async -> UsageStore {
     let noAccountStore = UsageStore.isolatedForTesting(
-      providers: [ProviderFixtures.descriptors[0]],
+      providers: [ProviderFixtures.descriptor(for: .codex)],
       startsAutomatically: false
     )
     await noAccountStore.reloadAccounts()
@@ -230,7 +230,7 @@ struct DashboardSnapshotTests {
   ) -> Data {
     let hosting = NSHostingView(rootView:
       ProviderStatusDetailView(
-        descriptor: ProviderFixtures.descriptors[0],
+        descriptor: ProviderFixtures.descriptor(for: .codex),
         controller: controller
       )
       .background(Color(nsColor: .windowBackgroundColor)))
