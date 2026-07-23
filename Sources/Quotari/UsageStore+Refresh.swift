@@ -317,7 +317,8 @@ extension UsageStore {
         for: provider,
         force: false,
         notifiesQuota: true,
-        excludingCredentialScopeIDs: coveredCredentialScopeIDs
+        excludingCredentialScopeIDs: coveredCredentialScopeIDs,
+        bypassesDelayedCredentialRefresh: bypassesDelayedCredentialRefresh
       )
     }
     await syncCapturedCopies(of: capturedCopyCandidates.filter { $0.provider == provider })

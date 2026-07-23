@@ -69,11 +69,12 @@ extension UsageStore {
     notifiesQuota: Bool = false,
     includingLogicalAccountIDs: Set<String>? = nil,
     excludingCredentialScopeIDs: Set<String> = [],
-    interaction: ProviderFetchInteraction = .background
+    interaction: ProviderFetchInteraction = .background,
+    bypassesDelayedCredentialRefresh: Bool = false
   ) async {
     if case .userInitiated = interaction {
       await cancelDelayedCredentialRefreshAndDrainSelection(for: provider)
-    } else {
+    } else if !bypassesDelayedCredentialRefresh {
       await waitForDelayedCredentialRefreshAndDrainSelection(for: provider)
     }
     // A per-account fetch can rotate/persist a live token; never start one
@@ -85,7 +86,8 @@ extension UsageStore {
       force: force, notifiesQuota: notifiesQuota,
       includingLogicalAccountIDs: includingLogicalAccountIDs,
       excludingCredentialScopeIDs: excludingCredentialScopeIDs,
-      interaction: interaction
+      interaction: interaction,
+      bypassesDelayedCredentialRefresh: bypassesDelayedCredentialRefresh
     )
     guard await joinsAccountUsageRefresh(provider, request: request) == false else { return }
     guard let descriptor = providers.first(where: { $0.id == provider }) else { return }

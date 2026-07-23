@@ -42,19 +42,22 @@ struct AccountUsageRefreshRequest {
   let includingLogicalAccountIDs: Set<String>?
   let excludingCredentialScopeIDs: Set<String>
   let interaction: ProviderFetchInteraction
+  let bypassesDelayedCredentialRefresh: Bool
 
   init(
     force: Bool,
     notifiesQuota: Bool,
     includingLogicalAccountIDs: Set<String>?,
     excludingCredentialScopeIDs: Set<String>,
-    interaction: ProviderFetchInteraction = .background
+    interaction: ProviderFetchInteraction = .background,
+    bypassesDelayedCredentialRefresh: Bool = false
   ) {
     self.force = force
     self.notifiesQuota = notifiesQuota
     self.includingLogicalAccountIDs = includingLogicalAccountIDs
     self.excludingCredentialScopeIDs = excludingCredentialScopeIDs
     self.interaction = interaction
+    self.bypassesDelayedCredentialRefresh = bypassesDelayedCredentialRefresh
   }
 }
 

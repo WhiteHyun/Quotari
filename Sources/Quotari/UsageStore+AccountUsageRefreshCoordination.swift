@@ -81,7 +81,8 @@ extension UsageStore {
         notifiesQuota: request.notifiesQuota,
         includingLogicalAccountIDs: request.includingLogicalAccountIDs,
         excludingCredentialScopeIDs: request.excludingCredentialScopeIDs,
-        interaction: request.interaction
+        interaction: request.interaction,
+        bypassesDelayedCredentialRefresh: request.bypassesDelayedCredentialRefresh
       )
       return
     }
@@ -106,7 +107,8 @@ extension UsageStore {
         notifiesQuota: request.notifiesQuota,
         includingLogicalAccountIDs: request.includingLogicalAccountIDs,
         excludingCredentialScopeIDs: request.excludingCredentialScopeIDs,
-        interaction: request.interaction
+        interaction: request.interaction,
+        bypassesDelayedCredentialRefresh: request.bypassesDelayedCredentialRefresh
       )
       return
     }
@@ -144,7 +146,8 @@ extension UsageStore {
       notifiesQuota: request.notifiesQuota,
       includingLogicalAccountIDs: request.includingLogicalAccountIDs,
       excludingCredentialScopeIDs: request.excludingCredentialScopeIDs.union(current.credentialScopeIDs),
-      interaction: request.interaction
+      interaction: request.interaction,
+      bypassesDelayedCredentialRefresh: request.bypassesDelayedCredentialRefresh
     )
   }
 }

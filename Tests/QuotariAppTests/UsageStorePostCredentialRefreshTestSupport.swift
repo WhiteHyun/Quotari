@@ -156,4 +156,9 @@ actor PostCredentialRefreshGate {
     continuations.removeAll()
     pending.forEach { $0.resume() }
   }
+
+  func resumeNext() {
+    guard !continuations.isEmpty else { return }
+    continuations.removeFirst().resume()
+  }
 }
