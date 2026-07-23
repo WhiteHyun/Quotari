@@ -146,10 +146,6 @@
 	<string>비용을 확인할 수 없음%@</string>
 	<key>Couldn’t import mascot</key>
 	<string>마스코트를 가져올 수 없음</string>
-	<key>Remove custom mascot?</key>
-	<string>커스텀 마스코트를 삭제할까요?</string>
-	<key>This removes Quotari’s saved copy. You’ll need to import the original PNG files again.</key>
-	<string>Quotari에 저장된 사본이 삭제됩니다. 다시 사용하려면 원본 PNG 파일을 가져와야 합니다.</string>
 	<key>Critical at %lld%%</key>
 	<string>%lld%%에서 위험</string>
 	<key>Critical threshold</key>
@@ -346,6 +342,8 @@
 	<string>계정 삭제</string>
 	<key>Remove Account (Still in CLI)</key>
 	<string>계정 삭제(CLI에서 사용 중)</string>
+	<key>Remove custom mascot?</key>
+	<string>커스텀 마스코트를 삭제할까요?</string>
 	<key>Remove saved account</key>
 	<string>저장된 계정 삭제</string>
 	<key>Remove saved account?</key>
@@ -430,6 +428,8 @@
 	<string>이 계정은 아직 CLI 인증 슬롯에서 사용 중입니다. 삭제하기 전에 다른 계정으로 전환하거나 로그아웃하세요.</string>
 	<key>This removes %@ from Quotari. The provider account remains intact.</key>
 	<string>Quotari에서 %@ 계정만 삭제합니다. 서비스 계정 자체는 유지됩니다.</string>
+	<key>This removes Quotari’s saved copy. You’ll need to import the original PNG files again.</key>
+	<string>Quotari에 저장된 사본이 삭제됩니다. 다시 사용하려면 원본 PNG 파일을 가져와야 합니다.</string>
 	<key>Thresholds</key>
 	<string>기준값</string>
 	<key>Today</key>
