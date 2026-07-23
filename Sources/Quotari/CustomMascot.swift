@@ -194,13 +194,20 @@ enum CustomMascotStore {
     guard frameCount >= 2, frameCount <= maximumFrameCount else {
       throw CustomMascotError.invalidFrameCount
     }
+    guard decoded.image.width.isMultiple(of: frameCount) else {
+      throw CustomMascotError.invalidPNG
+    }
+    let decodedFrameSize = decoded.image.width / frameCount
+    guard decodedFrameSize == decoded.image.height else {
+      throw CustomMascotError.invalidPNG
+    }
 
     return try (0 ..< frameCount).map { index in
       let crop = CGRect(
-        x: index * decoded.height,
+        x: index * decodedFrameSize,
         y: 0,
-        width: decoded.height,
-        height: decoded.height
+        width: decodedFrameSize,
+        height: decodedFrameSize
       )
       guard let cropped = decoded.image.cropping(to: crop) else {
         throw CustomMascotError.invalidPNG
@@ -230,6 +237,8 @@ enum CustomMascotFrameDecoder {
   private static let maximumFrameWidth = 2048
   private static let maximumFrameHeight = 1024
   private static let maximumFrameAspectRatio = 6.0
+  /// Two backing pixels for each point of the widest 50-point menu-bar frame.
+  private static let maximumDecodedFrameDimension = 100
 
   struct DecodedFrame {
     var image: CGImage
@@ -257,7 +266,8 @@ enum CustomMascotFrameDecoder {
     let frame = try decodePNG(
       data,
       maximumWidth: maximumFrameWidth,
-      maximumHeight: maximumFrameHeight
+      maximumHeight: maximumFrameHeight,
+      maximumDecodedPixelSize: maximumDecodedFrameDimension
     )
     guard Double(frame.width) / Double(frame.height) <= maximumFrameAspectRatio else {
       throw CustomMascotError.unsupportedDimensions
@@ -269,14 +279,17 @@ enum CustomMascotFrameDecoder {
     try decodePNG(
       data,
       maximumWidth: maximumFrameHeight * CustomMascotStore.maximumFrameCount,
-      maximumHeight: maximumFrameHeight
+      maximumHeight: maximumFrameHeight,
+      maximumDecodedPixelSize: maximumDecodedFrameDimension
+        * CustomMascotStore.maximumFrameCount
     )
   }
 
   private static func decodePNG(
     _ data: Data,
     maximumWidth: Int,
-    maximumHeight: Int
+    maximumHeight: Int,
+    maximumDecodedPixelSize: Int
   ) throws -> DecodedFrame {
     let pngSignature = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
     guard data.starts(with: pngSignature),
@@ -293,7 +306,16 @@ enum CustomMascotFrameDecoder {
     else {
       throw CustomMascotError.unsupportedDimensions
     }
-    guard let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+    let options: [CFString: Any] = [
+      kCGImageSourceCreateThumbnailFromImageAlways: true,
+      kCGImageSourceThumbnailMaxPixelSize: maximumDecodedPixelSize,
+      kCGImageSourceShouldCacheImmediately: true,
+    ]
+    guard let image = CGImageSourceCreateThumbnailAtIndex(
+      source,
+      0,
+      options as CFDictionary
+    ) else {
       throw CustomMascotError.invalidPNG
     }
     return DecodedFrame(image: image, width: width, height: height)

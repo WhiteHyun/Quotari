@@ -151,6 +151,32 @@ struct CustomMascotTests {
     }
   }
 
+  @Test func downsamplesAggregateFramesBeforeRetainingDecodedImages() throws {
+    let context = try makeContext("aggregate-decoding")
+    defer { context.remove() }
+    let png = try pngData(width: 2048, height: 1024, color: .systemPurple)
+    let frameURLs = try (0 ..< CustomMascotStore.maximumFrameCount).map { index in
+      let url = context.directory.appendingPathComponent("runner-\(index).png")
+      try png.write(to: url)
+      return url
+    }
+
+    let imported = try CustomMascotStore.importedMascot(from: frameURLs)
+
+    #expect(imported.decodedFrames.count == CustomMascotStore.maximumFrameCount)
+    #expect(imported.decodedFrames.allSatisfy { frame in
+      frame.width == 2048
+        && frame.height == 1024
+        && frame.image.width <= 100
+        && frame.image.height <= 100
+    })
+    #expect(
+      imported.decodedFrames.reduce(0) { pixels, frame in
+        pixels + frame.image.width * frame.image.height
+      } <= CustomMascotStore.maximumFrameCount * 100 * 100
+    )
+  }
+
   @Test func customMascotLayoutPreservesWideAndTallAspectRatios() {
     let wide = IconRenderer.customMascotLayout(pixelWidth: 600, pixelHeight: 100)
     #expect(wide.canvasSize == NSSize(width: 50, height: 18))
