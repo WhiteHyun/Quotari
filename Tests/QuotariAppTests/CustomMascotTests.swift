@@ -27,11 +27,17 @@ struct CustomMascotTests {
     #expect(loaded.decodedFrames.count == 2)
 
     let relaunched = context.makeController()
+    #expect(relaunched.isCustomMascotOperationInProgress)
+    #expect(!relaunched.hasCustomMascot)
+    await #expect(throws: CustomMascotError.operationInProgress) {
+      try await relaunched.removeCustomMascot()
+    }
+    await relaunched.waitForCustomMascotRestore()
     #expect(relaunched.preferences.mascot == .custom)
     #expect(relaunched.customMascotName == "owl")
     #expect(relaunched.customMascotFrameCount == 2)
 
-    try relaunched.removeCustomMascot()
+    try await relaunched.removeCustomMascot()
     #expect(relaunched.preferences.mascot == .builtIn)
     #expect(!relaunched.hasCustomMascot)
     #expect(!FileManager.default.fileExists(atPath: context.archiveURL.path))

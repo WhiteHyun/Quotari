@@ -5,7 +5,6 @@ struct GeneralPreferencesView: View {
   @Environment(UsageStore.self) private var store
   @State private var intervalMinutes: Double = 1
   @State private var importsCustomMascot = false
-  @State private var isImportingCustomMascot = false
   @State private var confirmsCustomMascotRemoval = false
   @State private var customMascotAlert: CustomMascotAlert?
   @Bindable private var loginItems = LoginItemController.shared
@@ -104,7 +103,7 @@ struct GeneralPreferencesView: View {
               if let preview = menuBarPreferences.customMascotIcon(frame: 0) {
                 Image(nsImage: preview)
               }
-              if isImportingCustomMascot {
+              if menuBarPreferences.isCustomMascotOperationInProgress {
                 ProgressView()
                   .controlSize(.small)
               }
@@ -121,7 +120,7 @@ struct GeneralPreferencesView: View {
                 }
               }
             }
-            .disabled(isImportingCustomMascot)
+            .disabled(menuBarPreferences.isCustomMascotOperationInProgress)
           }
           PreferencesRowDivider()
           PreferencesControlRow(L10n.string("Open dashboard")) {
@@ -143,9 +142,7 @@ struct GeneralPreferencesView: View {
       do {
         let urls = try result.get()
         let controller = menuBarPreferences
-        isImportingCustomMascot = true
         Task {
-          defer { isImportingCustomMascot = false }
           do {
             try await controller.importCustomMascot(from: urls)
           } catch {
@@ -172,10 +169,13 @@ struct GeneralPreferencesView: View {
       titleVisibility: .visible
     ) {
       Button(L10n.string("Remove"), role: .destructive) {
-        do {
-          try menuBarPreferences.removeCustomMascot()
-        } catch {
-          customMascotAlert = .removing(error.localizedDescription)
+        let controller = menuBarPreferences
+        Task {
+          do {
+            try await controller.removeCustomMascot()
+          } catch {
+            customMascotAlert = .removing(error.localizedDescription)
+          }
         }
       }
       Button(L10n.string("Cancel"), role: .cancel) {}

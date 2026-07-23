@@ -76,6 +76,12 @@ struct LocalizationTests {
         locale: korean
       ) == "Quotari에 저장된 사본이 삭제됩니다. 다시 사용하려면 원본 PNG 파일을 가져와야 합니다."
     )
+    #expect(
+      L10n.string(
+        "Wait for the current custom mascot operation to finish.",
+        locale: korean
+      ) == "진행 중인 커스텀 마스코트 작업이 끝날 때까지 기다려 주세요."
+    )
   }
 
   @Test func hidesPaceTrendsBelowOnePercentBeforeRounding() {

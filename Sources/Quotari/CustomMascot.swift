@@ -15,6 +15,7 @@ enum CustomMascotError: Error, Equatable, LocalizedError {
   case unsupportedDimensions
   case storageFailure
   case removalFailure
+  case operationInProgress
 
   var errorDescription: String? {
     switch self {
@@ -32,6 +33,8 @@ enum CustomMascotError: Error, Equatable, LocalizedError {
       L10n.string("Quotari couldn’t save the custom mascot.")
     case .removalFailure:
       L10n.string("Quotari couldn’t remove the custom mascot.")
+    case .operationInProgress:
+      L10n.string("Wait for the current custom mascot operation to finish.")
     }
   }
 }

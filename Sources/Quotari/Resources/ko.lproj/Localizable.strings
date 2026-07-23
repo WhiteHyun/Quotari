@@ -468,6 +468,8 @@
 	<string>캐시된 가격 정보 사용 중</string>
 	<key>Version</key>
 	<string>버전</string>
+	<key>Wait for the current custom mascot operation to finish.</key>
+	<string>진행 중인 커스텀 마스코트 작업이 끝날 때까지 기다려 주세요.</string>
 	<key>Waiting for browser login…</key>
 	<string>브라우저 로그인 대기 중…</string>
 	<key>Warning at %lld%%</key>

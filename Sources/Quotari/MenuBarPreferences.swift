@@ -44,10 +44,12 @@ final class MenuBarPreferencesController {
   private(set) var customMascotName: String?
   private(set) var customMascotFrameCount = 0
   private(set) var customMascotRevision = 0
+  private(set) var isCustomMascotOperationInProgress = false
 
   @ObservationIgnored private let defaults: UserDefaults
   @ObservationIgnored let customMascotArchiveURL: URL
   @ObservationIgnored private var customMascotFrames: [NSImage] = []
+  @ObservationIgnored private var customMascotRestoreTask: Task<Void, Never>?
 
   var showsRemainingPercent: Bool {
     get { preferences.showsRemainingPercent }
@@ -90,8 +92,9 @@ final class MenuBarPreferencesController {
       Self.save(fallback, defaults: defaults)
     }
 
-    restoreCustomMascot()
-    if preferences.mascot == .custom, !hasCustomMascot {
+    if FileManager.default.fileExists(atPath: self.customMascotArchiveURL.path) {
+      beginCustomMascotRestore()
+    } else if preferences.mascot == .custom {
       preferences.mascot = .builtIn
       persist()
     }
@@ -124,6 +127,12 @@ final class MenuBarPreferencesController {
   }
 
   func importCustomMascot(from urls: [URL]) async throws {
+    guard !isCustomMascotOperationInProgress else {
+      throw CustomMascotError.operationInProgress
+    }
+    isCustomMascotOperationInProgress = true
+    defer { isCustomMascotOperationInProgress = false }
+
     let selectsImportedMascot = !hasCustomMascot
     let archiveURL = customMascotArchiveURL
     let imported = try await Task.detached(priority: .userInitiated) {
@@ -143,8 +152,17 @@ final class MenuBarPreferencesController {
     }
   }
 
-  func removeCustomMascot() throws {
-    try CustomMascotStore.remove(from: customMascotArchiveURL)
+  func removeCustomMascot() async throws {
+    guard !isCustomMascotOperationInProgress else {
+      throw CustomMascotError.operationInProgress
+    }
+    isCustomMascotOperationInProgress = true
+    defer { isCustomMascotOperationInProgress = false }
+
+    let archiveURL = customMascotArchiveURL
+    try await Task.detached(priority: .userInitiated) {
+      try CustomMascotStore.remove(from: archiveURL)
+    }.value
     customMascotFrames = []
     customMascotName = nil
     customMascotFrameCount = 0
@@ -174,12 +192,31 @@ final class MenuBarPreferencesController {
     return IconRenderer.frameCount
   }
 
-  private func restoreCustomMascot() {
-    guard let loaded = try? CustomMascotStore.load(from: customMascotArchiveURL) else { return }
-    let frames = IconRenderer.customMascotFrames(from: loaded.decodedFrames)
-    customMascotFrames = frames
-    customMascotName = loaded.mascot.name
-    customMascotFrameCount = frames.count
+  func waitForCustomMascotRestore() async {
+    await customMascotRestoreTask?.value
+  }
+
+  private func beginCustomMascotRestore() {
+    isCustomMascotOperationInProgress = true
+    let archiveURL = customMascotArchiveURL
+    customMascotRestoreTask = Task { [weak self] in
+      let loaded = await Task.detached(priority: .userInitiated) {
+        try? CustomMascotStore.load(from: archiveURL)
+      }.value
+      guard let self else { return }
+
+      if let loaded {
+        let frames = IconRenderer.customMascotFrames(from: loaded.decodedFrames)
+        customMascotFrames = frames
+        customMascotName = loaded.mascot.name
+        customMascotFrameCount = frames.count
+      } else if preferences.mascot == .custom {
+        preferences.mascot = .builtIn
+        persist()
+      }
+      isCustomMascotOperationInProgress = false
+      customMascotRestoreTask = nil
+    }
   }
 
   private func persist() {
