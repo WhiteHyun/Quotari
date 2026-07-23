@@ -36,6 +36,7 @@ struct CustomMascotTests {
     #expect(relaunched.preferences.mascot == .custom)
     #expect(relaunched.customMascotName == "owl")
     #expect(relaunched.customMascotFrameCount == 2)
+    #expect(relaunched.customMascotRevision == 1)
 
     try await relaunched.removeCustomMascot()
     #expect(relaunched.preferences.mascot == .builtIn)

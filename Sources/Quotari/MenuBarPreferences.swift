@@ -210,6 +210,7 @@ final class MenuBarPreferencesController {
         customMascotFrames = frames
         customMascotName = loaded.mascot.name
         customMascotFrameCount = frames.count
+        customMascotRevision += 1
       } else if preferences.mascot == .custom {
         preferences.mascot = .builtIn
         persist()
