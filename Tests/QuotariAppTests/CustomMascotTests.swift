@@ -52,6 +52,47 @@ struct CustomMascotTests {
     #expect(frames.allSatisfy { $0.size == NSSize(width: 18, height: 18) })
   }
 
+  @Test func splitsThirtyTwoFrameSpriteSheetUsingPerFrameDimensionLimits() throws {
+    let context = try makeContext("wide-sprite-sheet")
+    defer { context.remove() }
+    let sheetURL = context.directory.appendingPathComponent("wide-runner.png")
+    let colors = (0 ..< CustomMascotStore.maximumFrameCount).map { index in
+      index.isMultiple(of: 2) ? NSColor.systemPurple : NSColor.systemTeal
+    }
+    try spriteSheetPNG(frameSize: 80, colors: colors).write(to: sheetURL)
+
+    let imported = try CustomMascotStore.importedMascot(from: [sheetURL])
+
+    #expect(imported.framePNGs.count == CustomMascotStore.maximumFrameCount)
+    #expect(try IconRenderer.customMascotFrames(from: imported.framePNGs).count == 32)
+  }
+
+  @Test func rejectsTooManySelectedFramesBeforeReadingThem() throws {
+    let context = try makeContext("too-many-frames")
+    defer { context.remove() }
+    let missingURLs = (0 ... CustomMascotStore.maximumFrameCount).map { index in
+      context.directory.appendingPathComponent("missing-\(index).png")
+    }
+
+    #expect(throws: CustomMascotError.invalidFrameCount) {
+      try CustomMascotStore.importedMascot(from: missingURLs)
+    }
+  }
+
+  @Test func rejectsCombinedFrameBytesAtTheImportLimit() throws {
+    let context = try makeContext("oversized-frames")
+    defer { context.remove() }
+    let firstURL = context.directory.appendingPathComponent("large-0.png")
+    let secondURL = context.directory.appendingPathComponent("large-1.png")
+    let oversizedHalf = Data(count: CustomMascotStore.maximumTotalBytes / 2 + 1)
+    try oversizedHalf.write(to: firstURL)
+    try oversizedHalf.write(to: secondURL)
+
+    #expect(throws: CustomMascotError.fileTooLarge) {
+      try CustomMascotStore.importedMascot(from: [firstURL, secondURL])
+    }
+  }
+
   @Test func rejectsFramesWithDifferentPixelSizes() throws {
     let context = try makeContext("mismatched-frames")
     defer { context.remove() }

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import ImageIO
 
 enum MenuBarMascot: String, Codable, Equatable, Hashable, Sendable {
   case builtIn
@@ -62,7 +63,9 @@ enum CustomMascotStore {
     let sortedURLs = urls.sorted {
       $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
     }
-    guard !sortedURLs.isEmpty else { throw CustomMascotError.invalidFrameCount }
+    guard !sortedURLs.isEmpty, sortedURLs.count <= maximumFrameCount else {
+      throw CustomMascotError.invalidFrameCount
+    }
 
     let accessed = sortedURLs.map { url in
       (url, url.startAccessingSecurityScopedResource())
@@ -75,10 +78,23 @@ enum CustomMascotStore {
 
     let framePNGs: [Data]
     if sortedURLs.count == 1 {
-      let data = try readData(from: sortedURLs[0])
+      let data = try readData(
+        from: sortedURLs[0],
+        remainingByteCount: maximumTotalBytes
+      )
       framePNGs = try splitSpriteSheet(data)
     } else {
-      framePNGs = try sortedURLs.map(readData(from:))
+      var importedFrames: [Data] = []
+      var totalBytes = 0
+      for url in sortedURLs {
+        let data = try readData(
+          from: url,
+          remainingByteCount: maximumTotalBytes - totalBytes
+        )
+        importedFrames.append(data)
+        totalBytes += data.count
+      }
+      framePNGs = importedFrames
       _ = try CustomMascotFrameDecoder.decode(framePNGs)
     }
 
@@ -128,19 +144,27 @@ enum CustomMascotStore {
     }
   }
 
-  private static func readData(from url: URL) throws -> Data {
+  private static func readData(
+    from url: URL,
+    remainingByteCount: Int
+  ) throws -> Data {
+    if let fileSize = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+       fileSize > remainingByteCount {
+      throw CustomMascotError.fileTooLarge
+    }
+
     let data: Data
     do {
       data = try Data(contentsOf: url, options: .mappedIfSafe)
     } catch {
       throw CustomMascotError.invalidPNG
     }
-    guard data.count <= maximumTotalBytes else { throw CustomMascotError.fileTooLarge }
+    guard data.count <= remainingByteCount else { throw CustomMascotError.fileTooLarge }
     return data
   }
 
   private static func splitSpriteSheet(_ data: Data) throws -> [Data] {
-    let decoded = try CustomMascotFrameDecoder.decodeImage(data)
+    let decoded = try CustomMascotFrameDecoder.decodeSpriteSheet(data)
     guard decoded.width > decoded.height,
           decoded.width.isMultiple(of: decoded.height)
     else {
@@ -152,7 +176,9 @@ enum CustomMascotStore {
       throw CustomMascotError.invalidFrameCount
     }
 
-    return try (0 ..< frameCount).map { index in
+    var framePNGs: [Data] = []
+    var totalBytes = 0
+    for index in 0 ..< frameCount {
       let crop = CGRect(
         x: index * decoded.height,
         y: 0,
@@ -164,8 +190,13 @@ enum CustomMascotStore {
       else {
         throw CustomMascotError.invalidPNG
       }
-      return png
+      guard png.count <= maximumTotalBytes - totalBytes else {
+        throw CustomMascotError.fileTooLarge
+      }
+      framePNGs.append(png)
+      totalBytes += png.count
     }
+    return framePNGs
   }
 
   private static func displayName(for urls: [URL]) -> String {
@@ -182,6 +213,10 @@ enum CustomMascotStore {
 
 @MainActor
 enum CustomMascotFrameDecoder {
+  private static let maximumFrameWidth = 2048
+  private static let maximumFrameHeight = 1024
+  private static let maximumFrameAspectRatio = 6.0
+
   struct DecodedFrame {
     var image: CGImage
     var width: Int
@@ -205,21 +240,47 @@ enum CustomMascotFrameDecoder {
   }
 
   static func decodeImage(_ data: Data) throws -> DecodedFrame {
+    let frame = try decodePNG(
+      data,
+      maximumWidth: maximumFrameWidth,
+      maximumHeight: maximumFrameHeight
+    )
+    guard Double(frame.width) / Double(frame.height) <= maximumFrameAspectRatio else {
+      throw CustomMascotError.unsupportedDimensions
+    }
+    return frame
+  }
+
+  static func decodeSpriteSheet(_ data: Data) throws -> DecodedFrame {
+    try decodePNG(
+      data,
+      maximumWidth: maximumFrameHeight * CustomMascotStore.maximumFrameCount,
+      maximumHeight: maximumFrameHeight
+    )
+  }
+
+  private static func decodePNG(
+    _ data: Data,
+    maximumWidth: Int,
+    maximumHeight: Int
+  ) throws -> DecodedFrame {
     let pngSignature = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
     guard data.starts(with: pngSignature),
-          let bitmap = NSBitmapImageRep(data: data),
-          let image = bitmap.cgImage
+          let source = CGImageSourceCreateWithData(data as CFData, nil),
+          let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+          let width = properties[kCGImagePropertyPixelWidth] as? Int,
+          let height = properties[kCGImagePropertyPixelHeight] as? Int
     else {
       throw CustomMascotError.invalidPNG
     }
 
-    let width = bitmap.pixelsWide
-    let height = bitmap.pixelsHigh
-    guard (1 ... 2048).contains(width),
-          (1 ... 1024).contains(height),
-          Double(width) / Double(height) <= 6
+    guard (1 ... maximumWidth).contains(width),
+          (1 ... maximumHeight).contains(height)
     else {
       throw CustomMascotError.unsupportedDimensions
+    }
+    guard let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+      throw CustomMascotError.invalidPNG
     }
     return DecodedFrame(image: image, width: width, height: height)
   }
