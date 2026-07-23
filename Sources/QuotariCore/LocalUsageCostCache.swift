@@ -28,20 +28,26 @@ struct LocalUsageCostCache {
     return entry.summary
   }
 
+  @discardableResult
   func save(
     _ summary: CostSummary,
     provider: UsageProvider,
     scopeID: String? = nil,
     now: Date,
     historyDays: Int
-  ) {
+  ) -> Bool {
     let entry = Entry(cachedAt: now, historyDays: historyDays, scopeID: scopeID, summary: summary)
-    guard let data = try? JSONEncoder().encode(entry) else { return }
-    try? fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-    try? data.write(
-      to: cacheURL(provider: provider, scopeID: scopeID, historyDays: historyDays),
-      options: [.atomic]
-    )
+    guard let data = try? JSONEncoder().encode(entry) else { return false }
+    do {
+      try fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+      try data.write(
+        to: cacheURL(provider: provider, scopeID: scopeID, historyDays: historyDays),
+        options: [.atomic]
+      )
+      return true
+    } catch {
+      return false
+    }
   }
 
   func remove(provider: UsageProvider, scopeID: String? = nil, historyDays: Int) {

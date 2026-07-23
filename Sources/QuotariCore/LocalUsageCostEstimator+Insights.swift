@@ -22,12 +22,13 @@ extension LocalUsageCostEstimator {
     now: Date,
     historyDays: Int = 30
   ) async -> UsageInsightsSummary? {
-    guard case let .updated(summary) = await refreshInsights(
+    guard case let .updated(summary) = await refreshInsights(.init(
       provider: provider,
       account: account,
+      credentialTransition: nil,
       now: now,
       historyDays: historyDays
-    ) else { return nil }
+    )) else { return nil }
     return summary
   }
 
@@ -37,12 +38,29 @@ extension LocalUsageCostEstimator {
     now: Date,
     historyDays: Int = 30
   ) async -> UsageCostRefreshOutcome {
-    switch await refreshInsights(
+    await costRefreshOutcome(
       provider: provider,
       account: account,
+      credentialTransition: nil,
       now: now,
       historyDays: historyDays
-    ) {
+    )
+  }
+
+  public func costRefreshOutcome(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    credentialTransition: UsageCostCredentialTransition?,
+    now: Date,
+    historyDays: Int = 30
+  ) async -> UsageCostRefreshOutcome {
+    switch await refreshInsights(.init(
+      provider: provider,
+      account: account,
+      credentialTransition: credentialTransition,
+      now: now,
+      historyDays: historyDays
+    )) {
     case let .updated(summary):
       if let cost = summary.costSummary {
         return .updated(cost)
@@ -56,38 +74,33 @@ extension LocalUsageCostEstimator {
   }
 
   private func refreshInsights(
-    provider: UsageProvider,
-    account: ProviderAccount?,
-    now: Date,
-    historyDays: Int
+    _ request: LocalUsageInsightsRefreshRequest
   ) async -> LocalUsageInsightsRefreshOutcome {
-    guard let scope = resolvedInsightsScope(provider: provider, account: account) else {
+    guard let scope = resolvedInsightsScope(for: request) else {
       return unresolvedScopeOutcome(
-        provider: provider,
-        account: account,
-        historyDays: historyDays
+        provider: request.provider,
+        account: request.account,
+        historyDays: request.historyDays
       )
     }
     let writeContext = beginCacheWriteContext(
-      provider: provider,
+      provider: request.provider,
       scope: scope,
-      now: now,
-      historyDays: historyDays
+      now: request.now,
+      historyDays: request.historyDays
     )
     let historyDays = writeContext.historyDays
     let scan = await localUsageScan(
-      provider: provider,
-      account: account,
-      now: now,
+      provider: request.provider,
+      account: request.account,
+      now: request.now,
       historyDays: historyDays
     )
-    guard !Task.isCancelled,
-          resolvedInsightsScope(provider: provider, account: account) == scope
-    else { return .unavailable }
+    guard scopeIsCurrent(scope, for: request) else { return .unavailable }
     let preparedResult: LocalUsageScanResult
     switch scanResult(
       from: scan.outcome,
-      provider: provider,
+      provider: request.provider,
       scope: scope,
       historyDays: historyDays,
       mutationToken: writeContext.mutationToken
@@ -100,17 +113,32 @@ extension LocalUsageCostEstimator {
       return .unavailable
     }
     let summary = await buildSummary(
-      provider: provider,
+      provider: request.provider,
       result: preparedResult,
       scan: scan,
       scope: scope,
-      now: now
+      now: request.now
     )
-    guard !Task.isCancelled,
-          resolvedInsightsScope(provider: provider, account: account) == scope,
-          let summary
+    guard scopeIsCurrent(scope, for: request), let summary
     else { return .unavailable }
     return cacheSummary(summary, context: writeContext)
+  }
+
+  private func resolvedInsightsScope(
+    for request: LocalUsageInsightsRefreshRequest
+  ) -> ResolvedUsageInsightsScope? {
+    resolvedInsightsScope(
+      provider: request.provider,
+      account: request.account,
+      credentialTransition: request.credentialTransition
+    )
+  }
+
+  private func scopeIsCurrent(
+    _ scope: ResolvedUsageInsightsScope,
+    for request: LocalUsageInsightsRefreshRequest
+  ) -> Bool {
+    !Task.isCancelled && resolvedInsightsScope(for: request) == scope
   }
 
   private func cacheSummary(
@@ -146,108 +174,6 @@ extension LocalUsageCostEstimator {
     cacheCoordinator.invalidate(key: mutationKey) {
       removeCachedAnalysis(provider: provider, scope: scope, historyDays: historyDays)
     }
-  }
-
-  func resolvedInsightsScope(
-    provider: UsageProvider,
-    account: ProviderAccount?
-  ) -> ResolvedUsageInsightsScope? {
-    guard account?.provider == provider || account == nil else { return nil }
-    guard let account else {
-      return sharedInsightsScope(provider: provider, account: nil)
-    }
-
-    switch (provider, account.credentialSource) {
-    case (.codex, .codexAuthFile), (.claude, .claudeCredentialsFile):
-      guard exactCredentialSourceStillBelongs(to: account) else { return nil }
-      return sharedInsightsScope(provider: provider, account: account)
-    case (.codex, .codexKeychain), (.claude, .claudeEnvironment), (.claude, .claudeKeychain):
-      return sharedInsightsScope(provider: provider, account: account)
-    case (_, .quotariRegistry),
-         (.codex, .claudeEnvironment),
-         (.codex, .claudeKeychain),
-         (.codex, .claudeCredentialsFile),
-         (.claude, .codexAuthFile),
-         (.claude, .codexKeychain):
-      return nil
-    }
-  }
-
-  private func sharedInsightsScope(
-    provider: UsageProvider,
-    account: ProviderAccount?
-  ) -> ResolvedUsageInsightsScope? {
-    let roots = LocalUsageCostScanner(
-      environment: environment,
-      homeDirectory: homeDirectory
-    )
-    .scopeIdentityRoots(provider: provider, account: account)
-    guard !roots.isEmpty else { return nil }
-    let rootIdentity = scopeIdentityStore.identities(for: roots).joined(separator: "\n")
-    return ResolvedUsageInsightsScope(
-      key: UsageInsightsScopeKey(
-        provider: provider,
-        accountScopeID: "shared:\(ProviderCredentialIdentity.fingerprint(of: rootIdentity))"
-      ),
-      accountScope: .sharedLocalCache
-    )
-  }
-
-  private func invalidateUnresolvedCredentialScope(
-    provider: UsageProvider,
-    account: ProviderAccount?,
-    historyDays: Int
-  ) {
-    guard let account, account.provider == provider else { return }
-    switch (provider, account.credentialSource) {
-    case (.codex, .codexAuthFile), (.claude, .claudeCredentialsFile):
-      break
-    case (.codex, .codexKeychain),
-         (.codex, .claudeEnvironment),
-         (.codex, .claudeKeychain),
-         (.codex, .claudeCredentialsFile),
-         (.codex, .quotariRegistry),
-         (.claude, .codexAuthFile),
-         (.claude, .codexKeychain),
-         (.claude, .claudeEnvironment),
-         (.claude, .claudeKeychain),
-         (.claude, .quotariRegistry):
-      return
-    }
-    guard let scope = sharedInsightsScope(provider: provider, account: account) else { return }
-    let historyDays = normalizedHistoryDays(historyDays)
-    let key = LocalUsageCacheMutationKey(scopeKey: scope.key, historyDays: historyDays)
-    cacheCoordinator.invalidate(key: key) {
-      removeCachedAnalysis(provider: provider, scope: scope, historyDays: historyDays)
-    }
-  }
-
-  private func exactCredentialSourceStillBelongs(to account: ProviderAccount) -> Bool {
-    let path: String
-    switch account.credentialSource {
-    case let .codexAuthFile(credentialPath), let .claudeCredentialsFile(credentialPath):
-      path = credentialPath
-    case .codexKeychain, .claudeEnvironment, .claudeKeychain, .quotariRegistry:
-      return false
-    }
-    guard let payload = try? Data(contentsOf: URL(fileURLWithPath: path)),
-          let identity = ProviderCredentialIdentity.discoveredAccountIdentity(
-            provider: account.provider,
-            payload: payload
-          )
-    else { return false }
-    let currentAccount = ProviderAccount(
-      provider: account.provider,
-      displayName: account.displayName,
-      detail: account.detail,
-      credentialSource: account.credentialSource,
-      credentialIdentity: identity
-    )
-    return currentAccount.credentialScopeID == account.credentialScopeID
-  }
-
-  func normalizedHistoryDays(_ historyDays: Int) -> Int {
-    max(1, min(365, historyDays))
   }
 
   private func beginCacheWriteContext(
@@ -348,7 +274,7 @@ extension LocalUsageCostEstimator {
     }
   }
 
-  private func removeCachedAnalysis(
+  func removeCachedAnalysis(
     provider: UsageProvider,
     scope: ResolvedUsageInsightsScope,
     historyDays: Int
@@ -361,6 +287,14 @@ extension LocalUsageCostEstimator {
         scopeID: scope.legacyCostScopeID,
         historyDays: historyDays
       )
+    if scope.previousCostScopeID != scope.legacyCostScopeID {
+      LocalUsageCostCache(cacheDirectory: cacheDirectory)
+        .remove(
+          provider: provider,
+          scopeID: scope.previousCostScopeID,
+          historyDays: historyDays
+        )
+    }
   }
 
   @discardableResult
@@ -384,6 +318,13 @@ extension LocalUsageCostEstimator {
         legacyCache.remove(
           provider: context.provider,
           scopeID: context.scope.legacyCostScopeID,
+          historyDays: context.historyDays
+        )
+      }
+      if context.scope.previousCostScopeID != context.scope.legacyCostScopeID {
+        legacyCache.remove(
+          provider: context.provider,
+          scopeID: context.scope.previousCostScopeID,
           historyDays: context.historyDays
         )
       }

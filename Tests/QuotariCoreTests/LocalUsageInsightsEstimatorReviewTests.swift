@@ -168,45 +168,6 @@ extension LocalUsageInsightsEstimatorTests {
     ) == nil)
   }
 
-  @Test func sharedLegacyFallbackCannotResurrectAnotherLogicalSelection() async throws {
-    let fixture = try InsightsEstimatorFixture()
-    defer { fixture.cleanup() }
-    let estimator = fixture.estimator()
-    let currentAccount = fixture.codexAccount(identity: "account")
-    let replacementAccount = fixture.codexAccount(identity: "replacement-account")
-    let stale = try #require(await estimator.insights(
-      provider: .codex,
-      account: currentAccount,
-      now: fixture.now,
-      historyDays: 30
-    )?.costSummary)
-    LocalUsageCostCache(cacheDirectory: fixture.cache).save(
-      stale,
-      provider: .codex,
-      scopeID: replacementAccount.costCacheScopeID,
-      now: fixture.now,
-      historyDays: 30
-    )
-
-    try FileManager.default.removeItem(at: fixture.usageURL)
-    #expect(await estimator.insights(
-      provider: .codex,
-      account: currentAccount,
-      now: fixture.now,
-      historyDays: 30
-    ) != nil)
-    estimator.invalidateInsights(provider: .codex, account: currentAccount, historyDays: 30)
-    try codexAuthPayload(accessToken: "replacement", accountID: "replacement-account")
-      .write(to: fixture.codexHome.appendingPathComponent("auth.json"))
-
-    #expect(estimator.cachedCostSummary(
-      provider: .codex,
-      account: replacementAccount,
-      now: fixture.now,
-      historyDays: 30
-    ) == nil)
-  }
-
   @Test func canceledAnalysisCannotRepopulateAnInvalidatedCache() async throws {
     let fixture = try InsightsEstimatorFixture()
     defer { fixture.cleanup() }

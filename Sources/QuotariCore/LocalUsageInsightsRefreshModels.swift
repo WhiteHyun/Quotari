@@ -3,6 +3,7 @@ import Foundation
 struct ResolvedUsageInsightsScope: Equatable, Sendable {
   var key: UsageInsightsScopeKey
   var accountScope: UsageInsightsAccountScope
+  var previousCostScopeID: String?
 
   var legacyCostScopeID: String {
     key.accountScopeID
@@ -27,4 +28,12 @@ struct LocalUsageCacheWriteContext {
   let now: Date
   let historyDays: Int
   let mutationToken: LocalUsageCacheMutationToken
+}
+
+struct LocalUsageInsightsRefreshRequest {
+  let provider: UsageProvider
+  let account: ProviderAccount?
+  let credentialTransition: UsageCostCredentialTransition?
+  let now: Date
+  let historyDays: Int
 }

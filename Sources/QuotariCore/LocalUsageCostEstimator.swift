@@ -60,7 +60,27 @@ public struct LocalUsageCostEstimator: UsageCostEstimating, UsageInsightsAnalyzi
     now: Date,
     historyDays: Int = 30
   ) -> CostSummary? {
-    guard let scope = resolvedInsightsScope(provider: provider, account: account) else { return nil }
+    cachedCostSummary(
+      provider: provider,
+      account: account,
+      credentialTransition: nil,
+      now: now,
+      historyDays: historyDays
+    )
+  }
+
+  public func cachedCostSummary(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    credentialTransition: UsageCostCredentialTransition?,
+    now: Date,
+    historyDays: Int = 30
+  ) -> CostSummary? {
+    guard let scope = resolvedInsightsScope(
+      provider: provider,
+      account: account,
+      credentialTransition: credentialTransition
+    ) else { return nil }
     let historyDays = normalizedHistoryDays(historyDays)
     let mutationKey = LocalUsageCacheMutationKey(scopeKey: scope.key, historyDays: historyDays)
     return cacheCoordinator.read(key: mutationKey) {
@@ -68,13 +88,38 @@ public struct LocalUsageCostEstimator: UsageCostEstimating, UsageInsightsAnalyzi
         .load(scopeKey: scope.key, now: now, historyDays: historyDays) {
         return insights.costSummary
       }
-      return LocalUsageCostCache(cacheDirectory: cacheDirectory)
-        .load(
+      let legacyCache = LocalUsageCostCache(cacheDirectory: cacheDirectory)
+      if let current = legacyCache.load(
+        provider: provider,
+        scopeID: scope.legacyCostScopeID,
+        now: now,
+        historyDays: historyDays
+      ) {
+        return current
+      }
+      guard scope.previousCostScopeID != scope.legacyCostScopeID,
+            let previous = legacyCache.load(
+              provider: provider,
+              scopeID: scope.previousCostScopeID,
+              now: now,
+              historyDays: historyDays
+            )
+      else { return nil }
+      let migrated = legacyCache.save(
+        previous,
+        provider: provider,
+        scopeID: scope.legacyCostScopeID,
+        now: now,
+        historyDays: historyDays
+      )
+      if migrated {
+        legacyCache.remove(
           provider: provider,
-          scopeID: scope.legacyCostScopeID,
-          now: now,
+          scopeID: scope.previousCostScopeID,
           historyDays: historyDays
         )
+      }
+      return previous
     }
   }
 

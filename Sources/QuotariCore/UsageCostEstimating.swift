@@ -29,10 +29,24 @@ public protocol UsageCostEstimating: Sendable {
     now: Date,
     historyDays: Int
   ) async -> UsageCostRefreshOutcome
+  func costRefreshOutcome(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    credentialTransition: UsageCostCredentialTransition?,
+    now: Date,
+    historyDays: Int
+  ) async -> UsageCostRefreshOutcome
   func invalidateCachedCostSummary(provider: UsageProvider, historyDays: Int)
   func cachedCostSummary(
     provider: UsageProvider,
     account: ProviderAccount?,
+    now: Date,
+    historyDays: Int
+  ) -> CostSummary?
+  func cachedCostSummary(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    credentialTransition: UsageCostCredentialTransition?,
     now: Date,
     historyDays: Int
   ) -> CostSummary?
@@ -47,6 +61,16 @@ public protocol UsageCostEstimating: Sendable {
     account: ProviderAccount?,
     historyDays: Int
   )
+}
+
+public struct UsageCostCredentialTransition: Equatable, Sendable {
+  public let targetScopeID: String
+  public let sourceScopeIDs: Set<String>
+
+  public init(targetScopeID: String, sourceScopeIDs: Set<String>) {
+    self.targetScopeID = targetScopeID
+    self.sourceScopeIDs = sourceScopeIDs
+  }
 }
 
 public enum UsageCostRefreshOutcome: Equatable, Sendable {
@@ -69,6 +93,21 @@ public extension UsageCostEstimating {
     historyDays: Int
   ) -> CostSummary? {
     cachedCostSummary(provider: provider, now: now, historyDays: historyDays)
+  }
+
+  func cachedCostSummary(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    credentialTransition: UsageCostCredentialTransition?,
+    now: Date,
+    historyDays: Int
+  ) -> CostSummary? {
+    cachedCostSummary(
+      provider: provider,
+      account: account,
+      now: now,
+      historyDays: historyDays
+    )
   }
 
   func costSummary(
@@ -101,6 +140,21 @@ public extension UsageCostEstimating {
       return .confirmedEmpty
     }
     return .updated(summary)
+  }
+
+  func costRefreshOutcome(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    credentialTransition: UsageCostCredentialTransition?,
+    now: Date,
+    historyDays: Int
+  ) async -> UsageCostRefreshOutcome {
+    await costRefreshOutcome(
+      provider: provider,
+      account: account,
+      now: now,
+      historyDays: historyDays
+    )
   }
 
   func invalidateCachedCostSummary(
