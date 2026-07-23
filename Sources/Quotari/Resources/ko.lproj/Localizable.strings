@@ -180,6 +180,8 @@
 	<string>로컬 Claude 캐시 로그에서 추정(계정별 데이터 아님)</string>
 	<key>Estimated from local Codex logs</key>
 	<string>로컬 Codex 로그에서 추정</string>
+	<key>Estimated from local Codex logs (not account-specific)</key>
+	<string>로컬 Codex 로그에서 추정(계정별 데이터 아님)</string>
 	<key>Estimated from local logs</key>
 	<string>로컬 로그에서 추정</string>
 	<key>Estimated from selected account's local Claude cache logs</key>
@@ -280,6 +282,12 @@
 	<string>정상</string>
 	<key>Partial estimate%@</key>
 	<string>일부 추정%@</string>
+	<key>Partial estimate</key>
+	<string>일부 추정</string>
+	<key>Partial estimate · not account-specific</key>
+	<string>일부 추정 · 계정별 데이터 아님</string>
+	<key>Partial estimate · unsupported token fields</key>
+	<string>일부 추정 · 지원하지 않는 토큰 필드</string>
 	<key>Partial outage</key>
 	<string>일부 장애</string>
 	<key>Paste the authentication code shown in the browser to continue the Claude Code login.</key>
