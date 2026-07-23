@@ -62,20 +62,34 @@ extension UsageStore {
 
   func cancelDelayedCredentialRefresh(for provider: UsageProvider) {
     guard let delayed = delayedCredentialRefreshTasks.removeValue(forKey: provider) else { return }
+    let currentSelection = selectionRefreshTasks[provider]
     delayed.task.cancel()
     delayed.ownedSelectionTask?.cancel()
     delayed.queuedReplacementTask?.cancel()
-    selectionRefreshTasks[provider]?.cancel()
+    currentSelection?.cancel()
+    publishCredentialRefreshDrain(for: provider, currentSelection: currentSelection)
   }
 
   func cancelDelayedCredentialRefreshAndDrainSelection(for provider: UsageProvider) async {
     let currentSelection = selectionRefreshTasks[provider]
-    let previousDrain = credentialRefreshDrainTasks[provider]?.task
     cancelDelayedCredentialRefresh(for: provider)
+    publishCredentialRefreshDrain(for: provider, currentSelection: currentSelection)
+    await credentialRefreshDrainTasks[provider]?.task.value
+  }
+
+  private func publishCredentialRefreshDrain(
+    for provider: UsageProvider,
+    currentSelection: Task<Void, Never>?
+  ) {
+    guard let currentSelection else { return }
+    let previousDrain = credentialRefreshDrainTasks[provider]?.task
     let generation = UUID()
     let task = Task { @MainActor [weak self] in
       await previousDrain?.value
-      await currentSelection?.value
+      await currentSelection.value
+      // Direct cancellation paths synchronously enqueue a replacement after
+      // publishing this marker. Drain that latest generation as well.
+      await self?.selectionRefreshTasks[provider]?.value
       guard self?.credentialRefreshDrainTasks[provider]?.generation == generation else { return }
       self?.credentialRefreshDrainTasks[provider] = nil
     }
@@ -83,7 +97,6 @@ extension UsageStore {
       generation: generation,
       task: task
     )
-    await task.value
   }
 
   func waitForDelayedCredentialRefreshAndDrainSelection(for provider: UsageProvider) async {
@@ -101,13 +114,8 @@ extension UsageStore {
   }
 
   func cancelAllDelayedCredentialRefreshes() {
-    let delayed = delayedCredentialRefreshTasks
-    delayedCredentialRefreshTasks.removeAll()
-    for (provider, refresh) in delayed {
-      refresh.task.cancel()
-      refresh.ownedSelectionTask?.cancel()
-      refresh.queuedReplacementTask?.cancel()
-      selectionRefreshTasks[provider]?.cancel()
+    for provider in Array(delayedCredentialRefreshTasks.keys) {
+      cancelDelayedCredentialRefresh(for: provider)
     }
   }
 
