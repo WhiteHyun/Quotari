@@ -231,6 +231,10 @@ extension UsageStore {
     defaults: UserDefaults? = nil,
     menuBarPreferences: MenuBarPreferencesController? = nil,
     quotaNotifications: QuotaNotificationController? = nil,
+    postCredentialRefreshDelay: Duration = .seconds(30),
+    postCredentialRefreshSleep: @escaping @Sendable (Duration) async throws -> Void = {
+      try await Task.sleep(for: $0)
+    },
     startsAutomatically: Bool = true
   ) -> UsageStore {
     let isolatedDefaults = defaults ?? ephemeralDefaults()
@@ -260,6 +264,8 @@ extension UsageStore {
       defaults: isolatedDefaults,
       menuBarPreferences: menuBarPreferences ?? .isolatedForTesting(defaults: isolatedDefaults),
       quotaNotifications: isolatedNotifications,
+      postCredentialRefreshDelay: postCredentialRefreshDelay,
+      postCredentialRefreshSleep: postCredentialRefreshSleep,
       startsAutomatically: startsAutomatically
     )
   }

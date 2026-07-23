@@ -10,6 +10,8 @@ struct UsageStoreClaudeSwitchIdentityTests {
     let home = directory.url
     let registry = CapturedAccountStore.inMemoryForTesting()
     let keychain = ClaudeSwitchKeychainBox()
+    let strategy = AutomaticCaptureCountingStrategy()
+    let delay = PostCredentialRefreshGate()
     let (savedAccount, savedPayload) = try savedClaudeSwitchTarget(in: registry)
     let liveKeychain = ProviderAccount(
       provider: .claude,
@@ -29,7 +31,9 @@ struct UsageStoreClaudeSwitchIdentityTests {
       home: home,
       keychain: keychain,
       savedPayload: savedPayload,
-      discovery: discovery
+      discovery: discovery,
+      descriptor: countingClaudeDescriptor(strategy: strategy),
+      postCredentialRefreshSleep: delay.sleep
     )
     await store.reloadAccounts()
     store.claudeProfiles[savedAccount.id] = ClaudeProfile(
@@ -43,8 +47,15 @@ struct UsageStoreClaudeSwitchIdentityTests {
     ))
 
     await store.switchCLIAccount(to: savedAccount)
+    await delay.waitUntilRequested()
+
+    #expect(await strategy.requestCount == 0)
+    await delay.resumeAll()
+    await store.delayedCredentialRefreshTasks[.claude]?.task.value
+    await store.selectionRefreshTasks[.claude]?.value
 
     #expect(store.captureErrors[.claude] == nil)
+    #expect(await strategy.requestCount == 1)
     #expect(store.selectedAccounts[.claude]?.credentialSource == .claudeKeychain(
       service: ClaudeCredentialsStore.keychainService
     ))
@@ -83,10 +94,12 @@ private func claudeSwitchIdentityStore(
   home: URL,
   keychain: ClaudeSwitchKeychainBox,
   savedPayload: Data,
-  discovery: MutableAccountDiscovery
+  discovery: MutableAccountDiscovery,
+  descriptor: ProviderDescriptor,
+  postCredentialRefreshSleep: @escaping @Sendable (Duration) async throws -> Void
 ) -> UsageStore {
   UsageStore.isolatedForTesting(
-    providers: ProviderFixtures.descriptors.filter { $0.id == .claude },
+    providers: [descriptor],
     costEstimator: EmptyCostEstimator(),
     accountDiscovery: discovery,
     accountSwitch: .isolatedForTesting(
@@ -99,6 +112,7 @@ private func claudeSwitchIdentityStore(
       guard case .quotariRegistry(id: "claude:fp-saved") = source else { return nil }
       return try? ClaudeCredentialsStore.parse(savedPayload)
     },
+    postCredentialRefreshSleep: postCredentialRefreshSleep,
     startsAutomatically: false
   )
 }

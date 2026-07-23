@@ -8,8 +8,27 @@ extension UsageStore {
   /// account switch needs to drain before touching the CLI slot.
   func enqueueSelectionRefresh(
     for provider: UsageProvider,
-    waitingForProviderActivity: Bool = false
+    waitingForProviderActivity: Bool = false,
+    interaction: ProviderFetchInteraction = .userInitiated,
+    cancelsDelayedCredentialRefresh: Bool = true,
+    bypassesDelayedCredentialRefresh: Bool = false,
+    waitsForDelayedCredentialRefresh: Bool = false
   ) {
+    if cancelsDelayedCredentialRefresh {
+      cancelDelayedCredentialRefresh(for: provider)
+    }
+    let delayedRefresh = waitsForDelayedCredentialRefresh
+      ? delayedCredentialRefreshTasks[provider]
+      : nil
+    let bypassesOwnedDelayedRefresh = delayedRefresh?.ownedSelectionTask != nil
+    if waitsForDelayedCredentialRefresh,
+       delayedRefresh != nil,
+       delayedRefresh?.ownedSelectionTask == nil {
+      // Rediscovery changed the account while the stabilization timer is
+      // still sleeping. The eventual owner fetch snapshots the latest
+      // selection, so no second generation is needed.
+      return
+    }
     let previousRefresh = selectionRefreshTasks[provider]
     let dashboardRefresh = waitingForProviderActivity ? inFlightRefresh : nil
     let providerFetch = waitingForProviderActivity ? providerFetchTasks[provider]?.task : nil
@@ -23,8 +42,12 @@ extension UsageStore {
     } else {
       dashboardBlockingSelectionRefreshes[provider] = generation
     }
-    previousRefresh?.cancel()
-    selectionRefreshTasks[provider] = Task { @MainActor [weak self] in
+    if delayedRefresh == nil {
+      previousRefresh?.cancel()
+    } else if let queuedReplacement = delayedRefresh?.queuedReplacementTask {
+      queuedReplacement.cancel()
+    }
+    let task = Task { @MainActor [weak self] in
       defer {
         if self?.dashboardBlockingSelectionRefreshes[provider] == generation {
           self?.dashboardBlockingSelectionRefreshes[provider] = nil
@@ -51,9 +74,112 @@ extension UsageStore {
       guard !Task.isCancelled else { return }
       await self?.refresh(
         provider: provider,
-        serializesProviderFetch: waitingForProviderActivity
+        serializesProviderFetch: waitingForProviderActivity,
+        interaction: interaction,
+        bypassesDelayedCredentialRefresh: bypassesDelayedCredentialRefresh
+          || bypassesOwnedDelayedRefresh
       )
     }
+    selectionRefreshTasks[provider] = task
+    if bypassesOwnedDelayedRefresh,
+       var delayed = delayedCredentialRefreshTasks[provider],
+       delayed.generation == delayedRefresh?.generation {
+      delayed.queuedReplacementTask = task
+      delayedCredentialRefreshTasks[provider] = delayed
+    }
+  }
+
+  /// Login and account switching can replace Claude Code's rotating OAuth
+  /// grant. Waiting briefly avoids immediately racing another Claude process
+  /// that is still persisting the same credential transition.
+  func enqueuePostCredentialRefresh(for provider: UsageProvider) {
+    guard provider == .claude else {
+      enqueueSelectionRefresh(for: provider)
+      return
+    }
+    cancelDelayedCredentialRefresh(for: provider)
+    // Login/switch rediscovery may have selected the new live row while the
+    // credential gate was still closed. Supersede that eager selection task;
+    // the delayed replacement will retain and drain it as its predecessor.
+    selectionRefreshTasks[provider]?.cancel()
+    let delay = postCredentialRefreshDelay
+    let sleep = postCredentialRefreshSleep
+    let generation = UUID()
+    let task = Task { @MainActor [weak self] in
+      do {
+        try await sleep(delay)
+      } catch {
+        return
+      }
+      guard let self, !Task.isCancelled,
+            delayedCredentialRefreshTasks[provider]?.generation == generation
+      else { return }
+      guard isProviderEnabled(provider) else { return }
+      enqueueSelectionRefresh(
+        for: provider,
+        interaction: .background,
+        cancelsDelayedCredentialRefresh: false,
+        bypassesDelayedCredentialRefresh: true
+      )
+      let refresh = selectionRefreshTasks[provider]
+      if var delayed = delayedCredentialRefreshTasks[provider],
+         delayed.generation == generation {
+        delayed.ownedSelectionTask = refresh
+        delayedCredentialRefreshTasks[provider] = delayed
+      }
+      await refresh?.value
+      // Rediscovery can append a replacement while the owner is fetching.
+      // Keep the gate closed until the latest queued generation also exits;
+      // replacements already drain their predecessor and deliberately do not
+      // wait on this wrapper, avoiding a cycle.
+      while !Task.isCancelled,
+            delayedCredentialRefreshTasks[provider]?.generation == generation,
+            dashboardBlockingSelectionRefreshes[provider] != nil {
+        await selectionRefreshTasks[provider]?.value
+      }
+      if delayedCredentialRefreshTasks[provider]?.generation == generation {
+        delayedCredentialRefreshTasks[provider] = nil
+      }
+    }
+    delayedCredentialRefreshTasks[provider] = DelayedCredentialRefreshTask(
+      generation: generation,
+      task: task,
+      ownedSelectionTask: nil,
+      queuedReplacementTask: nil
+    )
+  }
+
+  func cancelDelayedCredentialRefresh(for provider: UsageProvider) {
+    guard let delayed = delayedCredentialRefreshTasks.removeValue(forKey: provider) else { return }
+    delayed.task.cancel()
+    delayed.ownedSelectionTask?.cancel()
+    delayed.queuedReplacementTask?.cancel()
+    selectionRefreshTasks[provider]?.cancel()
+  }
+
+  func cancelDelayedCredentialRefreshAndDrainSelection(for provider: UsageProvider) async {
+    let currentSelection = selectionRefreshTasks[provider]
+    cancelDelayedCredentialRefresh(for: provider)
+    await currentSelection?.value
+  }
+
+  func cancelAllDelayedCredentialRefreshes() {
+    let delayed = delayedCredentialRefreshTasks
+    delayedCredentialRefreshTasks.removeAll()
+    delayed.forEach { provider, refresh in
+      refresh.task.cancel()
+      refresh.ownedSelectionTask?.cancel()
+      refresh.queuedReplacementTask?.cancel()
+      selectionRefreshTasks[provider]?.cancel()
+    }
+  }
+
+  func isCredentialRefreshDelayed(
+    for provider: UsageProvider,
+    interaction: ProviderFetchInteraction
+  ) -> Bool {
+    guard case .background = interaction else { return false }
+    return delayedCredentialRefreshTasks[provider] != nil
   }
 
   func invalidateAccountRevision(for provider: UsageProvider) {

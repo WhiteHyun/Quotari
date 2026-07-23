@@ -12,6 +12,9 @@ extension UsageStore {
     reusesLatestAccountReload: Bool = false,
     interaction: ProviderFetchInteraction = .userInitiated
   ) {
+    if case .userInitiated = interaction {
+      cancelAllDelayedCredentialRefreshes()
+    }
     // Don't start a fetch while a switch is rewriting a credential slot.
     guard !isSwitching else { return }
     guard inFlightRefresh == nil else {
@@ -28,6 +31,7 @@ extension UsageStore {
   }
 
   func refresh() async {
+    cancelAllDelayedCredentialRefreshes()
     await refresh(
       clearsInFlightRefresh: false,
       reusesLatestAccountReload: false,
@@ -163,7 +167,8 @@ extension UsageStore {
     await withTaskGroup(
       of: (UsageProvider, ProviderFetchCompletion).self
     ) { group in
-      for descriptor in enabledProviderDescriptors {
+      for descriptor in enabledProviderDescriptors
+      where !isCredentialRefreshDelayed(for: descriptor.id, interaction: interaction) {
         group.addTask {
           await (
             descriptor.id,
@@ -196,7 +201,9 @@ extension UsageStore {
     excluding credentialScopeIDs: [UsageProvider: Set<String>]
   ) async {
     await withTaskGroup(of: Void.self) { group in
-      for descriptor in enabledProviderDescriptors where !(monitoredAccounts[descriptor.id] ?? []).isEmpty {
+      for descriptor in enabledProviderDescriptors
+      where delayedCredentialRefreshTasks[descriptor.id] == nil
+        && !(monitoredAccounts[descriptor.id] ?? []).isEmpty {
         group.addTask {
           await self.refreshAccountUsage(
             for: descriptor.id,
@@ -251,12 +258,18 @@ extension UsageStore {
   func refresh(
     provider: UsageProvider,
     serializesProviderFetch: Bool = false,
-    interaction: ProviderFetchInteraction = .userInitiated
+    interaction: ProviderFetchInteraction = .userInitiated,
+    bypassesDelayedCredentialRefresh: Bool = false
   ) async {
+    if case .userInitiated = interaction {
+      await cancelDelayedCredentialRefreshAndDrainSelection(for: provider)
+    }
     // A superseded selection fetch (cancelled when the selection changed) or a
     // fetch that a switch has since started must not hit the network and
     // rotate a credential slot out from under the switch.
     guard !Task.isCancelled, !isSwitching, isProviderEnabled(provider),
+          (bypassesDelayedCredentialRefresh
+            || !isCredentialRefreshDelayed(for: provider, interaction: interaction)),
           let descriptor = providers.first(where: { $0.id == provider })
     else { return }
     if providersNeedingMonitoredUsageRestore.contains(provider) {

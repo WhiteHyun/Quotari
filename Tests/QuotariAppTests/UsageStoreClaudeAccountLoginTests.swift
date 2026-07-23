@@ -67,9 +67,10 @@ struct UsageStoreClaudeAccountLoginTests {
     #expect(store.accountLoginErrors[.claude] == nil)
   }
 
-  @Test func successfulLoginRefreshesUsageAfterCredentialGateOpens() async throws {
+  @Test func successfulLoginRefreshesUsageAfterCredentialStabilizationDelay() async throws {
     let context = try makeClaudeLoginContext()
     let strategy = AutomaticCaptureCountingStrategy()
+    let delay = PostCredentialRefreshGate()
     let requestsBeforeLogin = ClaudeLoginIntBox()
     let addedPayload = claudePayload(accessToken: "added-access", refreshToken: "added-refresh")
     let login = AccountLoginService { provider in
@@ -83,10 +84,18 @@ struct UsageStoreClaudeAccountLoginTests {
     }
     let store = context.makeStore(
       login: login,
-      descriptor: countingClaudeDescriptor(strategy: strategy)
+      descriptor: countingClaudeDescriptor(strategy: strategy),
+      postCredentialRefreshSleep: delay.sleep
     )
 
     await store.addAccount(for: .claude)
+    await delay.waitUntilRequested()
+
+    #expect(await strategy.requestCount == requestsBeforeLogin.value)
+    #expect(await delay.requestedDurations == [.seconds(30)])
+
+    await delay.resumeAll()
+    await store.delayedCredentialRefreshTasks[.claude]?.task.value
     await store.selectionRefreshTasks[.claude]?.value
 
     #expect(await strategy.requestCount == requestsBeforeLogin.value + 1)

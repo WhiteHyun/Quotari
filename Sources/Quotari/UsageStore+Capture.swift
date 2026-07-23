@@ -116,9 +116,10 @@ extension UsageStore {
       startQueuedAccountRediscoveryIfNeeded()
       if shouldRefresh {
         // A selection refresh created during reload can observe the closed
-        // gate and exit. Replace it after opening the gate so every successful
-        // switch performs exactly one serialized fetch of the live slot.
-        enqueueSelectionRefresh(for: provider)
+        // gate and exit. Replace it after opening the gate; Claude receives a
+        // stabilization window before its one serialized fetch of the live
+        // slot, while other providers retain their immediate behavior.
+        enqueuePostCredentialRefresh(for: provider)
       }
     }
     // Drain whatever was already running when the gate closed.

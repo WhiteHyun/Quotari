@@ -131,6 +131,12 @@ final class UsageStore {
   /// The fetch `selectAccount` starts, tracked so an account switch can await
   /// it (it may rotate/persist the live token the switch is about to back up).
   var selectionRefreshTasks: [UsageProvider: Task<Void, Never>] = [:]
+  /// Claude Code rotates refresh tokens. Give a newly established credential
+  /// time to settle before Quotari starts an automatic usage fetch that may
+  /// perform another rotation.
+  var delayedCredentialRefreshTasks: [UsageProvider: DelayedCredentialRefreshTask] = [:]
+  let postCredentialRefreshDelay: Duration
+  let postCredentialRefreshSleep: @Sendable (Duration) async throws -> Void
   /// Disabling clears per-account usage. The first successful provider fetch
   /// after reactivation consumes this marker and restores every monitored row.
   var providersNeedingMonitoredUsageRestore = Set<UsageProvider>()
@@ -170,6 +176,10 @@ final class UsageStore {
     providerActivation: ProviderActivationController? = nil,
     menuBarPreferences: MenuBarPreferencesController? = nil,
     quotaNotifications: QuotaNotificationController? = nil,
+    postCredentialRefreshDelay: Duration = .seconds(30),
+    postCredentialRefreshSleep: @escaping @Sendable (Duration) async throws -> Void = {
+      try await Task.sleep(for: $0)
+    },
     startsAutomatically: Bool = true
   ) {
     assert(ProviderRegistry.isComplete, "Every UsageProvider case needs a descriptor")
@@ -196,6 +206,8 @@ final class UsageStore {
     self.providerActivation = providerActivation ?? ProviderActivationController(defaults: defaults)
     self.menuBarPreferences = menuBarPreferences ?? MenuBarPreferencesController(defaults: defaults)
     self.quotaNotifications = quotaNotifications ?? QuotaNotificationController(defaults: defaults)
+    self.postCredentialRefreshDelay = postCredentialRefreshDelay
+    self.postCredentialRefreshSleep = postCredentialRefreshSleep
     selectedAccounts = accountSelectionStore.load()
     do {
       persistedMonitoredAccounts = try self.accountMonitoringStore.load()
@@ -347,7 +359,14 @@ extension UsageStore {
     activeCLIAccounts = nextActiveCLIAccounts
     monitoredAccounts = nextMonitoredAccounts
     for (provider, update) in refreshedSelections {
-      selectAccount(update.account, for: provider, standingInFor: update.origin)
+      selectAccount(
+        update.account,
+        for: provider,
+        standingInFor: update.origin,
+        refreshInteraction: .background,
+        cancelsDelayedCredentialRefresh: false,
+        waitsForDelayedCredentialRefresh: true
+      )
     }
     if persistedMonitoredAccounts != persistedMonitoringBeforeReconciliation || !isMonitoringConfigurationLoaded {
       persistMonitoringSelections(allowsRecovery: true)
@@ -362,7 +381,10 @@ extension UsageStore {
   func selectAccount(
     _ account: ProviderAccount?,
     for provider: UsageProvider,
-    standingInFor origin: ProviderAccount?
+    standingInFor origin: ProviderAccount?,
+    refreshInteraction: ProviderFetchInteraction = .userInitiated,
+    cancelsDelayedCredentialRefresh: Bool = true,
+    waitsForDelayedCredentialRefresh: Bool = false
   ) {
     let originChanged = reconciledSelectionOrigins[provider] != origin
     reconciledSelectionOrigins[provider] = origin
@@ -390,8 +412,20 @@ extension UsageStore {
     lastCostScans[provider] = nil
     lastEmptyCostScans[provider] = nil
     latestReportedCostFallbacks[provider] = nil
-    enqueueSelectionRefresh(for: provider)
+    enqueueSelectionRefresh(
+      for: provider,
+      interaction: refreshInteraction,
+      cancelsDelayedCredentialRefresh: cancelsDelayedCredentialRefresh,
+      waitsForDelayedCredentialRefresh: waitsForDelayedCredentialRefresh
+    )
   }
+}
+
+struct DelayedCredentialRefreshTask {
+  let generation: UUID
+  let task: Task<Void, Never>
+  var ownedSelectionTask: Task<Void, Never>?
+  var queuedReplacementTask: Task<Void, Never>?
 }
 
 private struct AccountRediscoveryWaiter {
