@@ -43,6 +43,7 @@ extension UsageStore {
 
   private func disableProvider(_ provider: UsageProvider) {
     invalidateAccountRevision(for: provider)
+    cancelDelayedCredentialRefresh(for: provider)
 
     snapshots[provider] = nil
     errors[provider] = nil

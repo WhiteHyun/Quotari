@@ -12,6 +12,9 @@ extension UsageStore {
     reusesLatestAccountReload: Bool = false,
     interaction: ProviderFetchInteraction = .userInitiated
   ) {
+    if case .userInitiated = interaction {
+      cancelAllDelayedCredentialRefreshes()
+    }
     // Don't start a fetch while a switch is rewriting a credential slot.
     guard !isSwitching else { return }
     guard inFlightRefresh == nil else {
@@ -28,6 +31,7 @@ extension UsageStore {
   }
 
   func refresh() async {
+    cancelAllDelayedCredentialRefreshes()
     await refresh(
       clearsInFlightRefresh: false,
       reusesLatestAccountReload: false,
@@ -160,10 +164,20 @@ extension UsageStore {
   func performRefresh(interaction: ProviderFetchInteraction) async {
     let now = Date()
     var fetchedCredentialScopeIDs: [UsageProvider: Set<String>] = [:]
+    // A provider excluded at the start of this dashboard generation stays
+    // excluded through its monitored-account phase. A user action can cancel
+    // the delay while another provider is still fetching, but that must not
+    // admit a second credential-rotating request into this older generation.
+    let delayedProviders = Set(enabledProviderDescriptors.compactMap { descriptor in
+      isCredentialRefreshDelayed(for: descriptor.id, interaction: interaction)
+        ? descriptor.id
+        : nil
+    })
     await withTaskGroup(
       of: (UsageProvider, ProviderFetchCompletion).self
     ) { group in
-      for descriptor in enabledProviderDescriptors {
+      for descriptor in enabledProviderDescriptors
+        where !delayedProviders.contains(descriptor.id) {
         group.addTask {
           await (
             descriptor.id,
@@ -184,7 +198,10 @@ extension UsageStore {
         apply(provider: provider, account: completion.account, result: completion.result)
       }
     }
-    await refreshMonitoredAccountUsage(excluding: fetchedCredentialScopeIDs)
+    await refreshMonitoredAccountUsage(
+      excluding: fetchedCredentialScopeIDs,
+      delayedProviders: delayedProviders
+    )
     lastRefresh = Date()
     // Hidden saved copies must track live-token rotations between account
     // reloads too — a slot swapped right after a rotation would otherwise
@@ -193,10 +210,13 @@ extension UsageStore {
   }
 
   private func refreshMonitoredAccountUsage(
-    excluding credentialScopeIDs: [UsageProvider: Set<String>]
+    excluding credentialScopeIDs: [UsageProvider: Set<String>],
+    delayedProviders: Set<UsageProvider>
   ) async {
     await withTaskGroup(of: Void.self) { group in
-      for descriptor in enabledProviderDescriptors where !(monitoredAccounts[descriptor.id] ?? []).isEmpty {
+      for descriptor in enabledProviderDescriptors
+        where !delayedProviders.contains(descriptor.id)
+        && !(monitoredAccounts[descriptor.id] ?? []).isEmpty {
         group.addTask {
           await self.refreshAccountUsage(
             for: descriptor.id,
@@ -251,12 +271,19 @@ extension UsageStore {
   func refresh(
     provider: UsageProvider,
     serializesProviderFetch: Bool = false,
-    interaction: ProviderFetchInteraction = .userInitiated
+    interaction: ProviderFetchInteraction = .userInitiated,
+    bypassesDelayedCredentialRefresh: Bool = false,
+    drainsDelayedCredentialRefresh: Bool = true
   ) async {
+    if case .userInitiated = interaction, drainsDelayedCredentialRefresh {
+      await cancelDelayedCredentialRefreshAndDrainSelection(for: provider)
+    }
     // A superseded selection fetch (cancelled when the selection changed) or a
     // fetch that a switch has since started must not hit the network and
     // rotate a credential slot out from under the switch.
     guard !Task.isCancelled, !isSwitching, isProviderEnabled(provider),
+          bypassesDelayedCredentialRefresh
+          || !isCredentialRefreshDelayed(for: provider, interaction: interaction),
           let descriptor = providers.first(where: { $0.id == provider })
     else { return }
     if providersNeedingMonitoredUsageRestore.contains(provider) {
@@ -290,7 +317,8 @@ extension UsageStore {
         for: provider,
         force: false,
         notifiesQuota: true,
-        excludingCredentialScopeIDs: coveredCredentialScopeIDs
+        excludingCredentialScopeIDs: coveredCredentialScopeIDs,
+        bypassesDelayedCredentialRefresh: bypassesDelayedCredentialRefresh
       )
     }
     await syncCapturedCopies(of: capturedCopyCandidates.filter { $0.provider == provider })

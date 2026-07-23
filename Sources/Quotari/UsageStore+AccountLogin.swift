@@ -145,7 +145,7 @@ extension UsageStore {
       if provider == .claude {
         endAccountLoginCredentialGate(ifOwnedBy: &ownsCredentialGate)
       }
-      enqueueSelectionRefresh(for: provider)
+      enqueuePostCredentialRefresh(for: provider)
     } catch is CancellationError {
       let restorationError = await restoreClaudeAccountIfNeeded(
         preservingDashboardSelection: persistableSelections()[provider],

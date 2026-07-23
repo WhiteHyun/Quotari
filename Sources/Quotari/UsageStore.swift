@@ -9,13 +9,13 @@ final class UsageStore {
   var snapshots: [UsageProvider: UsageSnapshot] = [:]
   var errors: [UsageProvider: String] = [:]
   var sourceLabels: [UsageProvider: String] = [:]
-  private(set) var accounts: [UsageProvider: [ProviderAccount]] = [:]
-  private(set) var providersWithDiscoveredCredentials = Set<UsageProvider>()
-  private(set) var credentialDiscoveryCompleted = Set<UsageProvider>()
+  var accounts: [UsageProvider: [ProviderAccount]] = [:]
+  var providersWithDiscoveredCredentials = Set<UsageProvider>()
+  var credentialDiscoveryCompleted = Set<UsageProvider>()
   private(set) var selectedAccounts: [UsageProvider: ProviderAccount] = [:]
   /// The live account each CLI resolves without an explicit Quotari override.
   /// This is discovered from provider configuration rather than row order.
-  private(set) var activeCLIAccounts: [UsageProvider: ProviderAccount] = [:]
+  var activeCLIAccounts: [UsageProvider: ProviderAccount] = [:]
   /// Visible accounts whose quota and usage are refreshed in the background.
   /// This is independent from the single account shown on the dashboard.
   var monitoredAccounts: [UsageProvider: [ProviderAccount]] = [:]
@@ -29,7 +29,7 @@ final class UsageStore {
   var isMonitoringConfigurationLoaded = true
   /// The hidden saved registry copy behind each live account, keyed by the
   /// live account's id — identities that are saved while also being live.
-  private(set) var capturedEquivalents: [String: ProviderAccount] = [:]
+  var capturedEquivalents: [String: ProviderAccount] = [:]
   /// The saved account a reconciled live selection stands in for; kept so the
   /// persisted selection stays on the saved account and a later slot reuse
   /// falls back to it instead of silently following the slot.
@@ -46,16 +46,16 @@ final class UsageStore {
   /// The shared account-discovery pass used by app activation, Settings, and
   /// manual reloads. Joining this task prevents simultaneous lifecycle events
   /// from repeating the same keychain and credential-file reads.
-  private(set) var inFlightAccountReload: Task<Void, Never>?
+  var inFlightAccountReload: Task<Void, Never>?
   /// Providers whose discovered credentials are being copied into the registry.
   /// A fetch that starts after this gate closes waits for the reload to finish,
   /// so it receives the newly established live-to-registry identity link.
   var automaticallyCapturingProviders = Set<UsageProvider>()
-  private(set) var accountRediscoveryRequest: UInt = 0
-  private(set) var completedAccountRediscoveryRequest: UInt = 0
+  var accountRediscoveryRequest: UInt = 0
+  var completedAccountRediscoveryRequest: UInt = 0
   /// Add Account preservation overrides keyed to the exact coalesced reload request.
   var accountPreservationRequests: [UsageProvider: UInt] = [:]
-  private var accountRediscoveryWaiters: [AccountRediscoveryWaiter] = []
+  var accountRediscoveryWaiters: [AccountRediscoveryWaiter] = []
   /// True while an account switch is writing a credential slot. Refreshes are
   /// suppressed for the window so none rotates/persists a slot the switch is
   /// mid-way through reading and overwriting. This coordinates Quotari's own
@@ -131,6 +131,16 @@ final class UsageStore {
   /// The fetch `selectAccount` starts, tracked so an account switch can await
   /// it (it may rotate/persist the live token the switch is about to back up).
   var selectionRefreshTasks: [UsageProvider: Task<Void, Never>] = [:]
+  /// Claude Code rotates refresh tokens. Give a newly established credential
+  /// time to settle before Quotari starts an automatic usage fetch that may
+  /// perform another rotation.
+  var delayedCredentialRefreshTasks: [UsageProvider: DelayedCredentialRefreshTask] = [:]
+  /// A user-initiated refresh can cancel a delayed generation while its
+  /// non-cooperative selection fetch is still exiting. Keep that drain visible
+  /// to newly arriving background account requests until the fetch completes.
+  var credentialRefreshDrainTasks: [UsageProvider: CredentialRefreshDrainTask] = [:]
+  let postCredentialRefreshDelay: Duration
+  let postCredentialRefreshSleep: @Sendable (Duration) async throws -> Void
   /// Disabling clears per-account usage. The first successful provider fetch
   /// after reactivation consumes this marker and restores every monitored row.
   var providersNeedingMonitoredUsageRestore = Set<UsageProvider>()
@@ -170,6 +180,10 @@ final class UsageStore {
     providerActivation: ProviderActivationController? = nil,
     menuBarPreferences: MenuBarPreferencesController? = nil,
     quotaNotifications: QuotaNotificationController? = nil,
+    postCredentialRefreshDelay: Duration = .seconds(30),
+    postCredentialRefreshSleep: @escaping @Sendable (Duration) async throws -> Void = {
+      try await Task.sleep(for: $0)
+    },
     startsAutomatically: Bool = true
   ) {
     assert(ProviderRegistry.isComplete, "Every UsageProvider case needs a descriptor")
@@ -196,6 +210,8 @@ final class UsageStore {
     self.providerActivation = providerActivation ?? ProviderActivationController(defaults: defaults)
     self.menuBarPreferences = menuBarPreferences ?? MenuBarPreferencesController(defaults: defaults)
     self.quotaNotifications = quotaNotifications ?? QuotaNotificationController(defaults: defaults)
+    self.postCredentialRefreshDelay = postCredentialRefreshDelay
+    self.postCredentialRefreshSleep = postCredentialRefreshSleep
     selectedAccounts = accountSelectionStore.load()
     do {
       persistedMonitoredAccounts = try self.accountMonitoringStore.load()
@@ -229,132 +245,6 @@ final class UsageStore {
 }
 
 extension UsageStore {
-  func beginAccountRediscovery() {
-    accountRediscoveryRequest &+= 1
-    startQueuedAccountRediscoveryIfNeeded()
-  }
-
-  func startQueuedAccountRediscoveryIfNeeded(allowWhileSwitching: Bool = false) {
-    guard allowWhileSwitching || !isSwitching,
-          inFlightAccountReload == nil,
-          completedAccountRediscoveryRequest != accountRediscoveryRequest
-    else { return }
-    let drainableRequest = accountRediscoveryRequest
-    inFlightAccountReload = Task { [weak self] in
-      await self?.performQueuedAccountRediscovery(startingWith: drainableRequest)
-    }
-  }
-
-  func reloadAccounts(preserving provider: UsageProvider? = nil) async {
-    accountRediscoveryRequest &+= 1
-    let request = accountRediscoveryRequest
-    if let provider {
-      accountPreservationRequests[provider] = request
-    }
-    startQueuedAccountRediscoveryIfNeeded()
-    await waitForAccountRediscovery(request)
-  }
-
-  func reloadAccountsDuringSwitch() async {
-    accountRediscoveryRequest &+= 1
-    let request = accountRediscoveryRequest
-    startQueuedAccountRediscoveryIfNeeded(allowWhileSwitching: true)
-    await waitForAccountRediscovery(request)
-  }
-
-  private func performQueuedAccountRediscovery(startingWith drainableRequest: UInt) async {
-    defer {
-      inFlightAccountReload = nil
-      startQueuedAccountRediscoveryIfNeeded()
-    }
-    var request = isSwitching ? drainableRequest : accountRediscoveryRequest
-    while completedAccountRediscoveryRequest != request {
-      let preservingProviders = accountPreservationProviders(through: request)
-      await performAccountReload(preserving: preservingProviders)
-      completeAccountPreservationRequests(preservingProviders, through: request)
-      completedAccountRediscoveryRequest = request
-      resumeAccountRediscoveryWaiters(through: request)
-      // Once a switch closes the gate, finish only the pass that was already
-      // reading. Its newer requests stay queued for the mandatory post-write
-      // discovery (or for the reopened gate after that pass).
-      guard !isSwitching else { return }
-      request = accountRediscoveryRequest
-    }
-  }
-
-  private func waitForAccountRediscovery(_ request: UInt) async {
-    guard completedAccountRediscoveryRequest < request else { return }
-    await withCheckedContinuation { continuation in
-      accountRediscoveryWaiters.append(.init(request: request, continuation: continuation))
-    }
-  }
-
-  private func resumeAccountRediscoveryWaiters(through request: UInt) {
-    var pending: [AccountRediscoveryWaiter] = []
-    for waiter in accountRediscoveryWaiters {
-      if waiter.request <= request {
-        waiter.continuation.resume()
-      } else {
-        pending.append(waiter)
-      }
-    }
-    accountRediscoveryWaiters = pending
-  }
-
-  private func performAccountReload(preserving providersForLogin: Set<UsageProvider>) async {
-    var gatedProviders = Set<UsageProvider>()
-    defer { automaticallyCapturingProviders.subtract(gatedProviders) }
-    var reloadStates: [UsageProvider: ProviderAccountReloadState] = [:]
-    var nextProvidersWithDiscoveredCredentials = Set<UsageProvider>()
-    var refreshedSelections: [(UsageProvider, SelectionUpdate)] = []
-    var nextActiveCLIAccounts: [UsageProvider: ProviderAccount] = [:]
-    var alreadyCaptured: [String: ProviderAccount] = [:]
-    var syncCandidates: [ProviderAccount] = []
-    for descriptor in providers {
-      let state = await reloadProviderState(for: descriptor, preserving: providersForLogin)
-      if state.keepsCaptureGate {
-        gatedProviders.insert(state.provider)
-      }
-      if !state.accounts.isEmpty {
-        nextProvidersWithDiscoveredCredentials.insert(state.provider)
-      }
-      if let selectionUpdate = state.selectionUpdate {
-        refreshedSelections.append((state.provider, selectionUpdate))
-      }
-      if let activeCLIAccount = state.activeCLIAccount {
-        nextActiveCLIAccounts[state.provider] = activeCLIAccount
-      }
-      alreadyCaptured.merge(state.capturedCopies) { current, _ in current }
-      syncCandidates += state.accounts.filter { state.capturedCopies.keys.contains($0.id) }
-      reloadStates[state.provider] = state
-    }
-    // Reconcile monitoring only after every provider await has completed. A
-    // Settings toggle can run while this main-actor reload is suspended; using
-    // the latest persisted choices here prevents an earlier provider snapshot
-    // from overwriting that user action when a later provider finishes.
-    let persistedMonitoringBeforeReconciliation = persistedMonitoredAccounts
-    var nextMonitoredAccounts: [UsageProvider: [ProviderAccount]] = [:]
-    for descriptor in providers {
-      nextMonitoredAccounts[descriptor.id] = reloadedMonitoredAccounts(
-        reloadStates[descriptor.id],
-        capturedCopies: alreadyCaptured
-      )
-    }
-    accounts = reloadStates.mapValues(\.accounts)
-    providersWithDiscoveredCredentials = nextProvidersWithDiscoveredCredentials
-    credentialDiscoveryCompleted = Set(providers.map(\.id))
-    capturedEquivalents = alreadyCaptured
-    activeCLIAccounts = nextActiveCLIAccounts
-    monitoredAccounts = nextMonitoredAccounts
-    for (provider, update) in refreshedSelections {
-      selectAccount(update.account, for: provider, standingInFor: update.origin)
-    }
-    if persistedMonitoredAccounts != persistedMonitoringBeforeReconciliation || !isMonitoringConfigurationLoaded {
-      persistMonitoringSelections(allowsRecovery: true)
-    }
-    await finishAccountReload(syncCandidates: syncCandidates)
-  }
-
   /// `origin` is the saved account a reconciled live selection stands in for
   /// (nil for a direct user choice). The persisted selection always records
   /// the origin, so a relaunch — or a slot reused by another login — comes
@@ -362,7 +252,10 @@ extension UsageStore {
   func selectAccount(
     _ account: ProviderAccount?,
     for provider: UsageProvider,
-    standingInFor origin: ProviderAccount?
+    standingInFor origin: ProviderAccount?,
+    refreshInteraction: ProviderFetchInteraction = .userInitiated,
+    cancelsDelayedCredentialRefresh: Bool = true,
+    waitsForDelayedCredentialRefresh: Bool = false
   ) {
     let originChanged = reconciledSelectionOrigins[provider] != origin
     reconciledSelectionOrigins[provider] = origin
@@ -390,11 +283,16 @@ extension UsageStore {
     lastCostScans[provider] = nil
     lastEmptyCostScans[provider] = nil
     latestReportedCostFallbacks[provider] = nil
-    enqueueSelectionRefresh(for: provider)
+    enqueueSelectionRefresh(
+      for: provider,
+      interaction: refreshInteraction,
+      cancelsDelayedCredentialRefresh: cancelsDelayedCredentialRefresh,
+      waitsForDelayedCredentialRefresh: waitsForDelayedCredentialRefresh
+    )
   }
 }
 
-private struct AccountRediscoveryWaiter {
+struct AccountRediscoveryWaiter {
   let request: UInt
   let continuation: CheckedContinuation<Void, Never>
 }

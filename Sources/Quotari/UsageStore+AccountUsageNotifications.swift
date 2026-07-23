@@ -45,7 +45,8 @@ extension UsageStore {
       notifiesQuota: true,
       includingLogicalAccountIDs: request.includingLogicalAccountIDs,
       excludingCredentialScopeIDs: request.excludingCredentialScopeIDs,
-      interaction: request.interaction
+      interaction: request.interaction,
+      bypassesDelayedCredentialRefresh: request.bypassesDelayedCredentialRefresh
     )
   }
 

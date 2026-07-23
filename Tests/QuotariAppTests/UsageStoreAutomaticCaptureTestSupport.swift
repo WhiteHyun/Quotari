@@ -161,9 +161,11 @@ actor AutomaticCaptureCountingStrategy: ProviderFetchStrategy {
   nonisolated let id = "automatic-capture-counting"
   nonisolated let kind = ProviderFetchKind.oauth
   private(set) var requestCount = 0
+  private(set) var interactions: [ProviderFetchInteraction] = []
 
   func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
     requestCount += 1
+    interactions.append(context.interaction)
     return ProviderFetchResult(
       usage: UsageSnapshot(
         provider: context.provider,

@@ -2,60 +2,6 @@ import Foundation
 import QuotariCore
 
 extension UsageStore {
-  /// Tracks selection-triggered fetches as a chain. Cancellation is
-  /// cooperative: an older OAuth exchange can still rotate its credential,
-  /// so the newest handle must represent every superseded generation that an
-  /// account switch needs to drain before touching the CLI slot.
-  func enqueueSelectionRefresh(
-    for provider: UsageProvider,
-    waitingForProviderActivity: Bool = false
-  ) {
-    let previousRefresh = selectionRefreshTasks[provider]
-    let dashboardRefresh = waitingForProviderActivity ? inFlightRefresh : nil
-    let providerFetch = waitingForProviderActivity ? providerFetchTasks[provider]?.task : nil
-    let accountUsageRefresh = waitingForProviderActivity
-      ? accountUsageRefreshTasks[provider]?.task
-      : nil
-    let costRefresh = costTasks[provider]?.task
-    let generation = UUID()
-    if waitingForProviderActivity {
-      dashboardBlockingSelectionRefreshes[provider] = nil
-    } else {
-      dashboardBlockingSelectionRefreshes[provider] = generation
-    }
-    previousRefresh?.cancel()
-    selectionRefreshTasks[provider] = Task { @MainActor [weak self] in
-      defer {
-        if self?.dashboardBlockingSelectionRefreshes[provider] == generation {
-          self?.dashboardBlockingSelectionRefreshes[provider] = nil
-        }
-      }
-      await previousRefresh?.value
-      if waitingForProviderActivity, let dashboardRefresh {
-        await waitForTaskUnlessCancelled(dashboardRefresh)
-        if Task.isCancelled {
-          // If the dashboard passed its selection barrier before this
-          // reactivation was replaced, it may already own a provider fetch.
-          // Drain that child before letting the replacement selection start;
-          // otherwise returning early here would trade the deadlock for two
-          // concurrent credential rotations.
-          _ = await self?.providerFetchTasks[provider]?.task.value
-          return
-        }
-      } else {
-        await dashboardRefresh?.value
-      }
-      _ = await providerFetch?.value
-      _ = await accountUsageRefresh?.value
-      await costRefresh?.value
-      guard !Task.isCancelled else { return }
-      await self?.refresh(
-        provider: provider,
-        serializesProviderFetch: waitingForProviderActivity
-      )
-    }
-  }
-
   func invalidateAccountRevision(for provider: UsageProvider) {
     accountRevisions[provider, default: 0] &+= 1
   }
@@ -317,50 +263,5 @@ extension Result where Success == ProviderFetchResult, Failure == Error {
         sourceScopeIDs: transition.credentialTransitionSourceScopeIDs
       )
     }
-  }
-}
-
-private func waitForTaskUnlessCancelled(_ task: Task<Void, Never>) async {
-  guard !Task.isCancelled else { return }
-  let waiter = CancellationAwareTaskWaiter()
-  await withTaskCancellationHandler {
-    await withCheckedContinuation { continuation in
-      waiter.register(continuation)
-      Task {
-        await task.value
-        waiter.finish()
-      }
-    }
-  } onCancel: {
-    waiter.finish()
-  }
-}
-
-private final class CancellationAwareTaskWaiter: @unchecked Sendable {
-  private let lock = NSLock()
-  private var continuation: CheckedContinuation<Void, Never>?
-  private var isFinished = false
-
-  func register(_ continuation: CheckedContinuation<Void, Never>) {
-    let resumesImmediately = lock.withLock {
-      if isFinished {
-        return true
-      }
-      self.continuation = continuation
-      return false
-    }
-    if resumesImmediately {
-      continuation.resume()
-    }
-  }
-
-  func finish() {
-    let continuation = lock.withLock {
-      guard !isFinished else { return nil as CheckedContinuation<Void, Never>? }
-      isFinished = true
-      defer { self.continuation = nil }
-      return self.continuation
-    }
-    continuation?.resume()
   }
 }

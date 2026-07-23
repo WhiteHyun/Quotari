@@ -85,7 +85,11 @@ struct ClaudeLoginContext: @unchecked Sendable {
     login: AccountLoginService,
     accountSwitch: AccountSwitchService? = nil,
     profileFetcher: (any ClaudeProfileFetching)? = nil,
-    descriptor: ProviderDescriptor = claudeDescriptorForAutomaticCapture()
+    descriptor: ProviderDescriptor = claudeDescriptorForAutomaticCapture(),
+    postCredentialRefreshDelay: Duration = .seconds(30),
+    postCredentialRefreshSleep: @escaping @Sendable (Duration) async throws -> Void = {
+      try await Task.sleep(for: $0)
+    }
   ) -> UsageStore {
     UsageStore.isolatedForTesting(
       providers: [descriptor],
@@ -96,6 +100,8 @@ struct ClaudeLoginContext: @unchecked Sendable {
       accountSwitch: accountSwitch ?? makeSwitcher(),
       profileFetcher: profileFetcher ?? profiles,
       claudeCredentialLoader: loadCredentials,
+      postCredentialRefreshDelay: postCredentialRefreshDelay,
+      postCredentialRefreshSleep: postCredentialRefreshSleep,
       startsAutomatically: false
     )
   }
