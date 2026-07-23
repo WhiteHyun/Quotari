@@ -147,9 +147,16 @@ final class MenuBarPreferencesController {
   }
 
   func mascotIcon(frame: Int) -> NSImage {
-    guard preferences.mascot == .custom, !customMascotFrames.isEmpty else {
+    guard preferences.mascot == .custom,
+          let customIcon = customMascotIcon(frame: frame)
+    else {
       return IconRenderer.mascotIcon(frame: frame)
     }
+    return customIcon
+  }
+
+  func customMascotIcon(frame: Int) -> NSImage? {
+    guard !customMascotFrames.isEmpty else { return nil }
     return customMascotFrames[frame % customMascotFrames.count]
   }
 
@@ -161,11 +168,10 @@ final class MenuBarPreferencesController {
   }
 
   private func restoreCustomMascot() {
-    guard let mascot = try? CustomMascotStore.load(from: customMascotArchiveURL),
-          let frames = try? IconRenderer.customMascotFrames(from: mascot.framePNGs)
-    else { return }
+    guard let loaded = try? CustomMascotStore.load(from: customMascotArchiveURL) else { return }
+    let frames = IconRenderer.customMascotFrames(from: loaded.decodedFrames)
     customMascotFrames = frames
-    customMascotName = mascot.name
+    customMascotName = loaded.mascot.name
     customMascotFrameCount = frames.count
   }
 

@@ -22,8 +22,9 @@ struct CustomMascotTests {
     #expect(controller.customMascotName == "owl")
     #expect(controller.customMascotFrameCount == 2)
     #expect(controller.mascotIcon(frame: 0).size == NSSize(width: 24, height: 18))
-    let stored = try CustomMascotStore.load(from: context.archiveURL)
-    #expect(stored.framePNGs == [firstPNG, secondPNG])
+    let loaded = try CustomMascotStore.load(from: context.archiveURL)
+    #expect(loaded.mascot.framePNGs == [firstPNG, secondPNG])
+    #expect(loaded.decodedFrames.count == 2)
 
     let relaunched = context.makeController()
     #expect(relaunched.preferences.mascot == .custom)
@@ -34,6 +35,23 @@ struct CustomMascotTests {
     #expect(relaunched.preferences.mascot == .builtIn)
     #expect(!relaunched.hasCustomMascot)
     #expect(!FileManager.default.fileExists(atPath: context.archiveURL.path))
+  }
+
+  @Test func customMascotPreviewDoesNotFollowTheMenuBarSelection() throws {
+    let context = try makeContext("management-preview")
+    defer { context.remove() }
+    let firstURL = context.directory.appendingPathComponent("preview-0.png")
+    let secondURL = context.directory.appendingPathComponent("preview-1.png")
+    try pngData(width: 48, height: 36, color: .systemBlue).write(to: firstURL)
+    try pngData(width: 48, height: 36, color: .systemOrange).write(to: secondURL)
+    let controller = context.makeController()
+    try controller.importCustomMascot(from: [firstURL, secondURL])
+
+    controller.setMascot(.builtIn)
+
+    #expect(controller.mascotIcon(frame: 0).size == NSSize(width: 18, height: 18))
+    let preview = try #require(controller.customMascotIcon(frame: 0))
+    #expect(preview.size == NSSize(width: 24, height: 18))
   }
 
   @Test func splitsAHorizontalSquareFrameSpriteSheet() throws {

@@ -99,8 +99,8 @@ struct GeneralPreferencesView: View {
             )
           ) {
             HStack(spacing: 8) {
-              if menuBarPreferences.hasCustomMascot {
-                Image(nsImage: menuBarPreferences.mascotIcon(frame: 0))
+              if let preview = menuBarPreferences.customMascotIcon(frame: 0) {
+                Image(nsImage: preview)
               }
               Button(
                 menuBarPreferences.hasCustomMascot

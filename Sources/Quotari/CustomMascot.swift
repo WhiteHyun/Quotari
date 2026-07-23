@@ -46,6 +46,11 @@ enum CustomMascotStore {
   static let maximumFrameCount = 32
   static let maximumTotalBytes = 10_000_000
 
+  struct LoadedMascot {
+    var mascot: StoredCustomMascot
+    var decodedFrames: [CustomMascotFrameDecoder.DecodedFrame]
+  }
+
   static func defaultArchiveURL(fileManager: FileManager = .default) -> URL {
     let applicationSupport = (try? fileManager.url(
       for: .applicationSupportDirectory,
@@ -111,14 +116,16 @@ enum CustomMascotStore {
     )
   }
 
-  static func load(from url: URL) throws -> StoredCustomMascot {
+  static func load(from url: URL) throws -> LoadedMascot {
     let data = try Data(contentsOf: url)
     let mascot = try PropertyListDecoder().decode(StoredCustomMascot.self, from: data)
     guard mascot.version == StoredCustomMascot.currentVersion else {
       throw CustomMascotError.storageFailure
     }
-    _ = try CustomMascotFrameDecoder.decode(mascot.framePNGs)
-    return mascot
+    return try LoadedMascot(
+      mascot: mascot,
+      decodedFrames: CustomMascotFrameDecoder.decode(mascot.framePNGs)
+    )
   }
 
   static func save(_ mascot: StoredCustomMascot, to url: URL) throws {

@@ -42,7 +42,15 @@ enum IconRenderer {
 
   @MainActor
   static func customMascotFrames(from framePNGs: [Data]) throws -> [NSImage] {
-    try CustomMascotFrameDecoder.decode(framePNGs).map { decoded in
+    let decodedFrames = try CustomMascotFrameDecoder.decode(framePNGs)
+    return customMascotFrames(from: decodedFrames)
+  }
+
+  @MainActor
+  static func customMascotFrames(
+    from decodedFrames: [CustomMascotFrameDecoder.DecodedFrame]
+  ) -> [NSImage] {
+    decodedFrames.map { decoded in
       makeMenuBarFrame(
         image: decoded.image,
         pixelWidth: decoded.width,
