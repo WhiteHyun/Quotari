@@ -5,29 +5,38 @@ import Testing
 
 @MainActor
 struct UsageStoreMonitoringSelectionTests {
-  @Test func persistedSelectionFetchesOnlyMonitoredAccounts() async throws {
+  @Test func legacyPersistedSelectionMigratesToEveryDiscoveredAccount() async throws {
     let fixture = try MonitoringFixture(monitored: [.codex: [MonitoringFixture.work]])
     defer { fixture.remove() }
     await fixture.store.reloadAccounts()
 
     await fixture.store.refreshAccountUsage(for: .codex, force: true)
 
-    #expect(fixture.store.monitoredAccounts[.codex] == [MonitoringFixture.work])
+    #expect(fixture.store.monitoredAccounts[.codex] == [
+      MonitoringFixture.personal,
+      MonitoringFixture.work,
+    ])
     #expect(fixture.store.isMonitoring(MonitoringFixture.work))
-    #expect(!fixture.store.isMonitoring(MonitoringFixture.personal))
-    #expect(await fixture.recorder.names == ["Work"])
+    #expect(fixture.store.isMonitoring(MonitoringFixture.personal))
+    #expect(await fixture.recorder.names == ["Personal", "Work"])
   }
 
-  @Test func explicitEmptySelectionSurvivesReloadAndSkipsAccountRefresh() async throws {
+  @Test func legacyEmptySelectionMigratesToEveryDiscoveredAccount() async throws {
     let fixture = try MonitoringFixture(monitored: [.codex: []])
     defer { fixture.remove() }
     await fixture.store.reloadAccounts()
 
     await fixture.store.refreshAccountUsage(for: .codex, force: true)
 
-    #expect(fixture.store.monitoredAccounts[.codex] == [])
-    #expect(try fixture.monitoringStore.load()[.codex] == [])
-    #expect(await fixture.recorder.names.isEmpty)
+    #expect(fixture.store.monitoredAccounts[.codex] == [
+      MonitoringFixture.personal,
+      MonitoringFixture.work,
+    ])
+    #expect(try fixture.monitoringStore.load()[.codex] == [
+      MonitoringFixture.personal,
+      MonitoringFixture.work,
+    ])
+    #expect(await fixture.recorder.names == ["Personal", "Work"])
   }
 
   @Test func firstScanMonitorsEveryAccountAndPersistsManagedIdentity() async throws {
@@ -52,7 +61,7 @@ struct UsageStoreMonitoringSelectionTests {
     #expect(try fixture.monitoringStore.load()[.codex] == [saved, MonitoringFixture.work])
   }
 
-  @Test func emptyFirstScanRemainsUnconfiguredUntilAnAccountAppears() async throws {
+  @Test func emptyFirstScanPersistsEmptyUntilAnAccountAppears() async throws {
     let discovery = MutableAccountDiscovery(StaticAccountDiscovery())
     let fixture = try MonitoringFixture(
       accounts: [],
@@ -62,7 +71,7 @@ struct UsageStoreMonitoringSelectionTests {
     defer { fixture.remove() }
 
     await fixture.store.reloadAccounts()
-    #expect(try fixture.monitoringStore.load()[.codex] == nil)
+    #expect(try fixture.monitoringStore.load()[.codex] == [])
 
     discovery.update(StaticAccountDiscovery(accounts: [.codex: [MonitoringFixture.personal]]))
     await fixture.store.reloadAccounts()
@@ -92,7 +101,7 @@ struct UsageStoreMonitoringSelectionTests {
     #expect(try fixture.monitoringStore.load()[.codex] == [saved])
   }
 
-  @Test func replacedMutableSlotDoesNotInheritMonitoringSelection() async throws {
+  @Test func replacedMutableSlotIsAutomaticallyMonitored() async throws {
     let replacement = ProviderAccount(
       provider: .codex,
       displayName: "Replacement",
@@ -108,8 +117,8 @@ struct UsageStoreMonitoringSelectionTests {
 
     await fixture.store.reloadAccounts()
 
-    #expect(fixture.store.monitoredAccounts[.codex] == [])
-    #expect(try fixture.monitoringStore.load()[.codex] == [MonitoringFixture.personal])
+    #expect(fixture.store.monitoredAccounts[.codex] == [replacement])
+    #expect(try fixture.monitoringStore.load()[.codex] == [replacement])
   }
 
   @Test func periodicRefreshFetchesDashboardAndOtherMonitoredAccountsOnceEach() async throws {
@@ -175,7 +184,7 @@ struct UsageStoreMonitoringSelectionTests {
     #expect(fixture.store.accountUsage(for: MonitoringFixture.work)?.snapshot != nil)
   }
 
-  @Test func periodicRefreshRediscoveryRejectsAReplacedMonitoredSlot() async throws {
+  @Test func periodicRefreshRediscoveryMonitorsAReplacedCredentialSlot() async throws {
     let saved = ProviderAccount(
       provider: .codex,
       displayName: "Saved",
@@ -204,10 +213,9 @@ struct UsageStoreMonitoringSelectionTests {
 
     await fixture.store.refresh()
 
-    #expect(await fixture.recorder.names == ["Saved"])
-    #expect(fixture.store.monitoredAccounts[.codex] == [])
-    #expect(fixture.store.accountUsage(for: MonitoringFixture.personal) == nil)
-    #expect(fixture.store.accountUsage(for: replacement) == nil)
+    #expect(await fixture.recorder.names == ["Saved", "Replacement"])
+    #expect(fixture.store.monitoredAccounts[.codex] == [replacement, saved])
+    #expect(fixture.store.accountUsage(for: replacement)?.snapshot != nil)
   }
 
   @Test func accountRefreshRejectsUsageFromAReplacedCredentialScope() async throws {
@@ -223,27 +231,6 @@ struct UsageStoreMonitoringSelectionTests {
 
     #expect(await fixture.recorder.names == ["Personal"])
     #expect(fixture.store.accountUsage(for: MonitoringFixture.personal) == nil)
-  }
-
-  @Test func monitoringToggleQueuesAnAccountMissingFromAnInFlightRefresh() async throws {
-    let gate = MonitoringUsageGate()
-    let fixture = try MonitoringFixture(
-      monitored: [.codex: [MonitoringFixture.personal]],
-      strategyGate: gate
-    )
-    defer { fixture.remove() }
-    await fixture.store.reloadAccounts()
-
-    let first = Task { await fixture.store.refreshAccountUsage(for: .codex, force: true) }
-    await gate.waitUntilFirstRequestStarts()
-    fixture.store.setMonitoring(true, for: MonitoringFixture.work)
-    let second = Task { await fixture.store.refreshAccountUsage(for: MonitoringFixture.work) }
-    await gate.resumeFirstRequest()
-    await first.value
-    await second.value
-
-    #expect(await fixture.recorder.names == ["Personal", "Work"])
-    #expect(fixture.store.accountUsage(for: MonitoringFixture.work)?.snapshot != nil)
   }
 
   @Test func dashboardSelectionDoesNotChangeTheCLIActiveAccount() async throws {

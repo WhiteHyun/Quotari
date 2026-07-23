@@ -5,35 +5,16 @@ extension UsageStore {
     monitoredAccounts[account.provider]?.contains(where: { $0.id == account.id }) == true
   }
 
-  func setMonitoring(_ isMonitored: Bool, for account: ProviderAccount) {
+  func includeAccountInAutomaticMonitoring(_ account: ProviderAccount) {
     let provider = account.provider
+    if monitoredAccounts[provider]?.contains(where: { $0.id == account.id }) != true {
+      monitoredAccounts[provider, default: []].append(account)
+    }
     let logicalAccount = capturedEquivalents[account.id] ?? account
-    var persisted = persistedMonitoredAccounts[provider] ?? []
-    persisted.removeAll { $0.id == logicalAccount.id || $0.id == account.id }
-    if isMonitored {
-      persisted.append(logicalAccount)
+    if persistedMonitoredAccounts[provider]?.contains(where: { $0.id == logicalAccount.id }) != true {
+      persistedMonitoredAccounts[provider, default: []].append(logicalAccount)
+      persistMonitoringSelections(allowsRecovery: true)
     }
-    persistedMonitoredAccounts[provider] = persisted
-
-    var visible = monitoredAccounts[provider] ?? []
-    visible.removeAll { visibleAccount in
-      let visibleLogicalAccount = capturedEquivalents[visibleAccount.id] ?? visibleAccount
-      return visibleAccount.id == account.id
-        || visibleLogicalAccount.id == logicalAccount.id
-    }
-    if isMonitored {
-      visible.append(account)
-    }
-    monitoredAccounts[provider] = visible
-    synchronizeQuotaNotificationScope(
-      account: selectedAccounts[provider],
-      origin: reconciledSelectionOrigins[provider],
-      provider: provider
-    )
-    // A direct user action is authoritative enough to repair a malformed file
-    // or retry a previous write failure. Automatic reconciliation continues
-    // to fail closed through the default persistence path.
-    persistMonitoringSelections(allowsRecovery: true)
   }
 
   func persistMonitoringSelections(allowsRecovery: Bool = false) {

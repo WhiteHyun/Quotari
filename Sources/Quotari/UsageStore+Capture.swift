@@ -30,7 +30,6 @@ extension UsageStore {
     do {
       try await Task.detached { try capture.remove(id: id) }.value
       captureErrors[account.provider] = nil
-      setMonitoring(false, for: account)
       if selectedAccounts[account.provider]?.id == account.id {
         selectAccount(nil, for: account.provider)
       } else if reconciledSelectionOrigins[account.provider]?.id == account.id {

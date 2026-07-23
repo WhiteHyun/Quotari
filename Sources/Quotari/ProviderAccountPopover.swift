@@ -49,22 +49,17 @@ struct ProviderAccountPopover: View {
   }
 
   private var header: some View {
-    let monitoredCount = accounts.filter(store.isMonitoring).count
-    return HStack(alignment: .firstTextBaseline) {
+    HStack(alignment: .firstTextBaseline) {
       ProviderIconView(descriptor: descriptor, size: 24)
       Text(L10n.string("\(descriptor.metadata.displayName) Accounts"))
         .font(.headline)
       Spacer()
-      Text(L10n.string("\(monitoredCount)/\(accounts.count) monitored"))
-        .font(.caption)
-        .foregroundStyle(.secondary)
     }
   }
 
   private func accountButton(_ account: ProviderAccount) -> some View {
     let isSelected = store.activeAccount(for: descriptor.id)?.id == account.id
     let isCLIActive = store.activeCLIAccount(for: descriptor.id)?.id == account.id
-    let isMonitored = store.isMonitoring(account)
     let usage = store.accountUsage(for: account)
     let action = ProviderAccountPopoverAction(account: account, isCLIActive: isCLIActive)
     return Button {
@@ -76,8 +71,7 @@ struct ProviderAccountPopover: View {
         usage: usage,
         isSelected: isSelected,
         isCLIActive: isCLIActive,
-        isMonitored: isMonitored,
-        isLoading: isMonitored && store.refreshingAccountUsageProviders.contains(descriptor.id) && usage == nil,
+        isLoading: store.refreshingAccountUsageProviders.contains(descriptor.id) && usage == nil,
         isSwitching: switchCoordinator.switchingAccountID == account.id,
         accent: accent
       )
@@ -113,17 +107,6 @@ struct ProviderAccountPopover: View {
 
   @ViewBuilder
   private func accountMenu(_ account: ProviderAccount) -> some View {
-    Button(
-      store.isMonitoring(account)
-        ? L10n.string("Stop Monitoring")
-        : L10n.string("Monitor Account")
-    ) {
-      let shouldMonitor = !store.isMonitoring(account)
-      store.setMonitoring(shouldMonitor, for: account)
-      if shouldMonitor {
-        Task { await store.refreshAccountUsage(for: account) }
-      }
-    }
     if store.capturedEquivalents.keys.contains(account.id) {
       Button(L10n.string("Remove Account (Still in CLI)"), role: .destructive) {}
         .disabled(true)
@@ -196,7 +179,6 @@ private struct ProviderAccountUsageRow: View {
   let usage: ProviderAccountUsage?
   let isSelected: Bool
   let isCLIActive: Bool
-  let isMonitored: Bool
   let isLoading: Bool
   let isSwitching: Bool
   let accent: Color
@@ -227,9 +209,6 @@ private struct ProviderAccountUsageRow: View {
         Spacer()
         if isCLIActive {
           accountBadge(L10n.string("CLI Active"), color: .secondary)
-        }
-        if isMonitored {
-          accountBadge(L10n.string("Monitored"), color: accent)
         }
         if account.credentialSource.isCaptured {
           accountBadge(L10n.string("Saved"), color: accent)

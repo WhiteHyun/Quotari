@@ -107,8 +107,7 @@ struct MonitoringNotificationSafetyTests {
       }
     )
     let store = harness.store
-    store.setMonitoring(true, for: first)
-    store.setMonitoring(true, for: second)
+    store.monitoredAccounts[.claude] = [first, second]
 
     enqueueClaudeNotification(for: first, support: support, store: store)
     enqueueClaudeNotification(for: second, support: support, store: store)

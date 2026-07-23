@@ -78,48 +78,17 @@ extension UsageStore {
   ) -> [ProviderAccount] {
     guard let state else { return [] }
     let provider = state.provider
-    let accounts = state.accounts
     let discoveredAccounts = state.discoveredAccounts
-    let credentialTransitions = state.credentialTransitions
-    guard let persisted = persistedMonitoredAccounts[provider] else {
-      // Missing means "not configured yet" while an explicit empty array means
-      // the user chose none. Do not collapse those states before an account is
-      // available, or a later first login would never become monitored.
-      guard !discoveredAccounts.isEmpty else { return [] }
-      let logicalAccounts = discoveredAccounts.map { capturedCopies[$0.id] ?? $0 }
-      persistedMonitoredAccounts[provider] = logicalAccounts.uniquedByID()
-      return discoveredAccounts
+    // Monitoring is an app-wide invariant rather than a user preference:
+    // every account currently backed by discovered credentials participates in
+    // quota refreshes. Selection placeholders are intentionally excluded.
+    let logicalAccounts = discoveredAccounts
+      .map { capturedCopies[$0.id] ?? $0 }
+      .uniquedByID()
+    if persistedMonitoredAccounts[provider] != logicalAccounts {
+      persistedMonitoredAccounts[provider] = logicalAccounts
     }
-
-    var migrated = persisted
-    let visible = persisted.enumerated().compactMap { index, logicalAccount in
-      if let visible = accounts.first(where: {
-        $0.id == logicalAccount.id && $0.credentialScopeID == logicalAccount.credentialScopeID
-      }) {
-        // A capture may have succeeded after this live row was first persisted.
-        // Move the durable choice to its immutable registry identity before the
-        // mutable slot can be reused by another login.
-        if let captured = capturedCopies[visible.id] {
-          migrated[index] = captured
-        }
-        return visible
-      }
-      if let targetScopeID = credentialTransitions[logicalAccount.credentialScopeID],
-         let visible = accounts.first(where: { $0.credentialScopeID == targetScopeID }) {
-        // A completed OAuth refresh proves that this new credential is the
-        // successor to the monitored live row. Persist its captured identity
-        // when available; otherwise remember the rotated scope so a later
-        // unrelated slot replacement cannot inherit monitoring.
-        migrated[index] = capturedCopies[visible.id] ?? visible
-        return visible
-      }
-      return accounts.first { capturedCopies[$0.id]?.id == logicalAccount.id }
-    }.uniquedByID()
-    let migratedUnique = migrated.uniquedByID()
-    if migratedUnique != persisted {
-      persistedMonitoredAccounts[provider] = migratedUnique
-    }
-    return visible
+    return discoveredAccounts.uniquedByID()
   }
 
   private func reloadProviderAccounts(

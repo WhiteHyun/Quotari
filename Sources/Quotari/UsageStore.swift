@@ -349,8 +349,8 @@ extension UsageStore {
     for (provider, update) in refreshedSelections {
       selectAccount(update.account, for: provider, standingInFor: update.origin)
     }
-    if persistedMonitoredAccounts != persistedMonitoringBeforeReconciliation {
-      persistMonitoringSelections()
+    if persistedMonitoredAccounts != persistedMonitoringBeforeReconciliation || !isMonitoringConfigurationLoaded {
+      persistMonitoringSelections(allowsRecovery: true)
     }
     await finishAccountReload(syncCandidates: syncCandidates)
   }
