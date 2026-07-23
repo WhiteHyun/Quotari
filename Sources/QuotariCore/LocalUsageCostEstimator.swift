@@ -1,5 +1,25 @@
 import Foundation
 
+public protocol UsageInsightsAnalyzing: Sendable {
+  func cachedInsights(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    now: Date,
+    historyDays: Int
+  ) -> UsageInsightsSummary?
+  func insights(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    now: Date,
+    historyDays: Int
+  ) async -> UsageInsightsSummary?
+  func invalidateInsights(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    historyDays: Int
+  )
+}
+
 public protocol UsageCostEstimating: Sendable {
   func cachedCostSummary(provider: UsageProvider, now: Date, historyDays: Int) -> CostSummary?
   func costSummary(provider: UsageProvider, now: Date, historyDays: Int) async -> CostSummary?
@@ -57,11 +77,12 @@ public extension UsageCostEstimating {
   }
 }
 
-public struct LocalUsageCostEstimator: UsageCostEstimating {
-  private let environment: [String: String]
-  private let homeDirectory: URL
+public struct LocalUsageCostEstimator: UsageCostEstimating, UsageInsightsAnalyzing {
+  let environment: [String: String]
+  let homeDirectory: URL
   private let cacheDirectory: URL
-  private let pricingCatalogProvider: any ModelPricingCatalogProviding
+  let insightsCacheDirectory: URL
+  let pricingCatalogProvider: any ModelPricingCatalogProviding
 
   public init(
     environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -86,8 +107,15 @@ public struct LocalUsageCostEstimator: UsageCostEstimating {
   ) {
     self.environment = environment
     self.homeDirectory = homeDirectory
-    self.cacheDirectory = cacheDirectory ?? homeDirectory
-      .appendingPathComponent("Library/Caches/Quotari/LocalUsageCost", isDirectory: true)
+    if let cacheDirectory {
+      self.cacheDirectory = cacheDirectory
+      insightsCacheDirectory = cacheDirectory.appendingPathComponent("insights", isDirectory: true)
+    } else {
+      self.cacheDirectory = homeDirectory
+        .appendingPathComponent("Library/Caches/Quotari/LocalUsageCost", isDirectory: true)
+      insightsCacheDirectory = homeDirectory
+        .appendingPathComponent("Library/Caches/Quotari/LocalUsageInsights", isDirectory: true)
+    }
     self.pricingCatalogProvider = pricingCatalogProvider
   }
 
@@ -101,7 +129,15 @@ public struct LocalUsageCostEstimator: UsageCostEstimating {
     now: Date,
     historyDays: Int = 30
   ) -> CostSummary? {
-    LocalUsageCostCache(cacheDirectory: cacheDirectory)
+    if let summary = cachedInsights(
+      provider: provider,
+      account: account,
+      now: now,
+      historyDays: historyDays
+    )?.costSummary {
+      return summary
+    }
+    return LocalUsageCostCache(cacheDirectory: cacheDirectory)
       .load(provider: provider, scopeID: account?.costCacheScopeID, now: now, historyDays: historyDays)
   }
 
@@ -115,33 +151,12 @@ public struct LocalUsageCostEstimator: UsageCostEstimating {
     now: Date,
     historyDays: Int = 30
   ) async -> CostSummary? {
-    let environment = environment
-    let homeDirectory = homeDirectory
-    let cacheDirectory = cacheDirectory
-    let pricingCatalogProvider = pricingCatalogProvider
-    let scan = await Task.detached(priority: .utility) {
-      LocalUsageCostScanner(
-        environment: environment,
-        homeDirectory: homeDirectory
-      ).scan(provider: provider, account: account, now: now, historyDays: historyDays)
-    }.value
-    let keys = Set(scan.records.compactMap { record in
-      record.model.map { ModelPricingKey(provider: provider, modelID: $0) }
-    })
-    let pricingSnapshot = if keys.isEmpty {
-      ModelPricingCatalogSnapshot.bundledOnly
-    } else {
-      await pricingCatalogProvider.snapshot(for: keys, now: now)
-    }
-    let summary = await Task.detached(priority: .utility) {
-      LocalCostSummaryBuilder.summary(
-        provider: provider,
-        records: scan.records,
-        range: scan.range,
-        pricing: LocalModelPricing(snapshot: pricingSnapshot),
-        sourceDescription: scan.sourceDescription
-      )
-    }.value
+    let summary = await insights(
+      provider: provider,
+      account: account,
+      now: now,
+      historyDays: historyDays
+    )?.costSummary
     if let summary {
       LocalUsageCostCache(cacheDirectory: cacheDirectory)
         .save(
@@ -166,6 +181,7 @@ public struct LocalUsageCostEstimator: UsageCostEstimating {
   ) {
     LocalUsageCostCache(cacheDirectory: cacheDirectory)
       .remove(provider: provider, scopeID: account?.costCacheScopeID, historyDays: historyDays)
+    invalidateInsights(provider: provider, account: account, historyDays: historyDays)
   }
 }
 

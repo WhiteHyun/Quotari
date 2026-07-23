@@ -3,6 +3,7 @@ import Foundation
 extension LocalUsageCostScanner {
   func parseCodexFile(_ url: URL, range: DayRange) -> [LocalTokenRecord] {
     guard let lines = lines(in: url) else { return [] }
+    let sessionID = localSessionID(for: url)
     var previousTotals: TokenTotals?
     var currentModel: String?
     var records: [LocalTokenRecord] = []
@@ -40,7 +41,8 @@ extension LocalUsageCostScanner {
         model: model,
         tokens: tokens,
         contextInputTokens: codexContextInputTokens(from: info["last_token_usage"])
-          ?? (tokens.input + tokens.cacheRead + tokens.cacheWrite)
+          ?? (tokens.input + tokens.cacheRead + tokens.cacheWrite),
+        sessionID: sessionID
       ))
     }
     return records
@@ -48,6 +50,7 @@ extension LocalUsageCostScanner {
 
   func parseClaudeFile(_ url: URL, range: DayRange) -> [LocalTokenRecord] {
     guard let lines = lines(in: url) else { return [] }
+    let sessionID = localSessionID(for: url)
     var records: [PendingClaudeTokenRecord] = []
     var keyedRecords: [String: PendingClaudeTokenRecord] = [:]
 
@@ -68,7 +71,8 @@ extension LocalUsageCostScanner {
           day: day,
           model: model,
           tokens: tokens,
-          contextInputTokens: claudeContextInputTokens(from: usage)
+          contextInputTokens: claudeContextInputTokens(from: usage),
+          sessionID: sessionID
         )
       )
       if let key = claudeUsageKey(from: object, message: message) {
@@ -103,6 +107,11 @@ private extension LocalUsageCostScanner {
       }
     }
     return nil
+  }
+
+  func localSessionID(for url: URL) -> String {
+    let canonicalPath = url.resolvingSymlinksInPath().standardizedFileURL.path
+    return ProviderCredentialIdentity.fingerprint(of: canonicalPath)
   }
 
   func lines(in url: URL) -> [Substring]? {

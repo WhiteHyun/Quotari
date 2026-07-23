@@ -324,12 +324,20 @@ struct LocalTokenRecord: Sendable {
   let model: String?
   let tokens: TokenTotals
   let contextInputTokens: Int?
+  let sessionID: String?
 
-  init(day: Date, model: String?, tokens: TokenTotals, contextInputTokens: Int? = nil) {
+  init(
+    day: Date,
+    model: String?,
+    tokens: TokenTotals,
+    contextInputTokens: Int? = nil,
+    sessionID: String? = nil
+  ) {
     self.day = day
     self.model = model
     self.tokens = tokens
     self.contextInputTokens = contextInputTokens
+    self.sessionID = sessionID
   }
 }
 
