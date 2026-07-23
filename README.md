@@ -50,6 +50,17 @@ Automatic mode selects the effective live CLI credential; it does not generate
 sample usage when no account is available. The app runs as an accessory app,
 so look for the flame mascot in the menu bar rather than a Dock icon.
 
+### Localization
+
+`Sources/Quotari/Resources/Localizable.xcstrings` is the only localization
+source of truth. The `CompileStringCatalogPlugin` build-tool plugin compiles the
+catalog into runtime `.lproj/Localizable.strings` resources for `swift build`,
+`swift run`, and `swift test`. Generated `.strings` files are build artifacts
+and must not be checked into the repository.
+
+Run `Scripts/check-localizations.sh` to validate that the catalog can produce
+the supported Korean localization.
+
 ### Custom mascots
 
 Open **Settings → General → Menu Bar → Custom mascot** to import an animation.

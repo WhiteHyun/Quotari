@@ -1,5 +1,5 @@
 {
-  "originHash" : "b24405bd575c85420c40f13fc1cd52ef5d4d2f39dcbd20ebaf3f43f951100b62",
+  "originHash" : "de3b1d78d75822fb0c3264778c8502a89005d68b37d23a4af3b2ef1054e65b56",
   "pins" : [
     {
       "identity" : "keyboardshortcuts",
@@ -29,6 +29,15 @@
       }
     },
     {
+      "identity" : "swift-custom-dump",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/pointfreeco/swift-custom-dump",
+      "state" : {
+        "revision" : "a8cd6c976f335ed361dcecddb0dc39ebda51bc3e",
+        "version" : "1.6.1"
+      }
+    },
+    {
       "identity" : "swift-toml",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/mattt/swift-toml",
@@ -44,6 +53,15 @@
       "state" : {
         "revision" : "3292bab28e6e92000161348003fdef8edc4e582d",
         "version" : "0.65.0"
+      }
+    },
+    {
+      "identity" : "xctest-dynamic-overlay",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/pointfreeco/xctest-dynamic-overlay",
+      "state" : {
+        "revision" : "8f6abcf4c8950e2679d5b2fee4ca284fd7c34886",
+        "version" : "1.11.0"
       }
     }
   ],

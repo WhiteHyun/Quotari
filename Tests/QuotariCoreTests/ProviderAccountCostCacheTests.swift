@@ -8,20 +8,30 @@ struct ProviderAccountCostCacheTests {
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("quotari-account-cache-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: directory) }
-    let firstAccount = Self.account(name: "First", identity: "first-account")
-    let replacementAccount = Self.account(name: "Replacement", identity: "replacement-account")
-    let summary = Self.summary(endingAt: now)
-    LocalUsageCostCache(cacheDirectory: directory).save(
-      summary,
-      provider: .codex,
-      scopeID: firstAccount.costCacheScopeID,
-      now: now,
-      historyDays: 30
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let authURL = directory.appendingPathComponent("auth.json")
+    try codexAuthPayload(accessToken: "access", accountID: "first-account").write(to: authURL)
+    let firstAccount = Self.account(name: "First", identity: "first-account", authURL: authURL)
+    let replacementAccount = Self.account(
+      name: "Replacement",
+      identity: "replacement-account",
+      authURL: authURL
     )
+    let summary = Self.summary(endingAt: now)
     let estimator = LocalUsageCostEstimator.testing(
       environment: [:],
       homeDirectory: directory,
       cacheDirectory: directory
+    )
+    let scope = try #require(
+      estimator.resolvedInsightsScope(provider: .codex, account: firstAccount)
+    )
+    LocalUsageCostCache(cacheDirectory: directory).save(
+      summary,
+      provider: .codex,
+      scopeID: scope.legacyCostScopeID,
+      now: now,
+      historyDays: 30
     )
 
     #expect(firstAccount.id == replacementAccount.id)
@@ -39,12 +49,12 @@ struct ProviderAccountCostCacheTests {
     ) == nil)
   }
 
-  private static func account(name: String, identity: String) -> ProviderAccount {
+  private static func account(name: String, identity: String, authURL: URL) -> ProviderAccount {
     ProviderAccount(
       provider: .codex,
       displayName: name,
       detail: "Default",
-      credentialSource: .codexAuthFile(path: "/tmp/auth.json"),
+      credentialSource: .codexAuthFile(path: authURL.path),
       credentialIdentity: identity
     )
   }

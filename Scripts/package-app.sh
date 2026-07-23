@@ -60,6 +60,7 @@ fi
 # Keep distributable resources inside Contents so codesign seals them. The app
 # prefers this packaged bundle and falls back to Bundle.module for source runs.
 ditto "$RESOURCE_BUNDLE" "$APP/Contents/Resources/Quotari_Quotari.bundle"
+rm -f "$APP/Contents/Resources/Quotari_Quotari.bundle/Localizable.xcstrings"
 ditto "$APP_ICON" "$APP/Contents/Resources/Quotari.icns"
 
 echo "▸ embedding Sparkle.framework"

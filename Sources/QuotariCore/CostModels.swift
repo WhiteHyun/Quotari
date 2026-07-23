@@ -69,6 +69,7 @@ public struct CostSummary: Codable, Equatable, Sendable {
   public var monthSpendLabel: String
   public var sourceDescription: String
   public var estimateCoverage: CostEstimateCoverage?
+  public var estimateLimitation: UsageMetricLimitation?
   /// Chronological, one entry per day (oldest first).
   public var daily: [DailyCost]
 
@@ -83,6 +84,7 @@ public struct CostSummary: Codable, Equatable, Sendable {
     monthSpendLabel: String = "30d cost",
     sourceDescription: String = "Estimated from local logs",
     estimateCoverage: CostEstimateCoverage? = nil,
+    estimateLimitation: UsageMetricLimitation? = nil,
     daily: [DailyCost] = []
   ) {
     self.currencyCode = currencyCode
@@ -95,6 +97,7 @@ public struct CostSummary: Codable, Equatable, Sendable {
     self.monthSpendLabel = monthSpendLabel
     self.sourceDescription = sourceDescription
     self.estimateCoverage = estimateCoverage
+    self.estimateLimitation = estimateLimitation
     self.daily = daily
   }
 

@@ -235,6 +235,11 @@ extension UsageStore {
     postCredentialRefreshSleep: @escaping @Sendable (Duration) async throws -> Void = {
       try await Task.sleep(for: $0)
     },
+    // Cost fixtures use this shared reference day. Tests exercising time
+    // boundaries inject their own mutable clock explicitly.
+    currentDate: @escaping @Sendable () -> Date = {
+      Date(timeIntervalSince1970: 1_783_478_400)
+    },
     startsAutomatically: Bool = true
   ) -> UsageStore {
     let isolatedDefaults = defaults ?? ephemeralDefaults()
@@ -266,6 +271,7 @@ extension UsageStore {
       quotaNotifications: isolatedNotifications,
       postCredentialRefreshDelay: postCredentialRefreshDelay,
       postCredentialRefreshSleep: postCredentialRefreshSleep,
+      currentDate: currentDate,
       startsAutomatically: startsAutomatically
     )
   }
@@ -379,19 +385,5 @@ actor AccountSwitchRaceStrategy: ProviderFetchStrategy {
       ),
       sourceLabel: "Stub"
     )
-  }
-}
-
-final class TemporaryDirectory {
-  let url: URL
-
-  init() throws {
-    url = FileManager.default.temporaryDirectory
-      .appendingPathComponent("quotari-usage-store-\(UUID().uuidString)", isDirectory: true)
-    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-  }
-
-  deinit {
-    try? FileManager.default.removeItem(at: url)
   }
 }

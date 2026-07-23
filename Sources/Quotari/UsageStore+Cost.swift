@@ -5,9 +5,18 @@ struct ReportedCostFallback {
   let cost: CostSummary?
 }
 
-private struct LocalCostRefreshDecision {
-  let needsLocalCost: Bool
+private struct LocalCostRefreshRequest {
+  let provider: UsageProvider
+  let account: ProviderAccount?
+  let credentialTransition: UsageCostCredentialTransition?
+  let now: Date
+  let reportedCostFallback: CostSummary?
   let cacheHit: Bool
+}
+
+private enum LocalCostRefreshStart {
+  case skip
+  case start(after: Task<Void, Never>?)
 }
 
 private struct CostRefreshContext {
@@ -35,10 +44,12 @@ extension UsageStore {
     let reportedCostFallback = Self.reportedCostFallback(from: usage.cost)
     let needsLocalCost = Self.shouldUseLocalCost(existing: usage.cost)
     let selectedAccount = selectedAccounts[provider]
+    let credentialTransition = value.usageCostCredentialTransition
     let cachedCost = needsLocalCost
       ? costEstimator.cachedCostSummary(
         provider: provider,
         account: selectedAccount,
+        credentialTransition: credentialTransition,
         now: usage.updatedAt,
         historyDays: 30
       )
@@ -52,14 +63,15 @@ extension UsageStore {
     sourceLabels[provider] = value.sourceLabel
     errors[provider] = nil
     updateCostRefresh(
-      provider: provider,
-      account: selectedAccount,
-      now: usage.updatedAt,
-      reportedCostFallback: reportedCostFallback,
-      decision: LocalCostRefreshDecision(
-        needsLocalCost: needsLocalCost,
+      request: LocalCostRefreshRequest(
+        provider: provider,
+        account: selectedAccount,
+        credentialTransition: credentialTransition,
+        now: usage.updatedAt,
+        reportedCostFallback: reportedCostFallback,
         cacheHit: cachedCost != nil
-      )
+      ),
+      needsLocalCost: needsLocalCost
     )
   }
 
@@ -72,89 +84,87 @@ extension UsageStore {
     guard prefersLocalCost else { return snapshot }
     var display = snapshot
     display.cost = cachedCost
-      ?? previous?.cost.flatMap { shouldCarryForwardCost($0) ? $0 : nil }
+      ?? previous?.cost.flatMap { shouldCarryForwardCost($0, now: snapshot.updatedAt) ? $0 : nil }
       ?? snapshot.cost.flatMap { shouldHideSparseReportedCost($0) ? nil : $0 }
     return display
   }
 
   private func updateCostRefresh(
-    provider: UsageProvider,
-    account: ProviderAccount?,
-    now: Date,
-    reportedCostFallback: CostSummary?,
-    decision: LocalCostRefreshDecision
+    request: LocalCostRefreshRequest,
+    needsLocalCost: Bool
   ) {
-    if decision.needsLocalCost {
-      refreshCost(
-        provider: provider,
-        account: account,
-        now: now,
-        reportedCostFallback: reportedCostFallback,
-        cacheHit: decision.cacheHit
-      )
+    if needsLocalCost {
+      refreshCost(request)
     } else {
-      lastEmptyCostScans[provider] = nil
-      latestReportedCostFallbacks[provider] = nil
-      cancelCostRefresh(for: provider)
+      lastEmptyCostScans[request.provider] = nil
+      latestReportedCostFallbacks[request.provider] = nil
+      cancelCostRefresh(for: request.provider)
     }
   }
 
-  private func refreshCost(
-    provider: UsageProvider,
-    account: ProviderAccount?,
-    now: Date,
-    reportedCostFallback: CostSummary?,
-    cacheHit: Bool
-  ) {
-    latestReportedCostFallbacks[provider] = ReportedCostFallback(cost: reportedCostFallback)
-    let previousTask: Task<Void, Never>?
-    if let existingTask = costTasks[provider] {
-      guard existingTask.cancellationRequested else { return }
-      previousTask = existingTask.task
-    } else {
-      if let lastEmptyCostScan = lastEmptyCostScans[provider],
-         now.timeIntervalSince(lastEmptyCostScan) < Self.localCostScanThrottle {
-        return
-      }
-      if cacheHit,
-         let lastCostScan = lastCostScans[provider],
-         now.timeIntervalSince(lastCostScan) < Self.localCostScanThrottle {
-        return
-      }
-      previousTask = nil
-    }
-    lastCostScans[provider] = now
-    let revision = accountRevisions[provider] ?? 0
+  private func refreshCost(_ request: LocalCostRefreshRequest) {
+    let provider = request.provider
+    latestReportedCostFallbacks[provider] = ReportedCostFallback(cost: request.reportedCostFallback)
+    guard case let .start(previousTask) = costRefreshStart(for: request) else { return }
+    lastCostScans[provider] = request.now
     let costEstimator = costEstimator
     let generation = UUID()
     let context = CostRefreshContext(
       provider: provider,
-      account: account,
-      revision: revision,
+      account: request.account,
+      revision: accountRevisions[provider] ?? 0,
       generation: generation
     )
     let task = Task { [weak self] in
       await previousTask?.value
-      let cost: CostSummary? = if Task.isCancelled {
-        nil
+      let outcome: UsageCostRefreshOutcome = if Task.isCancelled {
+        .unavailable
       } else {
-        await costEstimator.costSummary(
+        await costEstimator.costRefreshOutcome(
           provider: provider,
-          account: account,
-          now: now,
+          account: request.account,
+          credentialTransition: request.credentialTransition,
+          now: request.now,
           historyDays: 30
         )
       }
       let wasCancelled = Task.isCancelled
       await MainActor.run {
         self?.finishCostRefresh(
-          cost,
+          outcome,
           context: context,
           wasCancelled: wasCancelled
         )
       }
     }
-    costTasks[provider] = CostRefreshTask(generation: generation, task: task)
+    costTasks[provider] = CostRefreshTask(
+      generation: generation,
+      credentialTransitionTargetScopeID: request.credentialTransition?.targetScopeID,
+      task: task
+    )
+  }
+
+  private func costRefreshStart(for request: LocalCostRefreshRequest) -> LocalCostRefreshStart {
+    if let existingTask = costTasks[request.provider] {
+      if !existingTask.cancellationRequested,
+         existingTask.credentialTransitionTargetScopeID == request.credentialTransition?.targetScopeID {
+        return .skip
+      }
+      if !existingTask.cancellationRequested {
+        existingTask.task.cancel()
+      }
+      return .start(after: existingTask.task)
+    }
+    if let lastEmptyCostScan = lastEmptyCostScans[request.provider],
+       request.now.timeIntervalSince(lastEmptyCostScan) < Self.localCostScanThrottle {
+      return .skip
+    }
+    if request.cacheHit,
+       let lastCostScan = lastCostScans[request.provider],
+       request.now.timeIntervalSince(lastCostScan) < Self.localCostScanThrottle {
+      return .skip
+    }
+    return .start(after: nil)
   }
 
   func cancelCostRefresh(for provider: UsageProvider) {
@@ -165,7 +175,7 @@ extension UsageStore {
   }
 
   private func finishCostRefresh(
-    _ cost: CostSummary?,
+    _ outcome: UsageCostRefreshOutcome,
     context: CostRefreshContext,
     wasCancelled: Bool
   ) {
@@ -176,19 +186,27 @@ extension UsageStore {
           isProviderEnabled(provider),
           (accountRevisions[provider] ?? 0) == context.revision
     else { return }
-    guard let cost else {
-      lastEmptyCostScans[provider] = Date()
-      costEstimator.invalidateCachedCostSummary(
-        provider: provider,
-        account: context.account,
-        historyDays: 30
-      )
+    let completionDate = currentDate()
+    switch outcome {
+    case let .updated(cost):
+      lastEmptyCostScans[provider] = nil
+      if Self.shouldCarryForwardCost(cost, now: completionDate) {
+        applyCost(cost, provider: provider)
+      } else {
+        let reportedCostFallback = latestReportedCostFallbacks[provider]?.cost
+        clearLocalCost(provider: provider, reportedCostFallback: reportedCostFallback)
+      }
+    case .confirmedEmpty:
+      lastEmptyCostScans[provider] = completionDate
       let reportedCostFallback = latestReportedCostFallbacks[provider]?.cost
       clearLocalCost(provider: provider, reportedCostFallback: reportedCostFallback)
-      return
+    case .unavailable:
+      guard let cost = snapshots[provider]?.cost,
+            !Self.shouldCarryForwardCost(cost, now: completionDate)
+      else { return }
+      let reportedCostFallback = latestReportedCostFallbacks[provider]?.cost
+      clearLocalCost(provider: provider, reportedCostFallback: reportedCostFallback)
     }
-    lastEmptyCostScans[provider] = nil
-    applyCost(cost, provider: provider)
   }
 
   private func applyCost(_ cost: CostSummary, provider: UsageProvider) {
@@ -213,8 +231,14 @@ extension UsageStore {
     return !cost.hasTokenMetrics || cost.daily.count <= 1
   }
 
-  private nonisolated static func shouldCarryForwardCost(_ cost: CostSummary) -> Bool {
-    cost.sourceDescription.localizedCaseInsensitiveContains("local")
+  private nonisolated static func shouldCarryForwardCost(
+    _ cost: CostSummary,
+    now: Date
+  ) -> Bool {
+    guard cost.sourceDescription.localizedCaseInsensitiveContains("local"),
+          let lastDate = cost.daily.last?.date
+    else { return false }
+    return Calendar.current.isDate(lastDate, inSameDayAs: now)
   }
 
   private nonisolated static func shouldHideSparseReportedCost(_ cost: CostSummary) -> Bool {
@@ -237,6 +261,19 @@ extension UsageStore {
 
 struct CostRefreshTask {
   let generation: UUID
+  let credentialTransitionTargetScopeID: String?
   let task: Task<Void, Never>
   var cancellationRequested = false
+}
+
+private extension ProviderFetchResult {
+  var usageCostCredentialTransition: UsageCostCredentialTransition? {
+    guard let targetScopeID = credentialTransitionTargetScopeID,
+          !credentialTransitionSourceScopeIDs.isEmpty
+    else { return nil }
+    return UsageCostCredentialTransition(
+      targetScopeID: targetScopeID,
+      sourceScopeIDs: credentialTransitionSourceScopeIDs
+    )
+  }
 }

@@ -189,6 +189,7 @@ struct UsageStoreProviderActivationTests {
     let drainingTask = Task { await drain.waitForRelease() }
     store.costTasks[.codex] = CostRefreshTask(
       generation: UUID(),
+      credentialTransitionTargetScopeID: nil,
       task: drainingTask
     )
     await drain.waitUntilStarted()

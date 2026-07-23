@@ -84,6 +84,23 @@ struct LocalizationTests {
     )
   }
 
+  @Test func localizesSharedUsageProvenanceAndLimitations() {
+    let korean = Locale(identifier: "ko")
+
+    #expect(
+      L10n.string(
+        "Estimated from local Codex logs (not account-specific)",
+        locale: korean
+      ) == "로컬 Codex 로그에서 추정(계정별 데이터 아님)"
+    )
+    #expect(
+      L10n.string(
+        "Partial estimate · unsupported token fields",
+        locale: korean
+      ) == "일부 추정 · 지원하지 않는 토큰 필드"
+    )
+  }
+
   @Test func hidesPaceTrendsBelowOnePercentBeforeRounding() {
     let pace = UsagePace(deltaPercent: 0.75, runsOutIn: nil, headroomMultiplier: nil)
 

@@ -16,6 +16,7 @@ let package = Package(
     .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", from: "3.0.1"),
     .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.0"),
     .package(url: "https://github.com/SimplyDanny/SwiftLintPlugins", from: "0.65.0"),
+    .package(url: "https://github.com/pointfreeco/swift-custom-dump", from: "1.0.0"),
     .package(url: "https://github.com/mattt/swift-toml", from: "2.0.0"),
   ],
   targets: [
@@ -38,16 +39,23 @@ let package = Package(
         .product(name: "MenuBarExtraAccess", package: "MenuBarExtraAccess"),
         .product(name: "Sparkle", package: "Sparkle"),
       ],
+      exclude: [
+        "Resources/Localizable.xcstrings",
+      ],
       resources: [
         .process("Resources"),
       ],
       plugins: [
+        .plugin(name: "CompileStringCatalogPlugin"),
         .plugin(name: "SwiftLintBuildToolPlugin", package: "SwiftLintPlugins"),
       ]
     ),
     .testTarget(
       name: "QuotariCoreTests",
-      dependencies: ["QuotariCore"],
+      dependencies: [
+        "QuotariCore",
+        .product(name: "CustomDump", package: "swift-custom-dump"),
+      ],
       exclude: ["Fixtures"],
       plugins: [
         .plugin(name: "SwiftLintBuildToolPlugin", package: "SwiftLintPlugins"),
@@ -60,6 +68,10 @@ let package = Package(
       plugins: [
         .plugin(name: "SwiftLintBuildToolPlugin", package: "SwiftLintPlugins"),
       ]
+    ),
+    .plugin(
+      name: "CompileStringCatalogPlugin",
+      capability: .buildTool()
     ),
   ],
   // Swift 6 language mode: full data-race safety enforced at compile time.

@@ -141,6 +141,7 @@ final class UsageStore {
   var credentialRefreshDrainTasks: [UsageProvider: CredentialRefreshDrainTask] = [:]
   let postCredentialRefreshDelay: Duration
   let postCredentialRefreshSleep: @Sendable (Duration) async throws -> Void
+  let currentDate: @Sendable () -> Date
   /// Disabling clears per-account usage. The first successful provider fetch
   /// after reactivation consumes this marker and restores every monitored row.
   var providersNeedingMonitoredUsageRestore = Set<UsageProvider>()
@@ -184,6 +185,7 @@ final class UsageStore {
     postCredentialRefreshSleep: @escaping @Sendable (Duration) async throws -> Void = {
       try await Task.sleep(for: $0)
     },
+    currentDate: @escaping @Sendable () -> Date = Date.init,
     startsAutomatically: Bool = true
   ) {
     assert(ProviderRegistry.isComplete, "Every UsageProvider case needs a descriptor")
@@ -212,6 +214,7 @@ final class UsageStore {
     self.quotaNotifications = quotaNotifications ?? QuotaNotificationController(defaults: defaults)
     self.postCredentialRefreshDelay = postCredentialRefreshDelay
     self.postCredentialRefreshSleep = postCredentialRefreshSleep
+    self.currentDate = currentDate
     selectedAccounts = accountSelectionStore.load()
     do {
       persistedMonitoredAccounts = try self.accountMonitoringStore.load()
