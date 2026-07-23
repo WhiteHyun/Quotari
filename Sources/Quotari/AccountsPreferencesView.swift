@@ -119,7 +119,7 @@ private extension AccountsPreferencesView {
   private func providerAccountSection(_ descriptor: ProviderDescriptor) -> some View {
     VStack(alignment: .leading, spacing: 14) {
       providerAccountHeader(descriptor)
-      monitoringSelection(for: descriptor)
+      accountList(for: descriptor)
       providerAccountGuidance(descriptor)
       AccountLoginStatusView(provider: descriptor.id)
       if let error = store.captureErrors[descriptor.id] {
@@ -209,11 +209,11 @@ private extension AccountsPreferencesView {
 }
 
 private extension AccountsPreferencesView {
-  private func monitoringSelection(for descriptor: ProviderDescriptor) -> some View {
+  private func accountList(for descriptor: ProviderDescriptor) -> some View {
     let accounts = displayedAccounts(for: descriptor.id)
     let activeCLIID = store.activeCLIAccount(for: descriptor.id)?.id
     return VStack(alignment: .leading, spacing: 4) {
-      Text(L10n.string("Monitored Accounts"))
+      Text(L10n.string("Accounts"))
         .font(.subheadline.weight(.medium))
         .foregroundStyle(.secondary)
       if accounts.isEmpty {
@@ -222,20 +222,16 @@ private extension AccountsPreferencesView {
           .foregroundStyle(.secondary)
       } else {
         ForEach(accounts) { account in
-          monitoredAccountRow(account, activeCLIID: activeCLIID)
+          accountRow(account, activeCLIID: activeCLIID)
         }
       }
-      monitoringFooter
+      accountListFooter
     }
   }
 
-  private func monitoredAccountRow(_ account: ProviderAccount, activeCLIID: String?) -> some View {
+  private func accountRow(_ account: ProviderAccount, activeCLIID: String?) -> some View {
     let label = store.accountLabel(for: account)
     return HStack(alignment: .center, spacing: 8) {
-      Toggle(label, isOn: monitoringBinding(for: account))
-        .labelsHidden()
-        .toggleStyle(.checkbox)
-        .accessibilityLabel(L10n.string("Monitor \(label)"))
       VStack(alignment: .leading, spacing: 1) {
         HStack(spacing: 7) {
           Text(label)
@@ -278,10 +274,10 @@ private extension AccountsPreferencesView {
     .disabled(store.isSwitching || !store.addingAccountProviders.isEmpty)
   }
 
-  private var monitoringFooter: some View {
+  private var accountListFooter: some View {
     Text(
       L10n.string(
-        "Checked accounts refresh in the background. The dashboard account and CLI active account remain single choices."
+        "All accounts refresh in the background. The dashboard account and CLI active account remain single choices."
       )
     )
     .font(.caption)
@@ -307,17 +303,6 @@ private extension AccountsPreferencesView {
 }
 
 private extension AccountsPreferencesView {
-  private func monitoringBinding(for account: ProviderAccount) -> Binding<Bool> {
-    Binding(
-      get: { store.isMonitoring(account) },
-      set: { isMonitored in
-        store.setMonitoring(isMonitored, for: account)
-        guard isMonitored else { return }
-        Task { await store.refreshAccountUsage(for: account) }
-      }
-    )
-  }
-
   private func displayedAccounts(for provider: UsageProvider) -> [ProviderAccount] {
     var accounts = store.accounts[provider] ?? []
     if let selected = store.selectedAccounts[provider],

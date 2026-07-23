@@ -5,12 +5,11 @@ import Testing
 
 @MainActor
 struct MonitoringRefreshCoordinationTests {
-  @Test func enablingMonitoringRefreshesOnlyTheNewAccount() async throws {
+  @Test func refreshingOneAccountOnlyFetchesThatAccount() async throws {
     let fixture = try MonitoringFixture(monitored: [.codex: [MonitoringFixture.personal]])
     defer { fixture.remove() }
     await fixture.store.reloadAccounts()
 
-    fixture.store.setMonitoring(true, for: MonitoringFixture.work)
     await fixture.store.refreshAccountUsage(for: MonitoringFixture.work)
 
     #expect(await fixture.recorder.names == ["Work"])

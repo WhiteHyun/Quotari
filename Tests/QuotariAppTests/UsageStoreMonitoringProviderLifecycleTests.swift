@@ -37,8 +37,9 @@ struct MonitoringProviderLifecycleTests {
     fixture.store.setProviderEnabled(.codex, enabled: true)
     await fixture.store.selectionRefreshTasks[.codex]?.value
 
-    #expect(fixture.store.monitoredAccounts[.codex] == [saved])
+    #expect(fixture.store.monitoredAccounts[.codex] == [replacement, saved])
     #expect(await fixture.recorder.names == ["Automatic", "Saved Personal"])
+    #expect(fixture.store.accountUsage(for: replacement)?.snapshot != nil)
     #expect(fixture.store.accountUsage(for: saved)?.snapshot != nil)
   }
 }

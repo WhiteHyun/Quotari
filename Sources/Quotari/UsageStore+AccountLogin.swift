@@ -366,7 +366,7 @@ extension UsageStore {
       capturedEquivalents[account.id]?.id == saved.id
     }) ?? accounts[provider]?.first(where: { $0.id == saved.id }) ?? saved
     selectAccount(visibleAccount, for: provider)
-    setMonitoring(true, for: visibleAccount)
+    includeAccountInAutomaticMonitoring(visibleAccount)
     accountLoginErrors[provider] = nil
     accountLoginOutputs[provider] = nil
   }

@@ -56,8 +56,6 @@ struct UsageStoreMonitoringFinalReviewTests {
     )
     let store = harness.store
     await store.reloadAccounts()
-    store.setMonitoring(true, for: first)
-    store.setMonitoring(true, for: second)
     store.selectAccount(first, for: .codex)
 
     await store.refresh()
@@ -71,8 +69,6 @@ struct UsageStoreMonitoringFinalReviewTests {
     let fixture = try await notificationFixture("reactivation-monitored-alerts")
     let store = fixture.store
     await store.reloadAccounts()
-    store.setMonitoring(true, for: fixture.first)
-    store.setMonitoring(true, for: fixture.second)
     store.selectAccount(fixture.first, for: .codex)
 
     store.setProviderEnabled(.codex, enabled: false)
@@ -89,8 +85,6 @@ struct UsageStoreMonitoringFinalReviewTests {
     let fixture = try await notificationFixture("cached-monitored-alerts")
     let store = fixture.store
     await store.reloadAccounts()
-    store.setMonitoring(true, for: fixture.first)
-    store.setMonitoring(true, for: fixture.second)
     await store.refreshAccountUsage(for: .codex, force: true)
     #expect(fixture.center.attemptedRequests.isEmpty)
 

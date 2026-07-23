@@ -48,7 +48,7 @@ struct UsageStoreMonitoringReloadRaceTests {
     #expect(fixture.store.accounts[.codex] == [replacement])
   }
 
-  @Test func monitoringToggleDuringLaterProviderReloadIsPreserved() async throws {
+  @Test func suspendedProviderReloadStillMonitorsEveryDiscoveredAccount() async throws {
     let codex = ProviderAccount(
       provider: .codex,
       displayName: "Codex",
@@ -85,12 +85,13 @@ struct UsageStoreMonitoringReloadRaceTests {
 
     let reload = Task { await store.reloadAccounts() }
     await discovery.waitUntilClaudeRequestStarts()
-    store.setMonitoring(false, for: codex)
     await discovery.resumeClaudeRequest()
     await reload.value
 
-    #expect(store.monitoredAccounts[.codex] == [])
-    #expect(try monitoringStore.load()[.codex] == [])
+    #expect(store.monitoredAccounts[.codex] == [codex])
+    #expect(store.monitoredAccounts[.claude] == [claude])
+    #expect(try monitoringStore.load()[.codex] == [codex])
+    #expect(try monitoringStore.load()[.claude] == [claude])
   }
 
   private func descriptor(for provider: UsageProvider) -> ProviderDescriptor {

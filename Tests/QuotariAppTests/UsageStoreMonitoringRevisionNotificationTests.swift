@@ -8,7 +8,7 @@ struct MonitoringRevisionNotificationTests {
     let harness = try await support.makeStore("invalidated-monitored-generation")
     let store = harness.store
     let account = support.account(name: "Old", path: "/tmp/old-generation-auth.json")
-    store.setMonitoring(true, for: account)
+    store.monitoredAccounts[.codex] = [account]
     let oldRevision = store.accountRevisions[.codex] ?? 0
     store.accountRevisions[.codex, default: 0] &+= 1
     let result = support.fetchResult(accountName: account.displayName)

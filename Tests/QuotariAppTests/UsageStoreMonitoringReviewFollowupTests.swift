@@ -5,33 +5,6 @@ import Testing
 
 @MainActor
 struct UsageStoreMonitoringReviewFollowupTests {
-  @Test func stoppingOneLiveAliasStopsEveryAliasOfTheManagedAccount() async throws {
-    let saved = ProviderAccount(
-      provider: .codex,
-      displayName: "Shared",
-      detail: "Saved in Quotari",
-      credentialSource: .quotariRegistry(id: "codex:shared")
-    )
-    let fixture = try MonitoringFixture(
-      capturedCopies: [
-        MonitoringFixture.personal.id: saved,
-        MonitoringFixture.work.id: saved,
-      ],
-      monitored: nil
-    )
-    defer { fixture.remove() }
-    await fixture.store.reloadAccounts()
-    #expect(fixture.store.monitoredAccounts[.codex] == [
-      MonitoringFixture.personal,
-      MonitoringFixture.work,
-    ])
-
-    fixture.store.setMonitoring(false, for: MonitoringFixture.personal)
-
-    #expect(fixture.store.monitoredAccounts[.codex] == [])
-    #expect(try fixture.monitoringStore.load()[.codex] == [])
-  }
-
   @Test func unavailableSelectionPlaceholderDoesNotConfigureFirstScanMonitoring() async throws {
     let discovery = MutableAccountDiscovery(StaticAccountDiscovery())
     let fixture = try MonitoringFixture(
@@ -46,7 +19,7 @@ struct UsageStoreMonitoringReviewFollowupTests {
 
     #expect(fixture.store.accounts[.codex] == [MonitoringFixture.personal])
     #expect(fixture.store.monitoredAccounts[.codex] == [])
-    #expect(try fixture.monitoringStore.load()[.codex] == nil)
+    #expect(try fixture.monitoringStore.load()[.codex] == [])
 
     discovery.update(StaticAccountDiscovery(accounts: [.codex: [MonitoringFixture.work]]))
     await fixture.store.reloadAccounts()

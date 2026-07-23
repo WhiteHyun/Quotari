@@ -5,35 +5,27 @@ import Testing
 
 @MainActor
 struct UsageStoreMonitoringPersistenceTests {
-  @Test func malformedSelectionFailsClosedWithoutOverwritingTheFile() async throws {
-    let malformed = Data("not-json".utf8)
-    let fixture = try MonitoringFixture(
-      monitored: nil,
-      rawMonitoringData: malformed
-    )
-    defer { fixture.remove() }
-
-    await fixture.store.reloadAccounts()
-
-    #expect(fixture.store.monitoredAccounts[.codex] == [])
-    #expect(try Data(contentsOf: fixture.monitoringStore.url) == malformed)
-  }
-
-  @Test func explicitMonitoringChangeRepairsMalformedConfiguration() async throws {
+  @Test func malformedLegacySelectionIsReplacedWithEveryAccount() async throws {
     let fixture = try MonitoringFixture(
       monitored: nil,
       rawMonitoringData: Data("not-json".utf8)
     )
     defer { fixture.remove() }
+
     await fixture.store.reloadAccounts()
 
-    fixture.store.setMonitoring(true, for: MonitoringFixture.personal)
-
+    #expect(fixture.store.monitoredAccounts[.codex] == [
+      MonitoringFixture.personal,
+      MonitoringFixture.work,
+    ])
     #expect(fixture.store.isMonitoringConfigurationLoaded)
-    #expect(try fixture.monitoringStore.load()[.codex] == [MonitoringFixture.personal])
+    #expect(try fixture.monitoringStore.load()[.codex] == [
+      MonitoringFixture.personal,
+      MonitoringFixture.work,
+    ])
   }
 
-  @Test func explicitMonitoringChangeRetriesAfterWriteFailure() async throws {
+  @Test func accountReloadRetriesAfterWriteFailure() async throws {
     let fixture = try MonitoringFixture(monitored: [.codex: [MonitoringFixture.personal]])
     defer { fixture.remove() }
     await fixture.store.reloadAccounts()
@@ -43,13 +35,17 @@ struct UsageStoreMonitoringPersistenceTests {
       withIntermediateDirectories: true
     )
 
-    fixture.store.setMonitoring(false, for: MonitoringFixture.personal)
+    fixture.store.isMonitoringConfigurationLoaded = false
+    fixture.store.persistMonitoringSelections(allowsRecovery: true)
     #expect(!fixture.store.isMonitoringConfigurationLoaded)
     try FileManager.default.removeItem(at: fixture.monitoringStore.url)
-    fixture.store.setMonitoring(true, for: MonitoringFixture.personal)
+    await fixture.store.reloadAccounts()
 
     #expect(fixture.store.isMonitoringConfigurationLoaded)
-    #expect(try fixture.monitoringStore.load()[.codex] == [MonitoringFixture.personal])
+    #expect(try fixture.monitoringStore.load()[.codex] == [
+      MonitoringFixture.personal,
+      MonitoringFixture.work,
+    ])
   }
 
   @Test func unchangedReloadDoesNotRewriteMonitoringConfiguration() async throws {

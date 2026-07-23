@@ -15,7 +15,6 @@ struct PreferencesSnapshotTests {
       startsAutomatically: false
     )
     await store.reloadAccounts()
-    accounts.forEach { store.setMonitoring(true, for: $0) }
 
     let outputDirectory = Self.outputDirectory()
     try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
