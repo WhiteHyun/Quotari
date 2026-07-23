@@ -5,6 +5,7 @@ struct GeneralPreferencesView: View {
   @Environment(UsageStore.self) private var store
   @State private var intervalMinutes: Double = 1
   @State private var importsCustomMascot = false
+  @State private var confirmsCustomMascotRemoval = false
   @State private var mascotImportError: String?
   @Bindable private var loginItems = LoginItemController.shared
 
@@ -111,11 +112,7 @@ struct GeneralPreferencesView: View {
               }
               if menuBarPreferences.hasCustomMascot {
                 Button(L10n.string("Remove"), role: .destructive) {
-                  do {
-                    try menuBarPreferences.removeCustomMascot()
-                  } catch {
-                    mascotImportError = error.localizedDescription
-                  }
+                  confirmsCustomMascotRemoval = true
                 }
               }
             }
@@ -152,6 +149,26 @@ struct GeneralPreferencesView: View {
       Button(L10n.string("OK"), role: .cancel) {}
     } message: {
       Text(mascotImportError ?? "")
+    }
+    .confirmationDialog(
+      L10n.string("Remove custom mascot?"),
+      isPresented: $confirmsCustomMascotRemoval,
+      titleVisibility: .visible
+    ) {
+      Button(L10n.string("Remove"), role: .destructive) {
+        do {
+          try menuBarPreferences.removeCustomMascot()
+        } catch {
+          mascotImportError = error.localizedDescription
+        }
+      }
+      Button(L10n.string("Cancel"), role: .cancel) {}
+    } message: {
+      Text(
+        L10n.string(
+          "This removes Quotari’s saved copy. You’ll need to import the original PNG files again."
+        )
+      )
     }
   }
 

@@ -146,6 +146,10 @@
 	<string>비용을 확인할 수 없음%@</string>
 	<key>Couldn’t import mascot</key>
 	<string>마스코트를 가져올 수 없음</string>
+	<key>Remove custom mascot?</key>
+	<string>커스텀 마스코트를 삭제할까요?</string>
+	<key>This removes Quotari’s saved copy. You’ll need to import the original PNG files again.</key>
+	<string>Quotari에 저장된 사본이 삭제됩니다. 다시 사용하려면 원본 PNG 파일을 가져와야 합니다.</string>
 	<key>Critical at %lld%%</key>
 	<string>%lld%%에서 위험</string>
 	<key>Critical threshold</key>

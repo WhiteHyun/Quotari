@@ -263,8 +263,9 @@ enum CustomMascotFrameDecoder {
   }
 
   static func decodeImage(_ data: Data) throws -> DecodedFrame {
+    let source = try pngSource(data)
     let frame = try decodePNG(
-      data,
+      source,
       maximumWidth: maximumFrameWidth,
       maximumHeight: maximumFrameHeight,
       maximumDecodedPixelSize: maximumDecodedFrameDimension
@@ -276,33 +277,55 @@ enum CustomMascotFrameDecoder {
   }
 
   static func decodeSpriteSheet(_ data: Data) throws -> DecodedFrame {
-    try decodePNG(
-      data,
+    let source = try pngSource(data)
+    guard source.width > source.height,
+          source.width.isMultiple(of: source.height)
+    else {
+      throw CustomMascotError.invalidFrameCount
+    }
+    let frameCount = source.width / source.height
+    guard frameCount >= 2, frameCount <= CustomMascotStore.maximumFrameCount else {
+      throw CustomMascotError.invalidFrameCount
+    }
+    return try decodePNG(
+      source,
       maximumWidth: maximumFrameHeight * CustomMascotStore.maximumFrameCount,
       maximumHeight: maximumFrameHeight,
-      maximumDecodedPixelSize: maximumDecodedFrameDimension
-        * CustomMascotStore.maximumFrameCount
+      maximumDecodedPixelSize: maximumDecodedFrameDimension * frameCount
     )
   }
 
-  private static func decodePNG(
-    _ data: Data,
-    maximumWidth: Int,
-    maximumHeight: Int,
-    maximumDecodedPixelSize: Int
-  ) throws -> DecodedFrame {
+  private struct PNGSource {
+    var imageSource: CGImageSource
+    var width: Int
+    var height: Int
+  }
+
+  private static func pngSource(_ data: Data) throws -> PNGSource {
     let pngSignature = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
     guard data.starts(with: pngSignature),
-          let source = CGImageSourceCreateWithData(data as CFData, nil),
-          let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+          let imageSource = CGImageSourceCreateWithData(data as CFData, nil),
+          let properties = CGImageSourceCopyPropertiesAtIndex(
+            imageSource,
+            0,
+            nil
+          ) as? [CFString: Any],
           let width = properties[kCGImagePropertyPixelWidth] as? Int,
           let height = properties[kCGImagePropertyPixelHeight] as? Int
     else {
       throw CustomMascotError.invalidPNG
     }
+    return PNGSource(imageSource: imageSource, width: width, height: height)
+  }
 
-    guard (1 ... maximumWidth).contains(width),
-          (1 ... maximumHeight).contains(height)
+  private static func decodePNG(
+    _ source: PNGSource,
+    maximumWidth: Int,
+    maximumHeight: Int,
+    maximumDecodedPixelSize: Int
+  ) throws -> DecodedFrame {
+    guard (1 ... maximumWidth).contains(source.width),
+          (1 ... maximumHeight).contains(source.height)
     else {
       throw CustomMascotError.unsupportedDimensions
     }
@@ -312,12 +335,12 @@ enum CustomMascotFrameDecoder {
       kCGImageSourceShouldCacheImmediately: true,
     ]
     guard let image = CGImageSourceCreateThumbnailAtIndex(
-      source,
+      source.imageSource,
       0,
       options as CFDictionary
     ) else {
       throw CustomMascotError.invalidPNG
     }
-    return DecodedFrame(image: image, width: width, height: height)
+    return DecodedFrame(image: image, width: source.width, height: source.height)
   }
 }

@@ -112,6 +112,26 @@ struct CustomMascotTests {
     #expect(IconRenderer.customMascotFrames(from: imported.decodedFrames).count == 32)
   }
 
+  @Test func downsampledSpriteSheetPreservesFrameDivisibility() throws {
+    let context = try makeContext("downsampled-sprite-sheet")
+    defer { context.remove() }
+    let sheetURL = context.directory.appendingPathComponent("six-frame-runner.png")
+    try spriteSheetPNG(
+      frameSize: 1024,
+      colors: [.red, .orange, .yellow, .green, .blue, .purple]
+    ).write(to: sheetURL)
+
+    let imported = try CustomMascotStore.importedMascot(from: [sheetURL])
+
+    #expect(imported.decodedFrames.count == 6)
+    #expect(imported.decodedFrames.allSatisfy { frame in
+      frame.width == 1024
+        && frame.height == 1024
+        && frame.image.width == 100
+        && frame.image.height == 100
+    })
+  }
+
   @Test func rejectsTooManySelectedFramesBeforeReadingThem() throws {
     let context = try makeContext("too-many-frames")
     defer { context.remove() }

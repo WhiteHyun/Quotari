@@ -78,6 +78,18 @@ struct MenuBarPreferencesControllerTests {
     #expect(!relaunched.animatesMascot)
   }
 
+  @Test func isolatedUsageStoreUsesATemporaryMascotArchive() {
+    let store = UsageStore.isolatedForTesting(
+      providers: [],
+      startsAutomatically: false
+    )
+
+    #expect(
+      store.menuBarPreferences.customMascotArchiveURL.standardizedFileURL.path
+        .hasPrefix(FileManager.default.temporaryDirectory.standardizedFileURL.path)
+    )
+  }
+
   private struct TestContext {
     var defaults: UserDefaults
     var suiteName: String

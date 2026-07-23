@@ -46,7 +46,7 @@ final class MenuBarPreferencesController {
   private(set) var customMascotRevision = 0
 
   @ObservationIgnored private let defaults: UserDefaults
-  @ObservationIgnored private let customMascotArchiveURL: URL
+  @ObservationIgnored let customMascotArchiveURL: URL
   @ObservationIgnored private var customMascotFrames: [NSImage] = []
 
   var showsRemainingPercent: Bool {
