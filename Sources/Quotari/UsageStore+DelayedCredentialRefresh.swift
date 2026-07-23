@@ -74,6 +74,16 @@ extension UsageStore {
     await currentSelection?.value
   }
 
+  func waitForDelayedCredentialRefreshAndDrainSelection(for provider: UsageProvider) async {
+    guard let delayedRefresh = delayedCredentialRefreshTasks[provider] else { return }
+    await waitForTaskUnlessCancelled(delayedRefresh.task)
+    guard !Task.isCancelled else { return }
+    // A manual refresh can cancel the delay while its non-cooperative
+    // selection fetch is still exiting. Drain that chain before an account
+    // usage request touches the same credential slot.
+    await selectionRefreshTasks[provider]?.value
+  }
+
   func cancelAllDelayedCredentialRefreshes() {
     let delayed = delayedCredentialRefreshTasks
     delayedCredentialRefreshTasks.removeAll()

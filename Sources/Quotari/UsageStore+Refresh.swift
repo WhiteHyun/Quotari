@@ -164,11 +164,20 @@ extension UsageStore {
   func performRefresh(interaction: ProviderFetchInteraction) async {
     let now = Date()
     var fetchedCredentialScopeIDs: [UsageProvider: Set<String>] = [:]
+    // A provider excluded at the start of this dashboard generation stays
+    // excluded through its monitored-account phase. A user action can cancel
+    // the delay while another provider is still fetching, but that must not
+    // admit a second credential-rotating request into this older generation.
+    let delayedProviders = Set(enabledProviderDescriptors.compactMap { descriptor in
+      isCredentialRefreshDelayed(for: descriptor.id, interaction: interaction)
+        ? descriptor.id
+        : nil
+    })
     await withTaskGroup(
       of: (UsageProvider, ProviderFetchCompletion).self
     ) { group in
       for descriptor in enabledProviderDescriptors
-        where !isCredentialRefreshDelayed(for: descriptor.id, interaction: interaction) {
+        where !delayedProviders.contains(descriptor.id) {
         group.addTask {
           await (
             descriptor.id,
@@ -189,7 +198,10 @@ extension UsageStore {
         apply(provider: provider, account: completion.account, result: completion.result)
       }
     }
-    await refreshMonitoredAccountUsage(excluding: fetchedCredentialScopeIDs)
+    await refreshMonitoredAccountUsage(
+      excluding: fetchedCredentialScopeIDs,
+      delayedProviders: delayedProviders
+    )
     lastRefresh = Date()
     // Hidden saved copies must track live-token rotations between account
     // reloads too — a slot swapped right after a rotation would otherwise
@@ -198,11 +210,12 @@ extension UsageStore {
   }
 
   private func refreshMonitoredAccountUsage(
-    excluding credentialScopeIDs: [UsageProvider: Set<String>]
+    excluding credentialScopeIDs: [UsageProvider: Set<String>],
+    delayedProviders: Set<UsageProvider>
   ) async {
     await withTaskGroup(of: Void.self) { group in
       for descriptor in enabledProviderDescriptors
-        where delayedCredentialRefreshTasks[descriptor.id] == nil
+        where !delayedProviders.contains(descriptor.id)
         && !(monitoredAccounts[descriptor.id] ?? []).isEmpty {
         group.addTask {
           await self.refreshAccountUsage(

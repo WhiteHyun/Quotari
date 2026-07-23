@@ -177,7 +177,7 @@ private struct SelectionRefreshDependencies {
   let costRefresh: Task<Void, Never>?
 }
 
-private func waitForTaskUnlessCancelled(_ task: Task<Void, Never>) async {
+func waitForTaskUnlessCancelled(_ task: Task<Void, Never>) async {
   guard !Task.isCancelled else { return }
   let waiter = CancellationAwareTaskWaiter()
   await withTaskCancellationHandler {

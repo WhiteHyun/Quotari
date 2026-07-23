@@ -73,12 +73,12 @@ extension UsageStore {
   ) async {
     if case .userInitiated = interaction {
       await cancelDelayedCredentialRefreshAndDrainSelection(for: provider)
+    } else {
+      await waitForDelayedCredentialRefreshAndDrainSelection(for: provider)
     }
     // A per-account fetch can rotate/persist a live token; never start one
     // while a switch is rewriting a credential slot.
-    guard !isSwitching, isProviderEnabled(provider),
-          !isCredentialRefreshDelayed(for: provider, interaction: interaction)
-    else { return }
+    guard !Task.isCancelled, !isSwitching, isProviderEnabled(provider) else { return }
     await waitForAutomaticCaptureBeforeAccountUsage(provider)
     guard !isSwitching, isProviderEnabled(provider) else { return }
     let request = AccountUsageRefreshRequest(
