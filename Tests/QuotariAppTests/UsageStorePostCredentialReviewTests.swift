@@ -4,6 +4,62 @@ import Testing
 
 @MainActor
 struct PostCredentialReviewTests {
+  @Test func backgroundAccountUsageWaitsForCanceledSelectionDrain() async {
+    let strategy = StepwisePostCredentialUsageStrategy()
+    let delay = PostCredentialRefreshGate()
+    let account = liveClaudeAccount(credentialIdentity: "draining")
+    let store = UsageStore.isolatedForTesting(
+      providers: [stepwisePostCredentialDescriptor(strategy: strategy)],
+      accountDiscovery: StaticAccountDiscovery(accounts: [.claude: [account]]),
+      postCredentialRefreshSleep: delay.sleep,
+      startsAutomatically: false
+    )
+    await store.reloadAccounts()
+    store.monitoredAccounts[.claude] = [account]
+    store.enqueuePostCredentialRefresh(for: .claude)
+    await delay.waitUntilRequested()
+    await delay.resumeAll()
+    await strategy.waitUntilRequestStarts(count: 1)
+
+    let manualRefresh = Task {
+      await store.refresh(provider: .claude, interaction: .userInitiated)
+    }
+    let accountRefresh = Task {
+      await store.refreshAccountUsage(for: account, force: true)
+    }
+    for _ in 0 ..< 10 {
+      await Task.yield()
+    }
+    #expect(await strategy.requestCount == 1)
+
+    await strategy.resumeNext()
+    await strategy.waitUntilRequestStarts(count: 2)
+    await strategy.resumeNext()
+    await strategy.waitUntilRequestStarts(count: 3)
+    await strategy.resumeNext()
+    await manualRefresh.value
+    await accountRefresh.value
+  }
+
+  @Test func delayedCredentialFetchPreservesUserInitiatedInteraction() async {
+    let strategy = AutomaticCaptureCountingStrategy()
+    let delay = PostCredentialRefreshGate()
+    let account = liveClaudeAccount(credentialIdentity: "interaction")
+    let store = UsageStore.isolatedForTesting(
+      providers: [countingClaudeDescriptor(strategy: strategy)],
+      accountDiscovery: StaticAccountDiscovery(accounts: [.claude: [account]]),
+      postCredentialRefreshSleep: delay.sleep,
+      startsAutomatically: false
+    )
+    await store.reloadAccounts()
+    store.enqueuePostCredentialRefresh(for: .claude)
+    await delay.waitUntilRequested()
+    await delay.resumeAll()
+    await store.delayedCredentialRefreshTasks[.claude]?.task.value
+
+    #expect(await strategy.interactions == [.userInitiated])
+  }
+
   @Test func accountUsageWaitsForEverySupersedingDelay() async {
     let strategy = AutomaticCaptureCountingStrategy()
     let delay = PostCredentialRefreshGate()

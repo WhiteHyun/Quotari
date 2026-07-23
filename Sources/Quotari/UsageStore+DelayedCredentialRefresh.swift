@@ -30,7 +30,7 @@ extension UsageStore {
       guard isProviderEnabled(provider) else { return }
       enqueueSelectionRefresh(
         for: provider,
-        interaction: .background,
+        interaction: .userInitiated,
         cancelsDelayedCredentialRefresh: false,
         bypassesDelayedCredentialRefresh: true
       )
@@ -70,25 +70,33 @@ extension UsageStore {
 
   func cancelDelayedCredentialRefreshAndDrainSelection(for provider: UsageProvider) async {
     let currentSelection = selectionRefreshTasks[provider]
+    let previousDrain = credentialRefreshDrainTasks[provider]?.task
     cancelDelayedCredentialRefresh(for: provider)
-    await currentSelection?.value
+    let generation = UUID()
+    let task = Task { @MainActor [weak self] in
+      await previousDrain?.value
+      await currentSelection?.value
+      guard self?.credentialRefreshDrainTasks[provider]?.generation == generation else { return }
+      self?.credentialRefreshDrainTasks[provider] = nil
+    }
+    credentialRefreshDrainTasks[provider] = CredentialRefreshDrainTask(
+      generation: generation,
+      task: task
+    )
+    await task.value
   }
 
   func waitForDelayedCredentialRefreshAndDrainSelection(for provider: UsageProvider) async {
-    var waitedForDelay = false
     while !Task.isCancelled {
       if let delayedRefresh = delayedCredentialRefreshTasks[provider] {
-        waitedForDelay = true
         await waitForTaskUnlessCancelled(delayedRefresh.task)
         continue
       }
-      guard waitedForDelay else { return }
-      // A manual refresh can cancel the delay while its non-cooperative
-      // selection fetch is still exiting. Drain that chain before an account
-      // usage request touches the same credential slot, then recheck because
-      // a newer login may have installed another delayed generation.
-      await selectionRefreshTasks[provider]?.value
-      guard delayedCredentialRefreshTasks[provider] != nil else { return }
+      if let drain = credentialRefreshDrainTasks[provider] {
+        await waitForTaskUnlessCancelled(drain.task)
+        continue
+      }
+      return
     }
   }
 
@@ -117,4 +125,9 @@ struct DelayedCredentialRefreshTask {
   let task: Task<Void, Never>
   var ownedSelectionTask: Task<Void, Never>?
   var queuedReplacementTask: Task<Void, Never>?
+}
+
+struct CredentialRefreshDrainTask {
+  let generation: UUID
+  let task: Task<Void, Never>
 }

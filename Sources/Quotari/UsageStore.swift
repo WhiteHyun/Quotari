@@ -135,6 +135,10 @@ final class UsageStore {
   /// time to settle before Quotari starts an automatic usage fetch that may
   /// perform another rotation.
   var delayedCredentialRefreshTasks: [UsageProvider: DelayedCredentialRefreshTask] = [:]
+  /// A user-initiated refresh can cancel a delayed generation while its
+  /// non-cooperative selection fetch is still exiting. Keep that drain visible
+  /// to newly arriving background account requests until the fetch completes.
+  var credentialRefreshDrainTasks: [UsageProvider: CredentialRefreshDrainTask] = [:]
   let postCredentialRefreshDelay: Duration
   let postCredentialRefreshSleep: @Sendable (Duration) async throws -> Void
   /// Disabling clears per-account usage. The first successful provider fetch
