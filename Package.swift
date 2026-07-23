@@ -39,10 +39,14 @@ let package = Package(
         .product(name: "MenuBarExtraAccess", package: "MenuBarExtraAccess"),
         .product(name: "Sparkle", package: "Sparkle"),
       ],
+      exclude: [
+        "Resources/Localizable.xcstrings",
+      ],
       resources: [
         .process("Resources"),
       ],
       plugins: [
+        .plugin(name: "CompileStringCatalogPlugin"),
         .plugin(name: "SwiftLintBuildToolPlugin", package: "SwiftLintPlugins"),
       ]
     ),
@@ -64,6 +68,10 @@ let package = Package(
       plugins: [
         .plugin(name: "SwiftLintBuildToolPlugin", package: "SwiftLintPlugins"),
       ]
+    ),
+    .plugin(
+      name: "CompileStringCatalogPlugin",
+      capability: .buildTool()
     ),
   ],
   // Swift 6 language mode: full data-race safety enforced at compile time.

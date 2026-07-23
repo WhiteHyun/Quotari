@@ -6,3 +6,4 @@ dist/
 DerivedData/
 *.xcodeproj
 *.xcworkspace
+Sources/Quotari/Resources/*.lproj/Localizable.strings
