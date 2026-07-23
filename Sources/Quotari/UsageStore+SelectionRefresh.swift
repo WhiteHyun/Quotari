@@ -14,9 +14,12 @@ extension UsageStore {
     bypassesDelayedCredentialRefresh: Bool = false,
     waitsForDelayedCredentialRefresh: Bool = false
   ) {
+    let previousDrainGeneration = credentialRefreshDrainTasks[provider]?.generation
     if cancelsDelayedCredentialRefresh {
       cancelDelayedCredentialRefresh(for: provider)
     }
+    let cancellationDrainGeneration = credentialRefreshDrainTasks[provider]
+      .flatMap { $0.generation == previousDrainGeneration ? nil : $0.generation }
     let delayedRefresh = waitsForDelayedCredentialRefresh
       ? delayedCredentialRefreshTasks[provider]
       : nil
@@ -39,6 +42,7 @@ extension UsageStore {
       interaction: interaction,
       bypassesDelayedCredentialRefresh: bypassesDelayedCredentialRefresh
         || bypassesOwnedDelayedRefresh
+        || cancellationDrainGeneration != nil
     )
     let task = makeSelectionRefreshTask(
       for: provider,
@@ -46,12 +50,33 @@ extension UsageStore {
       request: request
     )
     selectionRefreshTasks[provider] = task
+    queueCredentialRefreshDrainReplacementIfNeeded(
+      task,
+      for: provider,
+      drainGeneration: cancellationDrainGeneration
+    )
     queueSelectionReplacementIfNeeded(
       task,
       for: provider,
       delayedRefresh: delayedRefresh,
       bypassesOwnedDelayedRefresh: bypassesOwnedDelayedRefresh
     )
+  }
+
+  private func queueCredentialRefreshDrainReplacementIfNeeded(
+    _ task: Task<Void, Never>,
+    for provider: UsageProvider,
+    drainGeneration: UUID?
+  ) {
+    guard let drainGeneration,
+          var drain = credentialRefreshDrainTasks[provider],
+          drain.generation == drainGeneration
+    else { return }
+    drain.replacement = CredentialRefreshDrainReplacement(
+      generation: UUID(),
+      task: task
+    )
+    credentialRefreshDrainTasks[provider] = drain
   }
 
   private func shouldEnqueueSelectionRefresh(

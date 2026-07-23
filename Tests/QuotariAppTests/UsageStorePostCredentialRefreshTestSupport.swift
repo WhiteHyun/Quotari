@@ -89,6 +89,7 @@ actor StepwisePostCredentialUsageStrategy: ProviderFetchStrategy {
   nonisolated let id = "stepwise-post-credential"
   nonisolated let kind = ProviderFetchKind.oauth
   private(set) var requestCount = 0
+  private(set) var completedRequestCount = 0
   private var activeRequests = 0
   private(set) var maximumConcurrentRequests = 0
   private var startWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
@@ -99,7 +100,10 @@ actor StepwisePostCredentialUsageStrategy: ProviderFetchStrategy {
     requestCount += 1
     activeRequests += 1
     maximumConcurrentRequests = max(maximumConcurrentRequests, activeRequests)
-    defer { activeRequests -= 1 }
+    defer {
+      activeRequests -= 1
+      completedRequestCount += 1
+    }
     let ready = startWaiters.filter { requestCount >= $0.0 }
     startWaiters.removeAll { requestCount >= $0.0 }
     ready.forEach { $0.1.resume() }

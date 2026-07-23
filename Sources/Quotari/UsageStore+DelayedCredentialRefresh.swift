@@ -87,15 +87,21 @@ extension UsageStore {
     let task = Task { @MainActor [weak self] in
       await previousDrain?.value
       await currentSelection.value
-      // Direct cancellation paths synchronously enqueue a replacement after
-      // publishing this marker. Drain that latest generation as well.
-      await self?.selectionRefreshTasks[provider]?.value
+      while let drain = self?.credentialRefreshDrainTasks[provider],
+            drain.generation == generation,
+            let replacement = drain.replacement {
+        await replacement.task.value
+        guard self?.credentialRefreshDrainTasks[provider]?.replacement?.generation
+          != replacement.generation
+        else { break }
+      }
       guard self?.credentialRefreshDrainTasks[provider]?.generation == generation else { return }
       self?.credentialRefreshDrainTasks[provider] = nil
     }
     credentialRefreshDrainTasks[provider] = CredentialRefreshDrainTask(
       generation: generation,
-      task: task
+      task: task,
+      replacement: nil
     )
   }
 
@@ -136,6 +142,12 @@ struct DelayedCredentialRefreshTask {
 }
 
 struct CredentialRefreshDrainTask {
+  let generation: UUID
+  let task: Task<Void, Never>
+  var replacement: CredentialRefreshDrainReplacement?
+}
+
+struct CredentialRefreshDrainReplacement {
   let generation: UUID
   let task: Task<Void, Never>
 }
