@@ -40,6 +40,25 @@ enum IconRenderer {
     return frames[frame % frames.count]
   }
 
+  @MainActor
+  static func customMascotFrames(from framePNGs: [Data]) throws -> [NSImage] {
+    let decodedFrames = try CustomMascotFrameDecoder.decode(framePNGs)
+    return customMascotFrames(from: decodedFrames)
+  }
+
+  @MainActor
+  static func customMascotFrames(
+    from decodedFrames: [CustomMascotFrameDecoder.DecodedFrame]
+  ) -> [NSImage] {
+    decodedFrames.map { decoded in
+      makeMenuBarFrame(
+        image: decoded.image,
+        pixelWidth: decoded.width,
+        pixelHeight: decoded.height
+      )
+    }
+  }
+
   /// A high-resolution mascot frame for Settings and other large surfaces.
   /// Menu-bar callers should keep using `mascotIcon(frame:)`, which is tuned
   /// for the 18-point status item instead.
@@ -72,6 +91,59 @@ enum IconRenderer {
       frame.isTemplate = false
       return frame
     }
+  }
+
+  private static func makeMenuBarFrame(
+    image: CGImage,
+    pixelWidth: Int,
+    pixelHeight: Int
+  ) -> NSImage {
+    let layout = customMascotLayout(pixelWidth: pixelWidth, pixelHeight: pixelHeight)
+    let source = NSImage(
+      cgImage: image,
+      size: NSSize(width: pixelWidth, height: pixelHeight)
+    )
+    let frame = NSImage(size: layout.canvasSize)
+    frame.lockFocus()
+    source.draw(
+      in: layout.drawingRect,
+      from: NSRect(origin: .zero, size: source.size),
+      operation: .sourceOver,
+      fraction: 1,
+      respectFlipped: false,
+      hints: [.interpolation: NSImageInterpolation.high]
+    )
+    frame.unlockFocus()
+    frame.isTemplate = false
+    return frame
+  }
+
+  static func customMascotLayout(
+    pixelWidth: Int,
+    pixelHeight: Int
+  ) -> (canvasSize: NSSize, drawingRect: NSRect) {
+    let aspectRatio = CGFloat(pixelWidth) / CGFloat(pixelHeight)
+    let canvasSize = NSSize(
+      width: min(50, max(8, iconSize.height * aspectRatio)),
+      height: iconSize.height
+    )
+    let scale = min(
+      canvasSize.width / CGFloat(pixelWidth),
+      canvasSize.height / CGFloat(pixelHeight)
+    )
+    let drawingSize = NSSize(
+      width: CGFloat(pixelWidth) * scale,
+      height: CGFloat(pixelHeight) * scale
+    )
+    return (
+      canvasSize,
+      NSRect(
+        x: (canvasSize.width - drawingSize.width) / 2,
+        y: (canvasSize.height - drawingSize.height) / 2,
+        width: drawingSize.width,
+        height: drawingSize.height
+      )
+    )
   }
 
   private static func makeArtworkFrames() -> [NSImage] {

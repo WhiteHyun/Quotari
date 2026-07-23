@@ -55,6 +55,35 @@ struct LocalizationTests {
     #expect(L10n.string("\("Codex") usage is at \("80")%.", locale: korean) == "Codex 사용량이 80%입니다.")
   }
 
+  @Test func localizesCustomMascotSettings() {
+    let korean = Locale(identifier: "ko")
+
+    #expect(L10n.string("Mascot", locale: korean) == "마스코트")
+    #expect(L10n.string("Built-in Flame", locale: korean) == "기본 불꽃")
+    #expect(L10n.string("Custom mascot", locale: korean) == "커스텀 마스코트")
+    #expect(L10n.string("Import…", locale: korean) == "가져오기…")
+    #expect(L10n.string("Couldn’t remove mascot", locale: korean) == "마스코트를 삭제할 수 없음")
+    #expect(L10n.string("Remove custom mascot?", locale: korean) == "커스텀 마스코트를 삭제할까요?")
+    #expect(
+      L10n.string(
+        "Quotari couldn’t remove the custom mascot.",
+        locale: korean
+      ) == "Quotari가 커스텀 마스코트를 삭제하지 못했습니다."
+    )
+    #expect(
+      L10n.string(
+        "This removes Quotari’s saved copy. You’ll need to import the original PNG files again.",
+        locale: korean
+      ) == "Quotari에 저장된 사본이 삭제됩니다. 다시 사용하려면 원본 PNG 파일을 가져와야 합니다."
+    )
+    #expect(
+      L10n.string(
+        "Wait for the current custom mascot operation to finish.",
+        locale: korean
+      ) == "진행 중인 커스텀 마스코트 작업이 끝날 때까지 기다려 주세요."
+    )
+  }
+
   @Test func hidesPaceTrendsBelowOnePercentBeforeRounding() {
     let pace = UsagePace(deltaPercent: 0.75, runsOutIn: nil, headroomMultiplier: nil)
 

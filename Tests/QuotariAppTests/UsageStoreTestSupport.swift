@@ -229,6 +229,7 @@ extension UsageStore {
     codexCredentialLoader: @escaping @Sendable (ProviderCredentialSource) -> CodexCredentials? = { _ in nil },
     claudeCredentialLoader: @escaping @Sendable (ProviderCredentialSource) -> ClaudeCredentials? = { _ in nil },
     defaults: UserDefaults? = nil,
+    menuBarPreferences: MenuBarPreferencesController? = nil,
     quotaNotifications: QuotaNotificationController? = nil,
     startsAutomatically: Bool = true
   ) -> UsageStore {
@@ -257,6 +258,7 @@ extension UsageStore {
       codexCredentialLoader: codexCredentialLoader,
       claudeCredentialLoader: claudeCredentialLoader,
       defaults: isolatedDefaults,
+      menuBarPreferences: menuBarPreferences ?? .isolatedForTesting(defaults: isolatedDefaults),
       quotaNotifications: isolatedNotifications,
       startsAutomatically: startsAutomatically
     )

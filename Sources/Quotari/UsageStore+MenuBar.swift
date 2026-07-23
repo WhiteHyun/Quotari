@@ -33,7 +33,11 @@ extension UsageStore {
   }
 
   func menuBarIcon(frame: Int) -> NSImage {
-    IconRenderer.mascotIcon(frame: frame)
+    menuBarPreferences.mascotIcon(frame: frame)
+  }
+
+  var menuBarMascotFrameCount: Int {
+    menuBarPreferences.mascotFrameCount
   }
 
   var menuBarAnimationInterval: TimeInterval {

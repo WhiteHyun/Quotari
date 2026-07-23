@@ -88,6 +88,8 @@ struct QuotariApp: App {
 private struct MenuBarMascotLabel: View {
   private struct AnimationConfiguration: Hashable {
     var animates: Bool
+    var mascot: MenuBarMascot
+    var customMascotRevision: Int
     var interval: TimeInterval
   }
 
@@ -111,7 +113,7 @@ private struct MenuBarMascotLabel: View {
     }
     .task(id: animationConfiguration) {
       let configuration = animationConfiguration
-      guard configuration.animates, IconRenderer.frameCount > 1 else {
+      guard configuration.animates, store.menuBarMascotFrameCount > 1 else {
         frameIndex = 0
         return
       }
@@ -121,7 +123,7 @@ private struct MenuBarMascotLabel: View {
         } catch {
           return
         }
-        frameIndex = (frameIndex + 1) % IconRenderer.frameCount
+        frameIndex = (frameIndex + 1) % store.menuBarMascotFrameCount
       }
     }
   }
@@ -129,6 +131,8 @@ private struct MenuBarMascotLabel: View {
   private var animationConfiguration: AnimationConfiguration {
     AnimationConfiguration(
       animates: store.menuBarPreferences.preferences.animatesMascot,
+      mascot: store.menuBarPreferences.preferences.mascot,
+      customMascotRevision: store.menuBarPreferences.customMascotRevision,
       interval: store.menuBarAnimationInterval
     )
   }

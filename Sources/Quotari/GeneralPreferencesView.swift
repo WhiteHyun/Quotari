@@ -1,8 +1,12 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct GeneralPreferencesView: View {
   @Environment(UsageStore.self) private var store
   @State private var intervalMinutes: Double = 1
+  @State private var importsCustomMascot = false
+  @State private var confirmsCustomMascotRemoval = false
+  @State private var customMascotAlert: CustomMascotAlert?
   @Bindable private var loginItems = LoginItemController.shared
 
   var body: some View {
@@ -73,6 +77,52 @@ struct GeneralPreferencesView: View {
             isOn: $menuBarPreferences.animatesMascot
           )
           PreferencesRowDivider()
+          PreferencesControlRow(
+            L10n.string("Mascot"),
+            detail: L10n.string("Choose the built-in flame or your imported mascot.")
+          ) {
+            Picker(L10n.string("Mascot"), selection: $menuBarPreferences.mascot) {
+              Text(L10n.string("Built-in Flame"))
+                .tag(MenuBarMascot.builtIn)
+              if menuBarPreferences.hasCustomMascot {
+                Text(menuBarPreferences.customMascotName ?? L10n.string("Custom"))
+                  .tag(MenuBarMascot.custom)
+              }
+            }
+            .labelsHidden()
+            .frame(width: 190, alignment: .trailing)
+          }
+          PreferencesRowDivider()
+          PreferencesControlRow(
+            L10n.string("Custom mascot"),
+            detail: L10n.string(
+              "Import 2–32 same-size PNG frames, or one horizontal sprite sheet with square frames."
+            )
+          ) {
+            HStack(spacing: 8) {
+              if let preview = menuBarPreferences.customMascotIcon(frame: 0) {
+                Image(nsImage: preview)
+              }
+              if menuBarPreferences.isCustomMascotOperationInProgress {
+                ProgressView()
+                  .controlSize(.small)
+              }
+              Button(
+                menuBarPreferences.hasCustomMascot
+                  ? L10n.string("Replace…")
+                  : L10n.string("Import…")
+              ) {
+                importsCustomMascot = true
+              }
+              if menuBarPreferences.hasCustomMascot {
+                Button(L10n.string("Remove"), role: .destructive) {
+                  confirmsCustomMascotRemoval = true
+                }
+              }
+            }
+            .disabled(menuBarPreferences.isCustomMascotOperationInProgress)
+          }
+          PreferencesRowDivider()
           PreferencesControlRow(L10n.string("Open dashboard")) {
             DashboardShortcutRecorder()
               .frame(width: 130)
@@ -84,6 +134,69 @@ struct GeneralPreferencesView: View {
     .onChange(of: intervalMinutes) { _, newValue in
       store.refreshInterval = newValue * 60
     }
+    .fileImporter(
+      isPresented: $importsCustomMascot,
+      allowedContentTypes: [.png],
+      allowsMultipleSelection: true
+    ) { result in
+      do {
+        let urls = try result.get()
+        let controller = menuBarPreferences
+        Task {
+          do {
+            try await controller.importCustomMascot(from: urls)
+          } catch {
+            customMascotAlert = .importing(error.localizedDescription)
+          }
+        }
+      } catch where isCancelledFileImport(error) {
+        return
+      } catch {
+        customMascotAlert = .importing(error.localizedDescription)
+      }
+    }
+    .alert(
+      customMascotAlert?.title ?? "",
+      isPresented: customMascotAlertIsPresented
+    ) {
+      Button(L10n.string("OK"), role: .cancel) {}
+    } message: {
+      Text(customMascotAlert?.message ?? "")
+    }
+    .confirmationDialog(
+      L10n.string("Remove custom mascot?"),
+      isPresented: $confirmsCustomMascotRemoval,
+      titleVisibility: .visible
+    ) {
+      Button(L10n.string("Remove"), role: .destructive) {
+        let controller = menuBarPreferences
+        Task {
+          do {
+            try await controller.removeCustomMascot()
+          } catch {
+            customMascotAlert = .removing(error.localizedDescription)
+          }
+        }
+      }
+      Button(L10n.string("Cancel"), role: .cancel) {}
+    } message: {
+      Text(
+        L10n.string(
+          "This removes Quotari’s saved copy. You’ll need to import the original PNG files again."
+        )
+      )
+    }
+  }
+
+  private var customMascotAlertIsPresented: Binding<Bool> {
+    Binding(
+      get: { customMascotAlert != nil },
+      set: { isPresented in
+        if !isPresented {
+          customMascotAlert = nil
+        }
+      }
+    )
   }
 
   @ViewBuilder private var loginItemStatus: some View {
@@ -111,4 +224,31 @@ struct GeneralPreferencesView: View {
         .foregroundStyle(.red)
     }
   }
+}
+
+private enum CustomMascotAlert {
+  case importing(String)
+  case removing(String)
+
+  var title: String {
+    switch self {
+    case .importing:
+      L10n.string("Couldn’t import mascot")
+    case .removing:
+      L10n.string("Couldn’t remove mascot")
+    }
+  }
+
+  var message: String {
+    switch self {
+    case let .importing(message), let .removing(message):
+      message
+    }
+  }
+}
+
+func isCancelledFileImport(_ error: any Error) -> Bool {
+  let cocoaError = error as NSError
+  return cocoaError.domain == NSCocoaErrorDomain
+    && cocoaError.code == NSUserCancelledError
 }
