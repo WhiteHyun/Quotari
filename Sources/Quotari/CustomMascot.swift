@@ -39,6 +39,7 @@ struct StoredCustomMascot: Codable, Equatable, Sendable {
   var version = currentVersion
   var name: String
   var framePNGs: [Data]
+  var spriteSheetPNG: Data?
 }
 
 @MainActor
@@ -64,7 +65,7 @@ enum CustomMascotStore {
       .appendingPathComponent("custom-mascot.plist")
   }
 
-  static func importedMascot(from urls: [URL]) throws -> StoredCustomMascot {
+  static func importedMascot(from urls: [URL]) throws -> LoadedMascot {
     let sortedURLs = urls.sorted {
       $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
     }
@@ -82,12 +83,16 @@ enum CustomMascotStore {
     }
 
     let framePNGs: [Data]
+    let spriteSheetPNG: Data?
+    let decodedFrames: [CustomMascotFrameDecoder.DecodedFrame]
     if sortedURLs.count == 1 {
       let data = try readData(
         from: sortedURLs[0],
         remainingByteCount: maximumTotalBytes
       )
-      framePNGs = try splitSpriteSheet(data)
+      framePNGs = []
+      spriteSheetPNG = data
+      decodedFrames = try splitSpriteSheet(data)
     } else {
       var importedFrames: [Data] = []
       var totalBytes = 0
@@ -100,19 +105,17 @@ enum CustomMascotStore {
         totalBytes += data.count
       }
       framePNGs = importedFrames
-      _ = try CustomMascotFrameDecoder.decode(framePNGs)
+      spriteSheetPNG = nil
+      decodedFrames = try CustomMascotFrameDecoder.decode(framePNGs)
     }
 
-    guard framePNGs.count >= 2, framePNGs.count <= maximumFrameCount else {
-      throw CustomMascotError.invalidFrameCount
-    }
-    guard framePNGs.reduce(0, { $0 + $1.count }) <= maximumTotalBytes else {
-      throw CustomMascotError.fileTooLarge
-    }
-
-    return StoredCustomMascot(
-      name: displayName(for: sortedURLs),
-      framePNGs: framePNGs
+    return LoadedMascot(
+      mascot: StoredCustomMascot(
+        name: displayName(for: sortedURLs),
+        framePNGs: framePNGs,
+        spriteSheetPNG: spriteSheetPNG
+      ),
+      decodedFrames: decodedFrames
     )
   }
 
@@ -122,10 +125,14 @@ enum CustomMascotStore {
     guard mascot.version == StoredCustomMascot.currentVersion else {
       throw CustomMascotError.storageFailure
     }
-    return try LoadedMascot(
-      mascot: mascot,
-      decodedFrames: CustomMascotFrameDecoder.decode(mascot.framePNGs)
-    )
+    let decodedFrames: [CustomMascotFrameDecoder.DecodedFrame]
+    if let spriteSheetPNG = mascot.spriteSheetPNG {
+      guard mascot.framePNGs.isEmpty else { throw CustomMascotError.storageFailure }
+      decodedFrames = try splitSpriteSheet(spriteSheetPNG)
+    } else {
+      decodedFrames = try CustomMascotFrameDecoder.decode(mascot.framePNGs)
+    }
+    return LoadedMascot(mascot: mascot, decodedFrames: decodedFrames)
   }
 
   static func save(_ mascot: StoredCustomMascot, to url: URL) throws {
@@ -170,7 +177,12 @@ enum CustomMascotStore {
     return data
   }
 
-  private static func splitSpriteSheet(_ data: Data) throws -> [Data] {
+  private static func splitSpriteSheet(
+    _ data: Data
+  ) throws -> [CustomMascotFrameDecoder.DecodedFrame] {
+    guard data.count <= maximumTotalBytes else {
+      throw CustomMascotError.fileTooLarge
+    }
     let decoded = try CustomMascotFrameDecoder.decodeSpriteSheet(data)
     guard decoded.width > decoded.height,
           decoded.width.isMultiple(of: decoded.height)
@@ -183,27 +195,22 @@ enum CustomMascotStore {
       throw CustomMascotError.invalidFrameCount
     }
 
-    var framePNGs: [Data] = []
-    var totalBytes = 0
-    for index in 0 ..< frameCount {
+    return try (0 ..< frameCount).map { index in
       let crop = CGRect(
         x: index * decoded.height,
         y: 0,
         width: decoded.height,
         height: decoded.height
       )
-      guard let cropped = decoded.image.cropping(to: crop),
-            let png = NSBitmapImageRep(cgImage: cropped).representation(using: .png, properties: [:])
-      else {
+      guard let cropped = decoded.image.cropping(to: crop) else {
         throw CustomMascotError.invalidPNG
       }
-      guard png.count <= maximumTotalBytes - totalBytes else {
-        throw CustomMascotError.fileTooLarge
-      }
-      framePNGs.append(png)
-      totalBytes += png.count
+      return CustomMascotFrameDecoder.DecodedFrame(
+        image: cropped,
+        width: decoded.height,
+        height: decoded.height
+      )
     }
-    return framePNGs
   }
 
   private static func displayName(for urls: [URL]) -> String {

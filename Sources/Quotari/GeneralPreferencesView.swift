@@ -139,6 +139,8 @@ struct GeneralPreferencesView: View {
     ) { result in
       do {
         try menuBarPreferences.importCustomMascot(from: result.get())
+      } catch where isCancelledFileImport(error) {
+        return
       } catch {
         mascotImportError = error.localizedDescription
       }
@@ -189,4 +191,10 @@ struct GeneralPreferencesView: View {
         .foregroundStyle(.red)
     }
   }
+}
+
+func isCancelledFileImport(_ error: any Error) -> Bool {
+  let cocoaError = error as NSError
+  return cocoaError.domain == NSCocoaErrorDomain
+    && cocoaError.code == NSUserCancelledError
 }

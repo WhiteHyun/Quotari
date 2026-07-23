@@ -98,19 +98,15 @@ enum IconRenderer {
     pixelWidth: Int,
     pixelHeight: Int
   ) -> NSImage {
-    let aspectRatio = CGFloat(pixelWidth) / CGFloat(pixelHeight)
-    let size = NSSize(
-      width: min(50, max(8, iconSize.height * aspectRatio)),
-      height: iconSize.height
-    )
+    let layout = customMascotLayout(pixelWidth: pixelWidth, pixelHeight: pixelHeight)
     let source = NSImage(
       cgImage: image,
       size: NSSize(width: pixelWidth, height: pixelHeight)
     )
-    let frame = NSImage(size: size)
+    let frame = NSImage(size: layout.canvasSize)
     frame.lockFocus()
     source.draw(
-      in: NSRect(origin: .zero, size: size),
+      in: layout.drawingRect,
       from: NSRect(origin: .zero, size: source.size),
       operation: .sourceOver,
       fraction: 1,
@@ -120,6 +116,34 @@ enum IconRenderer {
     frame.unlockFocus()
     frame.isTemplate = false
     return frame
+  }
+
+  static func customMascotLayout(
+    pixelWidth: Int,
+    pixelHeight: Int
+  ) -> (canvasSize: NSSize, drawingRect: NSRect) {
+    let aspectRatio = CGFloat(pixelWidth) / CGFloat(pixelHeight)
+    let canvasSize = NSSize(
+      width: min(50, max(8, iconSize.height * aspectRatio)),
+      height: iconSize.height
+    )
+    let scale = min(
+      canvasSize.width / CGFloat(pixelWidth),
+      canvasSize.height / CGFloat(pixelHeight)
+    )
+    let drawingSize = NSSize(
+      width: CGFloat(pixelWidth) * scale,
+      height: CGFloat(pixelHeight) * scale
+    )
+    return (
+      canvasSize,
+      NSRect(
+        x: (canvasSize.width - drawingSize.width) / 2,
+        y: (canvasSize.height - drawingSize.height) / 2,
+        width: drawingSize.width,
+        height: drawingSize.height
+      )
+    )
   }
 
   private static func makeArtworkFrames() -> [NSImage] {

@@ -54,6 +54,29 @@ struct CustomMascotTests {
     #expect(preview.size == NSSize(width: 24, height: 18))
   }
 
+  @Test func replacingInactiveCustomMascotPreservesBuiltInSelection() throws {
+    let context = try makeContext("replace-inactive")
+    defer { context.remove() }
+    let firstURL = context.directory.appendingPathComponent("first-0.png")
+    let secondURL = context.directory.appendingPathComponent("first-1.png")
+    try pngData(width: 36, height: 36, color: .systemBlue).write(to: firstURL)
+    try pngData(width: 36, height: 36, color: .systemOrange).write(to: secondURL)
+    let controller = context.makeController()
+    try controller.importCustomMascot(from: [firstURL, secondURL])
+    controller.setMascot(.builtIn)
+
+    let replacementFirstURL = context.directory.appendingPathComponent("replacement-0.png")
+    let replacementSecondURL = context.directory.appendingPathComponent("replacement-1.png")
+    try pngData(width: 48, height: 36, color: .systemRed).write(to: replacementFirstURL)
+    try pngData(width: 48, height: 36, color: .systemGreen).write(to: replacementSecondURL)
+
+    try controller.importCustomMascot(from: [replacementFirstURL, replacementSecondURL])
+
+    #expect(controller.preferences.mascot == .builtIn)
+    #expect(controller.customMascotName == "replacement")
+    #expect(controller.customMascotIcon(frame: 0)?.size == NSSize(width: 24, height: 18))
+  }
+
   @Test func splitsAHorizontalSquareFrameSpriteSheet() throws {
     let context = try makeContext("sprite-sheet")
     defer { context.remove() }
@@ -62,10 +85,12 @@ struct CustomMascotTests {
       .write(to: sheetURL)
 
     let imported = try CustomMascotStore.importedMascot(from: [sheetURL])
-    let frames = try IconRenderer.customMascotFrames(from: imported.framePNGs)
+    let frames = IconRenderer.customMascotFrames(from: imported.decodedFrames)
 
-    #expect(imported.name == "tiny-robot")
-    #expect(imported.framePNGs.count == 3)
+    #expect(imported.mascot.name == "tiny-robot")
+    #expect(imported.mascot.framePNGs.isEmpty)
+    #expect(imported.mascot.spriteSheetPNG != nil)
+    #expect(imported.decodedFrames.count == 3)
     #expect(frames.count == 3)
     #expect(frames.allSatisfy { $0.size == NSSize(width: 18, height: 18) })
   }
@@ -81,8 +106,10 @@ struct CustomMascotTests {
 
     let imported = try CustomMascotStore.importedMascot(from: [sheetURL])
 
-    #expect(imported.framePNGs.count == CustomMascotStore.maximumFrameCount)
-    #expect(try IconRenderer.customMascotFrames(from: imported.framePNGs).count == 32)
+    #expect(imported.mascot.framePNGs.isEmpty)
+    #expect(imported.mascot.spriteSheetPNG != nil)
+    #expect(imported.decodedFrames.count == CustomMascotStore.maximumFrameCount)
+    #expect(IconRenderer.customMascotFrames(from: imported.decodedFrames).count == 32)
   }
 
   @Test func rejectsTooManySelectedFramesBeforeReadingThem() throws {
@@ -122,6 +149,26 @@ struct CustomMascotTests {
     #expect(throws: CustomMascotError.mismatchedFrameSize) {
       try CustomMascotStore.importedMascot(from: [firstURL, secondURL])
     }
+  }
+
+  @Test func customMascotLayoutPreservesWideAndTallAspectRatios() {
+    let wide = IconRenderer.customMascotLayout(pixelWidth: 600, pixelHeight: 100)
+    #expect(wide.canvasSize == NSSize(width: 50, height: 18))
+    #expect(abs(wide.drawingRect.width / wide.drawingRect.height - 6) < 0.001)
+    #expect(wide.drawingRect.height < wide.canvasSize.height)
+
+    let tall = IconRenderer.customMascotLayout(pixelWidth: 100, pixelHeight: 600)
+    #expect(tall.canvasSize == NSSize(width: 8, height: 18))
+    #expect(abs(tall.drawingRect.width / tall.drawingRect.height - 1 / 6) < 0.001)
+    #expect(tall.drawingRect.width < tall.canvasSize.width)
+  }
+
+  @Test func recognizesOnlyCocoaFileImportCancellation() {
+    let cancellation = NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)
+    let otherError = NSError(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError)
+
+    #expect(isCancelledFileImport(cancellation))
+    #expect(!isCancelledFileImport(otherError))
   }
 
   private struct TestContext {
