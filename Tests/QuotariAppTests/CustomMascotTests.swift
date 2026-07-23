@@ -5,7 +5,7 @@ import Testing
 
 @MainActor
 struct CustomMascotTests {
-  @Test func importsOrderedPNGFramesAndPersistsSelection() throws {
+  @Test func importsOrderedPNGFramesAndPersistsSelection() async throws {
     let context = try makeContext("ordered-frames")
     defer { context.remove() }
     let firstPNG = try pngData(width: 48, height: 36, color: .systemBlue)
@@ -16,7 +16,7 @@ struct CustomMascotTests {
     try secondPNG.write(to: secondURL)
 
     let controller = context.makeController()
-    try controller.importCustomMascot(from: [secondURL, firstURL])
+    try await controller.importCustomMascot(from: [secondURL, firstURL])
 
     #expect(controller.preferences.mascot == .custom)
     #expect(controller.customMascotName == "owl")
@@ -37,7 +37,7 @@ struct CustomMascotTests {
     #expect(!FileManager.default.fileExists(atPath: context.archiveURL.path))
   }
 
-  @Test func customMascotPreviewDoesNotFollowTheMenuBarSelection() throws {
+  @Test func customMascotPreviewDoesNotFollowTheMenuBarSelection() async throws {
     let context = try makeContext("management-preview")
     defer { context.remove() }
     let firstURL = context.directory.appendingPathComponent("preview-0.png")
@@ -45,7 +45,7 @@ struct CustomMascotTests {
     try pngData(width: 48, height: 36, color: .systemBlue).write(to: firstURL)
     try pngData(width: 48, height: 36, color: .systemOrange).write(to: secondURL)
     let controller = context.makeController()
-    try controller.importCustomMascot(from: [firstURL, secondURL])
+    try await controller.importCustomMascot(from: [firstURL, secondURL])
 
     controller.setMascot(.builtIn)
 
@@ -54,7 +54,7 @@ struct CustomMascotTests {
     #expect(preview.size == NSSize(width: 24, height: 18))
   }
 
-  @Test func replacingInactiveCustomMascotPreservesBuiltInSelection() throws {
+  @Test func replacingInactiveCustomMascotPreservesBuiltInSelection() async throws {
     let context = try makeContext("replace-inactive")
     defer { context.remove() }
     let firstURL = context.directory.appendingPathComponent("first-0.png")
@@ -62,7 +62,7 @@ struct CustomMascotTests {
     try pngData(width: 36, height: 36, color: .systemBlue).write(to: firstURL)
     try pngData(width: 36, height: 36, color: .systemOrange).write(to: secondURL)
     let controller = context.makeController()
-    try controller.importCustomMascot(from: [firstURL, secondURL])
+    try await controller.importCustomMascot(from: [firstURL, secondURL])
     controller.setMascot(.builtIn)
 
     let replacementFirstURL = context.directory.appendingPathComponent("replacement-0.png")
@@ -70,7 +70,7 @@ struct CustomMascotTests {
     try pngData(width: 48, height: 36, color: .systemRed).write(to: replacementFirstURL)
     try pngData(width: 48, height: 36, color: .systemGreen).write(to: replacementSecondURL)
 
-    try controller.importCustomMascot(from: [replacementFirstURL, replacementSecondURL])
+    try await controller.importCustomMascot(from: [replacementFirstURL, replacementSecondURL])
 
     #expect(controller.preferences.mascot == .builtIn)
     #expect(controller.customMascotName == "replacement")

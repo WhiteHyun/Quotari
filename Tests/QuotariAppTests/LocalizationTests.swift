@@ -62,7 +62,14 @@ struct LocalizationTests {
     #expect(L10n.string("Built-in Flame", locale: korean) == "기본 불꽃")
     #expect(L10n.string("Custom mascot", locale: korean) == "커스텀 마스코트")
     #expect(L10n.string("Import…", locale: korean) == "가져오기…")
+    #expect(L10n.string("Couldn’t remove mascot", locale: korean) == "마스코트를 삭제할 수 없음")
     #expect(L10n.string("Remove custom mascot?", locale: korean) == "커스텀 마스코트를 삭제할까요?")
+    #expect(
+      L10n.string(
+        "Quotari couldn’t remove the custom mascot.",
+        locale: korean
+      ) == "Quotari가 커스텀 마스코트를 삭제하지 못했습니다."
+    )
     #expect(
       L10n.string(
         "This removes Quotari’s saved copy. You’ll need to import the original PNG files again.",

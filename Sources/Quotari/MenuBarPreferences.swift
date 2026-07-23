@@ -123,11 +123,15 @@ final class MenuBarPreferencesController {
     persist()
   }
 
-  func importCustomMascot(from urls: [URL]) throws {
+  func importCustomMascot(from urls: [URL]) async throws {
     let selectsImportedMascot = !hasCustomMascot
-    let imported = try CustomMascotStore.importedMascot(from: urls)
+    let archiveURL = customMascotArchiveURL
+    let imported = try await Task.detached(priority: .userInitiated) {
+      let imported = try CustomMascotStore.importedMascot(from: urls)
+      try CustomMascotStore.save(imported.mascot, to: archiveURL)
+      return imported
+    }.value
     let frames = IconRenderer.customMascotFrames(from: imported.decodedFrames)
-    try CustomMascotStore.save(imported.mascot, to: customMascotArchiveURL)
 
     customMascotFrames = frames
     customMascotName = imported.mascot.name

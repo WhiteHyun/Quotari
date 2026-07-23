@@ -5,8 +5,9 @@ struct GeneralPreferencesView: View {
   @Environment(UsageStore.self) private var store
   @State private var intervalMinutes: Double = 1
   @State private var importsCustomMascot = false
+  @State private var isImportingCustomMascot = false
   @State private var confirmsCustomMascotRemoval = false
-  @State private var mascotImportError: String?
+  @State private var customMascotAlert: CustomMascotAlert?
   @Bindable private var loginItems = LoginItemController.shared
 
   var body: some View {
@@ -103,6 +104,10 @@ struct GeneralPreferencesView: View {
               if let preview = menuBarPreferences.customMascotIcon(frame: 0) {
                 Image(nsImage: preview)
               }
+              if isImportingCustomMascot {
+                ProgressView()
+                  .controlSize(.small)
+              }
               Button(
                 menuBarPreferences.hasCustomMascot
                   ? L10n.string("Replace…")
@@ -116,6 +121,7 @@ struct GeneralPreferencesView: View {
                 }
               }
             }
+            .disabled(isImportingCustomMascot)
           }
           PreferencesRowDivider()
           PreferencesControlRow(L10n.string("Open dashboard")) {
@@ -135,20 +141,30 @@ struct GeneralPreferencesView: View {
       allowsMultipleSelection: true
     ) { result in
       do {
-        try menuBarPreferences.importCustomMascot(from: result.get())
+        let urls = try result.get()
+        let controller = menuBarPreferences
+        isImportingCustomMascot = true
+        Task {
+          defer { isImportingCustomMascot = false }
+          do {
+            try await controller.importCustomMascot(from: urls)
+          } catch {
+            customMascotAlert = .importing(error.localizedDescription)
+          }
+        }
       } catch where isCancelledFileImport(error) {
         return
       } catch {
-        mascotImportError = error.localizedDescription
+        customMascotAlert = .importing(error.localizedDescription)
       }
     }
     .alert(
-      L10n.string("Couldn’t import mascot"),
-      isPresented: mascotImportErrorIsPresented
+      customMascotAlert?.title ?? "",
+      isPresented: customMascotAlertIsPresented
     ) {
       Button(L10n.string("OK"), role: .cancel) {}
     } message: {
-      Text(mascotImportError ?? "")
+      Text(customMascotAlert?.message ?? "")
     }
     .confirmationDialog(
       L10n.string("Remove custom mascot?"),
@@ -159,7 +175,7 @@ struct GeneralPreferencesView: View {
         do {
           try menuBarPreferences.removeCustomMascot()
         } catch {
-          mascotImportError = error.localizedDescription
+          customMascotAlert = .removing(error.localizedDescription)
         }
       }
       Button(L10n.string("Cancel"), role: .cancel) {}
@@ -172,12 +188,12 @@ struct GeneralPreferencesView: View {
     }
   }
 
-  private var mascotImportErrorIsPresented: Binding<Bool> {
+  private var customMascotAlertIsPresented: Binding<Bool> {
     Binding(
-      get: { mascotImportError != nil },
+      get: { customMascotAlert != nil },
       set: { isPresented in
         if !isPresented {
-          mascotImportError = nil
+          customMascotAlert = nil
         }
       }
     )
@@ -206,6 +222,27 @@ struct GeneralPreferencesView: View {
       Text(error)
         .font(.caption)
         .foregroundStyle(.red)
+    }
+  }
+}
+
+private enum CustomMascotAlert {
+  case importing(String)
+  case removing(String)
+
+  var title: String {
+    switch self {
+    case .importing:
+      L10n.string("Couldn’t import mascot")
+    case .removing:
+      L10n.string("Couldn’t remove mascot")
+    }
+  }
+
+  var message: String {
+    switch self {
+    case let .importing(message), let .removing(message):
+      message
     }
   }
 }

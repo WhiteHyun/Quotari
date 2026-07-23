@@ -146,6 +146,8 @@
 	<string>비용을 확인할 수 없음%@</string>
 	<key>Couldn’t import mascot</key>
 	<string>마스코트를 가져올 수 없음</string>
+	<key>Couldn’t remove mascot</key>
+	<string>마스코트를 삭제할 수 없음</string>
 	<key>Critical at %lld%%</key>
 	<string>%lld%%에서 위험</string>
 	<key>Critical threshold</key>
@@ -304,6 +306,8 @@
 	<string>사용량 기준</string>
 	<key>Quotari couldn’t preserve the current CLI account. Resolve the account scan error, then try again.</key>
 	<string>Quotari가 현재 CLI 계정을 보존하지 못했습니다. 계정 검색 오류를 해결한 다음 다시 시도하세요.</string>
+	<key>Quotari couldn’t remove the custom mascot.</key>
+	<string>Quotari가 커스텀 마스코트를 삭제하지 못했습니다.</string>
 	<key>Quotari couldn’t safely read the saved-account registry, so it did not open a new login.</key>
 	<string>Quotari가 저장된 계정 레지스트리를 안전하게 읽지 못해 새 로그인을 열지 않았습니다.</string>
 	<key>Quotari couldn’t save the custom mascot.</key>

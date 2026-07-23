@@ -14,6 +14,7 @@ enum CustomMascotError: Error, Equatable, LocalizedError {
   case mismatchedFrameSize
   case unsupportedDimensions
   case storageFailure
+  case removalFailure
 
   var errorDescription: String? {
     switch self {
@@ -29,6 +30,8 @@ enum CustomMascotError: Error, Equatable, LocalizedError {
       L10n.string("Custom mascot frames use unsupported dimensions.")
     case .storageFailure:
       L10n.string("Quotari couldn’t save the custom mascot.")
+    case .removalFailure:
+      L10n.string("Quotari couldn’t remove the custom mascot.")
     }
   }
 }
@@ -42,12 +45,11 @@ struct StoredCustomMascot: Codable, Equatable, Sendable {
   var spriteSheetPNG: Data?
 }
 
-@MainActor
 enum CustomMascotStore {
   static let maximumFrameCount = 32
   static let maximumTotalBytes = 10_000_000
 
-  struct LoadedMascot {
+  struct LoadedMascot: Sendable {
     var mascot: StoredCustomMascot
     var decodedFrames: [CustomMascotFrameDecoder.DecodedFrame]
   }
@@ -149,12 +151,15 @@ enum CustomMascotStore {
     }
   }
 
-  static func remove(from url: URL) throws {
-    guard FileManager.default.fileExists(atPath: url.path) else { return }
+  static func remove(
+    from url: URL,
+    fileManager: FileManager = .default
+  ) throws {
+    guard fileManager.fileExists(atPath: url.path) else { return }
     do {
-      try FileManager.default.removeItem(at: url)
+      try fileManager.removeItem(at: url)
     } catch {
-      throw CustomMascotError.storageFailure
+      throw CustomMascotError.removalFailure
     }
   }
 
@@ -232,7 +237,6 @@ enum CustomMascotStore {
   }
 }
 
-@MainActor
 enum CustomMascotFrameDecoder {
   private static let maximumFrameWidth = 2048
   private static let maximumFrameHeight = 1024
@@ -240,7 +244,7 @@ enum CustomMascotFrameDecoder {
   /// Two backing pixels for each point of the widest 50-point menu-bar frame.
   private static let maximumDecodedFrameDimension = 100
 
-  struct DecodedFrame {
+  struct DecodedFrame: @unchecked Sendable {
     var image: CGImage
     var width: Int
     var height: Int
@@ -270,7 +274,11 @@ enum CustomMascotFrameDecoder {
       maximumHeight: maximumFrameHeight,
       maximumDecodedPixelSize: maximumDecodedFrameDimension
     )
-    guard Double(frame.width) / Double(frame.height) <= maximumFrameAspectRatio else {
+    let aspectRatio = max(
+      Double(frame.width) / Double(frame.height),
+      Double(frame.height) / Double(frame.width)
+    )
+    guard aspectRatio <= maximumFrameAspectRatio else {
       throw CustomMascotError.unsupportedDimensions
     }
     return frame
