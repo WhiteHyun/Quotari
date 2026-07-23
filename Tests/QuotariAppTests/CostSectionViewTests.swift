@@ -25,6 +25,15 @@ struct CostSectionViewTests {
     #expect(view.pricingStatusMessage == "Partial estimate · pricing unavailable for future-gpt")
   }
 
+  @Test func unsupportedMetricLimitationUsesPartialMessage() {
+    var cost = Self.cost(priced: 100, unpriced: 0)
+    cost.estimateLimitation = .unsupportedTokenFields
+    let view = CostSectionView(cost: cost, accent: .blue)
+
+    #expect(view.showsMonetaryMetrics == true)
+    #expect(view.pricingStatusMessage == "Partial estimate · unsupported token fields")
+  }
+
   private static func cost(priced: Int, unpriced: Int) -> CostSummary {
     CostSummary(
       todaySpend: 0,

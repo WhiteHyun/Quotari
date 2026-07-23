@@ -4,6 +4,7 @@ enum LocalUsageInsightsBuilder {
   struct Input {
     var provider: UsageProvider
     var records: [LocalTokenRecord]
+    var unsupportedUsage: [LocalUnsupportedUsage] = []
     var range: DayRange
     var pricing: LocalModelPricing
     var scopeKey: UsageInsightsScopeKey
@@ -13,9 +14,11 @@ enum LocalUsageInsightsBuilder {
   }
 
   static func summary(_ input: Input) -> UsageInsightsSummary? {
-    guard !input.records.isEmpty else { return nil }
-
     var days: [Date: UsageAccumulator] = [:]
+    for unsupported in input.unsupportedUsage {
+      days[unsupported.day, default: UsageAccumulator()]
+        .addUnsupported(sessionID: unsupported.sessionID, model: unsupported.model)
+    }
     for record in input.records {
       let priced = input.pricing.price(
         provider: input.provider,
@@ -31,7 +34,8 @@ enum LocalUsageInsightsBuilder {
       generatedAt: input.generatedAt,
       source: input.provider.insightsSource,
       accountScope: input.accountScope,
-      sourceDescription: input.sourceDescription ?? input.provider.defaultInsightsSourceDescription,
+      sourceDescription: input.sourceDescription
+        ?? input.provider.defaultInsightsSourceDescription(accountScope: input.accountScope),
       daily: input.range.days.map { day in
         days[day, default: UsageAccumulator()].insight(date: day, provider: input.provider)
       }
@@ -49,7 +53,20 @@ private struct UsageAccumulator {
   var models: [String: UsageAccumulator] = [:]
   var sessionKeys = Set<String>()
   var hasUnstableSessionIdentity = false
+  var hasUnsupportedUsage = false
   var recordCount = 0
+
+  mutating func addUnsupported(sessionID: String?, model: String?) {
+    hasUnsupportedUsage = true
+    if let sessionID {
+      sessionKeys.insert(sessionID)
+    } else {
+      hasUnstableSessionIdentity = true
+    }
+    if let model {
+      models[model, default: UsageAccumulator()].hasUnsupportedUsage = true
+    }
+  }
 
   mutating func add(record: LocalTokenRecord, priced: LocalPricingResult) {
     recordCount += 1
@@ -128,8 +145,10 @@ private struct UsageAccumulator {
     provider: UsageProvider,
     coverage: CostEstimateCoverage
   ) -> UsageMetric<Double> {
-    if recordCount == 0, provider == .claude {
-      return .unavailable(.unsupportedTokenFields)
+    if recordCount == 0 {
+      return hasUnsupportedUsage
+        ? .unavailable(.unsupportedTokenFields)
+        : .available(0)
     }
     if coverage.pricedTokens == 0, coverage.unpricedTokens > 0 {
       return .unavailable(.missingPricing)
@@ -143,12 +162,24 @@ private struct UsageAccumulator {
     if provider == .claude {
       return .partial(value: spend, limitation: .unsupportedTokenFields)
     }
+    if hasUnsupportedUsage {
+      return .partial(value: spend, limitation: .unsupportedTokenFields)
+    }
     return .available(spend)
   }
 
   private func tokenBreakdown(provider: UsageProvider) -> UsageTokenBreakdown {
     switch provider {
     case .codex:
+      if hasUnsupportedUsage {
+        return UsageTokenBreakdown(
+          input: .partial(value: tokens.input, limitation: .unsupportedTokenFields),
+          output: .partial(value: tokens.output, limitation: .unsupportedTokenFields),
+          cacheRead: .partial(value: tokens.cacheRead, limitation: .unsupportedTokenFields),
+          cacheWrite: .partial(value: tokens.cacheWrite, limitation: .unsupportedTokenFields),
+          total: .partial(value: tokens.total, limitation: .unsupportedTokenFields)
+        )
+      }
       return UsageTokenBreakdown(
         input: .available(tokens.input),
         output: .available(tokens.output),
@@ -157,15 +188,25 @@ private struct UsageAccumulator {
         total: .available(tokens.total)
       )
     case .claude:
-      let total: UsageMetric<Int> = recordCount == 0
-        ? .unavailable(.unsupportedTokenFields)
-        : .partial(value: tokens.total, limitation: .unsupportedTokenFields)
+      if recordCount == 0 {
+        return UsageTokenBreakdown(
+          input: hasUnsupportedUsage ? .unavailable(.unsupportedTokenFields) : .available(0),
+          output: hasUnsupportedUsage ? .unavailable(.unsupportedTokenFields) : .available(0),
+          cacheRead: hasUnsupportedUsage ? .unavailable(.unsupportedTokenFields) : .available(0),
+          cacheWrite: hasUnsupportedUsage ? .unavailable(.unsupportedTokenFields) : .available(0),
+          total: hasUnsupportedUsage ? .unavailable(.unsupportedTokenFields) : .available(0)
+        )
+      }
       return UsageTokenBreakdown(
         input: .unavailable(.unsupportedTokenFields),
         output: .unavailable(.unsupportedTokenFields),
-        cacheRead: .available(tokens.cacheRead),
-        cacheWrite: .available(tokens.cacheWrite),
-        total: total
+        cacheRead: hasUnsupportedUsage
+          ? .partial(value: tokens.cacheRead, limitation: .unsupportedTokenFields)
+          : .available(tokens.cacheRead),
+        cacheWrite: hasUnsupportedUsage
+          ? .partial(value: tokens.cacheWrite, limitation: .unsupportedTokenFields)
+          : .available(tokens.cacheWrite),
+        total: .partial(value: tokens.total, limitation: .unsupportedTokenFields)
       )
     }
   }
@@ -212,8 +253,18 @@ extension UsageInsightsSummary {
       monthSpendLabel: daily.count == 30 ? "30d cost" : "\(daily.count)d cost",
       sourceDescription: sourceDescription,
       estimateCoverage: period.pricingCoverage,
+      estimateLimitation: legacyEstimateLimitation(period: period),
       daily: dailyCost
     )
+  }
+
+  private func legacyEstimateLimitation(
+    period: UsageInsightsPeriodSummary
+  ) -> UsageMetricLimitation? {
+    if accountScope == .sharedLocalCache {
+      return period.spend.limitation ?? .sharedAccountScope
+    }
+    return period.spend.limitation ?? period.tokens.total.limitation
   }
 }
 
@@ -227,12 +278,18 @@ private extension UsageProvider {
     }
   }
 
-  var defaultInsightsSourceDescription: String {
-    switch self {
-    case .codex:
+  func defaultInsightsSourceDescription(
+    accountScope: UsageInsightsAccountScope
+  ) -> String {
+    switch (self, accountScope) {
+    case (.codex, .exact):
       "Estimated from local Codex logs"
-    case .claude:
+    case (.claude, .exact):
       "Estimated from local Claude cache logs"
+    case (.codex, .sharedLocalCache):
+      "Estimated from local Codex logs (not account-specific)"
+    case (.claude, .sharedLocalCache):
+      "Estimated from local Claude cache logs (not account-specific)"
     }
   }
 }

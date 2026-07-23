@@ -2,17 +2,9 @@ import Foundation
 
 enum ClaudeDesktopProjectRoots {
   static func locate(homeDirectory: URL, fileManager: FileManager = .default) -> [URL] {
-    let applicationSupport = homeDirectory
-      .appendingPathComponent("Library", isDirectory: true)
-      .appendingPathComponent("Application Support", isDirectory: true)
-      .appendingPathComponent("Claude", isDirectory: true)
-    let sessionRoots = [
-      "local-agent-mode-sessions",
-      "claude-code-sessions",
-    ].map { applicationSupport.appendingPathComponent($0, isDirectory: true) }
-
     var roots: [URL] = []
-    var queue = sessionRoots.map { (url: $0.standardizedFileURL, depth: 0) }
+    var queue = sessionRoots(homeDirectory: homeDirectory)
+      .map { (url: $0.standardizedFileURL, depth: 0) }
     var visited = Set(queue.map(\.url.path))
     var index = 0
     let maxDepth = 4
@@ -31,6 +23,17 @@ enum ClaudeDesktopProjectRoots {
       }
     }
     return roots
+  }
+
+  static func sessionRoots(homeDirectory: URL) -> [URL] {
+    let applicationSupport = homeDirectory
+      .appendingPathComponent("Library", isDirectory: true)
+      .appendingPathComponent("Application Support", isDirectory: true)
+      .appendingPathComponent("Claude", isDirectory: true)
+    return [
+      "local-agent-mode-sessions",
+      "claude-code-sessions",
+    ].map { applicationSupport.appendingPathComponent($0, isDirectory: true) }
   }
 
   private static func projectsRoot(under base: URL, fileManager: FileManager) -> URL? {

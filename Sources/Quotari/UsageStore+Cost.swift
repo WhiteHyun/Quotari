@@ -72,7 +72,7 @@ extension UsageStore {
     guard prefersLocalCost else { return snapshot }
     var display = snapshot
     display.cost = cachedCost
-      ?? previous?.cost.flatMap { shouldCarryForwardCost($0) ? $0 : nil }
+      ?? previous?.cost.flatMap { shouldCarryForwardCost($0, now: snapshot.updatedAt) ? $0 : nil }
       ?? snapshot.cost.flatMap { shouldHideSparseReportedCost($0) ? nil : $0 }
     return display
   }
@@ -135,10 +135,10 @@ extension UsageStore {
     )
     let task = Task { [weak self] in
       await previousTask?.value
-      let cost: CostSummary? = if Task.isCancelled {
-        nil
+      let outcome: UsageCostRefreshOutcome = if Task.isCancelled {
+        .unavailable
       } else {
-        await costEstimator.costSummary(
+        await costEstimator.costRefreshOutcome(
           provider: provider,
           account: account,
           now: now,
@@ -148,7 +148,7 @@ extension UsageStore {
       let wasCancelled = Task.isCancelled
       await MainActor.run {
         self?.finishCostRefresh(
-          cost,
+          outcome,
           context: context,
           wasCancelled: wasCancelled
         )
@@ -165,7 +165,7 @@ extension UsageStore {
   }
 
   private func finishCostRefresh(
-    _ cost: CostSummary?,
+    _ outcome: UsageCostRefreshOutcome,
     context: CostRefreshContext,
     wasCancelled: Bool
   ) {
@@ -176,19 +176,27 @@ extension UsageStore {
           isProviderEnabled(provider),
           (accountRevisions[provider] ?? 0) == context.revision
     else { return }
-    guard let cost else {
-      lastEmptyCostScans[provider] = Date()
-      costEstimator.invalidateCachedCostSummary(
-        provider: provider,
-        account: context.account,
-        historyDays: 30
-      )
+    let completionDate = currentDate()
+    switch outcome {
+    case let .updated(cost):
+      lastEmptyCostScans[provider] = nil
+      if Self.shouldCarryForwardCost(cost, now: completionDate) {
+        applyCost(cost, provider: provider)
+      } else {
+        let reportedCostFallback = latestReportedCostFallbacks[provider]?.cost
+        clearLocalCost(provider: provider, reportedCostFallback: reportedCostFallback)
+      }
+    case .confirmedEmpty:
+      lastEmptyCostScans[provider] = completionDate
       let reportedCostFallback = latestReportedCostFallbacks[provider]?.cost
       clearLocalCost(provider: provider, reportedCostFallback: reportedCostFallback)
-      return
+    case .unavailable:
+      guard let cost = snapshots[provider]?.cost,
+            !Self.shouldCarryForwardCost(cost, now: completionDate)
+      else { return }
+      let reportedCostFallback = latestReportedCostFallbacks[provider]?.cost
+      clearLocalCost(provider: provider, reportedCostFallback: reportedCostFallback)
     }
-    lastEmptyCostScans[provider] = nil
-    applyCost(cost, provider: provider)
   }
 
   private func applyCost(_ cost: CostSummary, provider: UsageProvider) {
@@ -213,8 +221,14 @@ extension UsageStore {
     return !cost.hasTokenMetrics || cost.daily.count <= 1
   }
 
-  private nonisolated static func shouldCarryForwardCost(_ cost: CostSummary) -> Bool {
-    cost.sourceDescription.localizedCaseInsensitiveContains("local")
+  private nonisolated static func shouldCarryForwardCost(
+    _ cost: CostSummary,
+    now: Date
+  ) -> Bool {
+    guard cost.sourceDescription.localizedCaseInsensitiveContains("local"),
+          let lastDate = cost.daily.last?.date
+    else { return false }
+    return Calendar.current.isDate(lastDate, inSameDayAs: now)
   }
 
   private nonisolated static func shouldHideSparseReportedCost(_ cost: CostSummary) -> Bool {

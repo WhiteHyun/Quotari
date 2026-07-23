@@ -45,7 +45,7 @@ extension LocalUsageCostEstimatorTests {
     #expect(summary.monthTokens == 1_200_000)
     #expect(summary.latestTokens == 1_200_000)
     #expect(summary.topModel == "gpt-5")
-    #expect(summary.sourceDescription == "Estimated from local Codex logs")
+    #expect(summary.sourceDescription == "Estimated from local Codex logs (not account-specific)")
   }
 
   @Test func codexTotalSnapshotsUseDeltas() async throws {
@@ -139,8 +139,9 @@ extension LocalUsageCostEstimatorTests {
     let defaultSessions = defaultHome.appendingPathComponent("sessions", isDirectory: true)
     let customSessions = customHome.appendingPathComponent("sessions", isDirectory: true)
     let cache = env.root.appendingPathComponent("cost-cache", isDirectory: true)
-    try env.createDirectory(defaultSessions)
-    try env.createDirectory(customSessions)
+    try env.createDirectories(defaultSessions, customSessions)
+    try Self.writeCodexAuth(home: defaultHome, identity: "default-account")
+    try Self.writeCodexAuth(home: customHome, identity: "custom-account")
     try env.writeJSONL(
       defaultSessions.appendingPathComponent("usage.jsonl"),
       [Self.codexTotalLine(timestamp: "2026-07-08T09:00:00Z", input: 100, cached: 0, output: 0)]
@@ -153,13 +154,15 @@ extension LocalUsageCostEstimatorTests {
       provider: .codex,
       displayName: "Default",
       detail: "Default",
-      credentialSource: .codexAuthFile(path: defaultHome.appendingPathComponent("auth.json").path)
+      credentialSource: .codexAuthFile(path: defaultHome.appendingPathComponent("auth.json").path),
+      credentialIdentity: "default-account"
     )
     let customAccount = ProviderAccount(
       provider: .codex,
       displayName: "Custom",
       detail: "CODEX_HOME",
-      credentialSource: .codexAuthFile(path: customHome.appendingPathComponent("auth.json").path)
+      credentialSource: .codexAuthFile(path: customHome.appendingPathComponent("auth.json").path),
+      credentialIdentity: "custom-account"
     )
     let estimator = LocalUsageCostEstimator.testing(
       environment: ["CODEX_HOME": customHome.path],
@@ -180,7 +183,7 @@ extension LocalUsageCostEstimatorTests {
 
     #expect(defaultSummary.monthTokens == 100)
     #expect(customSummary.monthTokens == 1000)
-    #expect(defaultSummary.sourceDescription == "Estimated from selected account's local Codex logs")
+    #expect(defaultSummary.sourceDescription == "Estimated from local Codex logs (not account-specific)")
   }
 
   @Test func codexUnknownModelDoesNotExposeProviderNameAsTopModel() async throws {
@@ -248,7 +251,7 @@ extension LocalUsageCostEstimatorTests {
     #expect(summary.monthTokens == 75000)
     #expect(summary.latestTokens == 75000)
     #expect(summary.topModel == "claude-sonnet-4")
-    #expect(summary.sourceDescription == "Estimated from local Claude cache logs")
+    #expect(summary.sourceDescription == "Estimated from local Claude cache logs (not account-specific)")
   }
 
   @Test func claudeDesktopPlaceholderUsageWithoutCacheIsIgnored() async throws {
@@ -298,6 +301,11 @@ extension LocalUsageCostEstimatorTests {
       historyDays: 30
     ) == summary)
     return summary
+  }
+
+  private static func writeCodexAuth(home: URL, identity: String) throws {
+    try codexAuthPayload(accessToken: "\(identity)-access", accountID: identity)
+      .write(to: home.appendingPathComponent("auth.json"))
   }
 
   private static func codexTotalLine(timestamp: String, input: Int, cached: Int, output: Int) -> [String: Any] {
@@ -354,6 +362,12 @@ private struct LocalCostTestEnvironment {
 
   func createDirectory(_ url: URL) throws {
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+  }
+
+  func createDirectories(_ urls: URL...) throws {
+    for url in urls {
+      try createDirectory(url)
+    }
   }
 
   func writeJSONL(_ url: URL, _ objects: [[String: Any]]) throws {

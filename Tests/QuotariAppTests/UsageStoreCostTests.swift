@@ -313,7 +313,7 @@ private struct StubUsageStrategy: ProviderFetchStrategy {
         plan: "Test",
         primary: RateWindow(kind: .session, usedPercent: 10),
         cost: cost,
-        updatedAt: context.now
+        updatedAt: cost.daily.last?.date ?? context.now
       ),
       sourceLabel: "Stub"
     )

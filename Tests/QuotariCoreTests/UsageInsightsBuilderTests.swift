@@ -116,6 +116,10 @@ struct UsageInsightsBuilderTests {
       period.spend.availability,
       .partial(.unsupportedTokenFields)
     )
+    expectNoDifference(
+      summary.sourceDescription,
+      "Estimated from local Claude cache logs (not account-specific)"
+    )
   }
 
   @Test func topModelUsesModelIDForDeterministicTokenTies() throws {

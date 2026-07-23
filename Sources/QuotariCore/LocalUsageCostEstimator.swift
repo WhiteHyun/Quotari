@@ -1,88 +1,14 @@
 import Foundation
 
-public protocol UsageInsightsAnalyzing: Sendable {
-  func cachedInsights(
-    provider: UsageProvider,
-    account: ProviderAccount?,
-    now: Date,
-    historyDays: Int
-  ) -> UsageInsightsSummary?
-  func insights(
-    provider: UsageProvider,
-    account: ProviderAccount?,
-    now: Date,
-    historyDays: Int
-  ) async -> UsageInsightsSummary?
-  func invalidateInsights(
-    provider: UsageProvider,
-    account: ProviderAccount?,
-    historyDays: Int
-  )
-}
-
-public protocol UsageCostEstimating: Sendable {
-  func cachedCostSummary(provider: UsageProvider, now: Date, historyDays: Int) -> CostSummary?
-  func costSummary(provider: UsageProvider, now: Date, historyDays: Int) async -> CostSummary?
-  func invalidateCachedCostSummary(provider: UsageProvider, historyDays: Int)
-  func cachedCostSummary(
-    provider: UsageProvider,
-    account: ProviderAccount?,
-    now: Date,
-    historyDays: Int
-  ) -> CostSummary?
-  func costSummary(
-    provider: UsageProvider,
-    account: ProviderAccount?,
-    now: Date,
-    historyDays: Int
-  ) async -> CostSummary?
-  func invalidateCachedCostSummary(
-    provider: UsageProvider,
-    account: ProviderAccount?,
-    historyDays: Int
-  )
-}
-
-public extension UsageCostEstimating {
-  func cachedCostSummary(provider: UsageProvider, now: Date, historyDays: Int) -> CostSummary? {
-    nil
-  }
-
-  func invalidateCachedCostSummary(provider: UsageProvider, historyDays: Int) {}
-
-  func cachedCostSummary(
-    provider: UsageProvider,
-    account: ProviderAccount?,
-    now: Date,
-    historyDays: Int
-  ) -> CostSummary? {
-    cachedCostSummary(provider: provider, now: now, historyDays: historyDays)
-  }
-
-  func costSummary(
-    provider: UsageProvider,
-    account: ProviderAccount?,
-    now: Date,
-    historyDays: Int
-  ) async -> CostSummary? {
-    await costSummary(provider: provider, now: now, historyDays: historyDays)
-  }
-
-  func invalidateCachedCostSummary(
-    provider: UsageProvider,
-    account: ProviderAccount?,
-    historyDays: Int
-  ) {
-    invalidateCachedCostSummary(provider: provider, historyDays: historyDays)
-  }
-}
-
 public struct LocalUsageCostEstimator: UsageCostEstimating, UsageInsightsAnalyzing {
   let environment: [String: String]
   let homeDirectory: URL
-  private let cacheDirectory: URL
+  let cacheDirectory: URL
   let insightsCacheDirectory: URL
   let pricingCatalogProvider: any ModelPricingCatalogProviding
+  let cacheCoordinator: LocalUsageCacheCoordinator
+  let scopeIdentityStore: LocalUsageScopeIdentityStore
+  let cacheMutationHook: (@Sendable () -> Void)?
 
   public init(
     environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -95,7 +21,8 @@ public struct LocalUsageCostEstimator: UsageCostEstimating, UsageInsightsAnalyzi
       environment: environment,
       homeDirectory: homeDirectory,
       cacheDirectory: cacheDirectory,
-      pricingCatalogProvider: RemoteModelPricingCatalogStore(cacheDirectory: pricingCacheDirectory)
+      pricingCatalogProvider: RemoteModelPricingCatalogStore(cacheDirectory: pricingCacheDirectory),
+      cacheMutationHook: nil
     )
   }
 
@@ -103,7 +30,8 @@ public struct LocalUsageCostEstimator: UsageCostEstimating, UsageInsightsAnalyzi
     environment: [String: String],
     homeDirectory: URL,
     cacheDirectory: URL? = nil,
-    pricingCatalogProvider: any ModelPricingCatalogProviding
+    pricingCatalogProvider: any ModelPricingCatalogProviding,
+    cacheMutationHook: (@Sendable () -> Void)? = nil
   ) {
     self.environment = environment
     self.homeDirectory = homeDirectory
@@ -117,6 +45,9 @@ public struct LocalUsageCostEstimator: UsageCostEstimating, UsageInsightsAnalyzi
         .appendingPathComponent("Library/Caches/Quotari/LocalUsageInsights", isDirectory: true)
     }
     self.pricingCatalogProvider = pricingCatalogProvider
+    cacheCoordinator = LocalUsageCacheCoordinator()
+    scopeIdentityStore = LocalUsageScopeIdentityStore(cacheDirectory: insightsCacheDirectory)
+    self.cacheMutationHook = cacheMutationHook
   }
 
   public func cachedCostSummary(provider: UsageProvider, now: Date, historyDays: Int = 30) -> CostSummary? {
@@ -129,16 +60,22 @@ public struct LocalUsageCostEstimator: UsageCostEstimating, UsageInsightsAnalyzi
     now: Date,
     historyDays: Int = 30
   ) -> CostSummary? {
-    if let summary = cachedInsights(
-      provider: provider,
-      account: account,
-      now: now,
-      historyDays: historyDays
-    )?.costSummary {
-      return summary
+    guard let scope = resolvedInsightsScope(provider: provider, account: account) else { return nil }
+    let historyDays = normalizedHistoryDays(historyDays)
+    let mutationKey = LocalUsageCacheMutationKey(scopeKey: scope.key, historyDays: historyDays)
+    return cacheCoordinator.read(key: mutationKey) {
+      if let insights = LocalUsageInsightsCache(cacheDirectory: insightsCacheDirectory)
+        .load(scopeKey: scope.key, now: now, historyDays: historyDays) {
+        return insights.costSummary
+      }
+      return LocalUsageCostCache(cacheDirectory: cacheDirectory)
+        .load(
+          provider: provider,
+          scopeID: scope.legacyCostScopeID,
+          now: now,
+          historyDays: historyDays
+        )
     }
-    return LocalUsageCostCache(cacheDirectory: cacheDirectory)
-      .load(provider: provider, scopeID: account?.costCacheScopeID, now: now, historyDays: historyDays)
   }
 
   public func costSummary(provider: UsageProvider, now: Date, historyDays: Int = 30) async -> CostSummary? {
@@ -151,22 +88,13 @@ public struct LocalUsageCostEstimator: UsageCostEstimating, UsageInsightsAnalyzi
     now: Date,
     historyDays: Int = 30
   ) async -> CostSummary? {
-    let summary = await insights(
+    let outcome = await costRefreshOutcome(
       provider: provider,
       account: account,
       now: now,
       historyDays: historyDays
-    )?.costSummary
-    if let summary {
-      LocalUsageCostCache(cacheDirectory: cacheDirectory)
-        .save(
-          summary,
-          provider: provider,
-          scopeID: account?.costCacheScopeID,
-          now: now,
-          historyDays: historyDays
-        )
-    }
+    )
+    guard case let .updated(summary) = outcome else { return nil }
     return summary
   }
 
@@ -179,16 +107,14 @@ public struct LocalUsageCostEstimator: UsageCostEstimating, UsageInsightsAnalyzi
     account: ProviderAccount?,
     historyDays: Int = 30
   ) {
-    LocalUsageCostCache(cacheDirectory: cacheDirectory)
-      .remove(provider: provider, scopeID: account?.costCacheScopeID, historyDays: historyDays)
     invalidateInsights(provider: provider, account: account, historyDays: historyDays)
   }
 }
 
 struct LocalUsageCostScanner {
-  private let environment: [String: String]
-  private let homeDirectory: URL
-  private let fileManager: FileManager
+  let environment: [String: String]
+  let homeDirectory: URL
+  let fileManager: FileManager
   private let calendar = Calendar(identifier: .gregorian)
 
   init(
@@ -211,114 +137,65 @@ struct LocalUsageCostScanner {
     let today = calendar.startOfDay(for: now)
     let start = calendar.date(byAdding: .day, value: -(historyDays - 1), to: today) ?? today
     let range = DayRange(start: start, end: today, calendar: calendar)
-    let records: [LocalTokenRecord] = switch provider {
+    let outcome: LocalUsageScanOutcome = switch provider {
     case .codex:
       scanCodex(range: range, account: account)
     case .claude:
       scanClaude(range: range, account: account)
     }
     return LocalUsageScan(
-      records: records,
+      outcome: outcome,
       range: range,
-      sourceDescription: sourceDescription(account: account)
+      sourceDescription: sourceDescription(provider: provider, account: account)
     )
   }
 
-  private func scanCodex(range: DayRange, account: ProviderAccount?) -> [LocalTokenRecord] {
-    codexRoots(account: account).flatMap { root in
-      jsonlFiles(in: root, modifiedSince: range.start).flatMap { parseCodexFile($0, range: range) }
+  private func scanCodex(range: DayRange, account: ProviderAccount?) -> LocalUsageScanOutcome {
+    scanFiles(roots: scopeRoots(provider: .codex, account: account), range: range) {
+      parseCodexFile($0, range: range)
     }
   }
 
-  private func scanClaude(range: DayRange, account: ProviderAccount?) -> [LocalTokenRecord] {
-    claudeProjectRoots(account: account).flatMap { root in
-      jsonlFiles(in: root, modifiedSince: range.start).flatMap { parseClaudeFile($0, range: range) }
+  private func scanClaude(range: DayRange, account: ProviderAccount?) -> LocalUsageScanOutcome {
+    scanFiles(roots: scopeRoots(provider: .claude, account: account), range: range) {
+      parseClaudeFile($0, range: range)
     }
   }
 
-  private func codexRoots(account: ProviderAccount?) -> [URL] {
-    // A saved (registry) account isn't the live CLI login, so the local logs
-    // in the default location belong to a different account — attributing them
-    // here would misreport its cost. It has no local logs of its own.
-    if let account, account.credentialSource.isCaptured {
-      return []
-    }
-    if let account,
-       case let .codexAuthFile(path) = account.credentialSource {
-      return codexRoots(home: URL(fileURLWithPath: path).deletingLastPathComponent())
-    }
+  private func scanFiles(
+    roots: [URL],
+    range: DayRange,
+    parser: (URL) -> LocalUsageFileScan?
+  ) -> LocalUsageScanOutcome {
+    guard !roots.isEmpty else { return .noLocalLogs }
+    let existingRoots = roots.filter { fileManager.fileExists(atPath: $0.path) }
+    guard !existingRoots.isEmpty else { return .noLocalLogs }
 
-    let home: URL = {
-      if let raw = environment["CODEX_HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-         !raw.isEmpty {
-        return URL(fileURLWithPath: raw, isDirectory: true)
+    var scans: [LocalUsageFileScan] = []
+    for root in existingRoots {
+      guard let files = jsonlFiles(in: root, modifiedSince: range.start) else {
+        return .failure
       }
-      return homeDirectory.appendingPathComponent(".codex", isDirectory: true)
-    }()
-
-    return codexRoots(home: home)
-  }
-
-  private func codexRoots(home: URL) -> [URL] {
-    let roots = [
-      home.appendingPathComponent("sessions", isDirectory: true),
-      home.appendingPathComponent("archived_sessions", isDirectory: true),
-    ]
-    return roots.filter { fileManager.fileExists(atPath: $0.path) }
-  }
-
-  private func claudeProjectRoots(account: ProviderAccount?) -> [URL] {
-    // See codexRoots: a saved account's local cache isn't in the live
-    // location, so it has no account-specific logs to scan.
-    if let account, account.credentialSource.isCaptured {
-      return []
-    }
-    if let account,
-       case let .claudeCredentialsFile(path) = account.credentialSource {
-      let config = URL(fileURLWithPath: path).deletingLastPathComponent()
-      let projects = config.appendingPathComponent("projects", isDirectory: true)
-      return fileManager.fileExists(atPath: projects.path) ? [projects] : []
-    }
-
-    let roots: [URL] = if let raw = environment["CLAUDE_CONFIG_DIR"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-                          !raw.isEmpty {
-      raw.split(separator: ",").map { part in
-        let url = URL(fileURLWithPath: String(part).trimmingCharacters(in: .whitespacesAndNewlines), isDirectory: true)
-        return url.lastPathComponent == "projects" ? url : url.appendingPathComponent("projects", isDirectory: true)
+      for file in files {
+        guard let scan = parser(file) else { return .failure }
+        scans.append(scan)
       }
-    } else {
-      [
-        homeDirectory.appendingPathComponent(".config/claude/projects", isDirectory: true),
-        homeDirectory.appendingPathComponent(".claude/projects", isDirectory: true),
-      ] + ClaudeDesktopProjectRoots.locate(homeDirectory: homeDirectory, fileManager: fileManager)
     }
-    return deduplicated(roots).filter { fileManager.fileExists(atPath: $0.path) }
+
+    let records = scans.flatMap(\.records)
+    let unsupportedUsage = scans.flatMap(\.unsupportedUsage)
+    if records.isEmpty, !unsupportedUsage.isEmpty {
+      return .unsupportedUsage
+    }
+    return .success(LocalUsageScanResult(records: records, unsupportedUsage: unsupportedUsage))
   }
 
-  private func sourceDescription(account: ProviderAccount?) -> String? {
-    guard let account else { return nil }
-    return switch account.credentialSource {
-    case .codexAuthFile, .codexKeychain:
-      "Estimated from selected account's local Codex logs"
-    case .claudeCredentialsFile:
-      "Estimated from selected account's local Claude cache logs"
-    case .claudeEnvironment, .claudeKeychain:
-      "Estimated from local Claude cache logs (not account-specific)"
-    case .quotariRegistry:
-      // A saved account has no local logs of its own (see codex/claude roots);
-      // no local estimate is produced, so this is only a defensive label.
-      account.provider == .codex
-        ? "Saved account — local Codex cost estimate unavailable"
-        : "Saved account — local Claude cost estimate unavailable"
-    }
-  }
-
-  private func jsonlFiles(in root: URL, modifiedSince: Date) -> [URL] {
+  private func jsonlFiles(in root: URL, modifiedSince: Date) -> [URL]? {
     guard let enumerator = fileManager.enumerator(
       at: root,
       includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
       options: [.skipsPackageDescendants]
-    ) else { return [] }
+    ) else { return nil }
 
     var urls: [URL] = []
     for case let url as URL in enumerator where url.pathExtension.lowercased() == "jsonl" {
@@ -331,21 +208,28 @@ struct LocalUsageCostScanner {
     }
     return urls.sorted { $0.path < $1.path }
   }
-
-  private func deduplicated(_ urls: [URL]) -> [URL] {
-    var seen = Set<String>()
-    var result: [URL] = []
-    for url in urls {
-      let canonical = url.resolvingSymlinksInPath().standardizedFileURL
-      guard seen.insert(canonical.path).inserted else { continue }
-      result.append(canonical)
-    }
-    return result
-  }
 }
 
 struct LocalUsageScan: Sendable {
-  let records: [LocalTokenRecord]
+  let outcome: LocalUsageScanOutcome
   let range: DayRange
   let sourceDescription: String?
+}
+
+enum LocalUsageScanOutcome: Sendable {
+  case success(LocalUsageScanResult)
+  case noLocalLogs
+  case unsupportedUsage
+  case failure
+}
+
+struct LocalUsageScanResult: Sendable {
+  let records: [LocalTokenRecord]
+  let unsupportedUsage: [LocalUnsupportedUsage]
+}
+
+struct LocalUnsupportedUsage: Sendable {
+  let day: Date
+  let model: String?
+  let sessionID: String?
 }

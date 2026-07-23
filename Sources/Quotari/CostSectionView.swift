@@ -68,15 +68,29 @@ struct CostSectionView: View {
   }
 
   var pricingStatusMessage: String? {
-    guard let coverage = cost.estimateCoverage else { return nil }
-    let unavailableDetail = unavailablePricingDetail(coverage)
-    switch coverage.availability {
-    case .complete:
-      return nil
-    case .partial:
-      return L10n.string("Partial estimate\(unavailableDetail)")
-    case .unavailable:
-      return L10n.string("Cost unavailable\(unavailableDetail)")
+    if let coverage = cost.estimateCoverage {
+      let unavailableDetail = unavailablePricingDetail(coverage)
+      switch coverage.availability {
+      case .complete:
+        break
+      case .partial:
+        return L10n.string("Partial estimate\(unavailableDetail)")
+      case .unavailable:
+        return L10n.string("Cost unavailable\(unavailableDetail)")
+      }
+    }
+    return cost.estimateLimitation.map(estimateLimitationMessage)
+  }
+
+  private func estimateLimitationMessage(_ limitation: UsageMetricLimitation) -> String {
+    switch limitation {
+    case .unsupportedTokenFields:
+      L10n.string("Partial estimate · unsupported token fields")
+    case .sharedAccountScope:
+      L10n.string("Partial estimate · not account-specific")
+    case .noActivity, .noLocalLogs, .unknownAccountScope, .unstableSessionIdentity,
+         .missingPricing, .stalePricing, .scanFailed:
+      L10n.string("Partial estimate")
     }
   }
 
@@ -97,6 +111,8 @@ struct CostSectionView: View {
       "Period cost": L10n.string("Period cost"),
       "Estimated from local logs": L10n.string("Estimated from local logs"),
       "Estimated from local Codex logs": L10n.string("Estimated from local Codex logs"),
+      "Estimated from local Codex logs (not account-specific)":
+        L10n.string("Estimated from local Codex logs (not account-specific)"),
       "Estimated from local Claude cache logs": L10n.string("Estimated from local Claude cache logs"),
       "Estimated from selected account's local Codex logs":
         L10n.string("Estimated from selected account's local Codex logs"),

@@ -41,6 +41,7 @@ struct UsageStoreCostThrottleTests {
   }
 
   @Test func emptyLocalCostScanAttemptsAreThrottled() async throws {
+    let now = Date()
     let reportedCost = CostSummary(
       todaySpend: 0,
       monthSpend: 0,
@@ -52,7 +53,8 @@ struct UsageStoreCostThrottleTests {
     let estimator = CountingEmptyThrottleCostEstimator()
     let store = UsageStore.isolatedForTesting(
       providers: [Self.descriptor(cost: reportedCost)],
-      costEstimator: estimator
+      costEstimator: estimator,
+      currentDate: { now }
     )
 
     try await Self.waitForCallCount(in: estimator, matching: 1)
