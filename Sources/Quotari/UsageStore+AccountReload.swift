@@ -1,6 +1,128 @@
 import QuotariCore
 
 extension UsageStore {
+  func beginAccountRediscovery() {
+    accountRediscoveryRequest &+= 1
+    startQueuedAccountRediscoveryIfNeeded()
+  }
+
+  func startQueuedAccountRediscoveryIfNeeded(allowWhileSwitching: Bool = false) {
+    guard allowWhileSwitching || !isSwitching,
+          inFlightAccountReload == nil,
+          completedAccountRediscoveryRequest != accountRediscoveryRequest
+    else { return }
+    let drainableRequest = accountRediscoveryRequest
+    inFlightAccountReload = Task { [weak self] in
+      await self?.performQueuedAccountRediscovery(startingWith: drainableRequest)
+    }
+  }
+
+  func reloadAccounts(preserving provider: UsageProvider? = nil) async {
+    accountRediscoveryRequest &+= 1
+    let request = accountRediscoveryRequest
+    if let provider {
+      accountPreservationRequests[provider] = request
+    }
+    startQueuedAccountRediscoveryIfNeeded()
+    await waitForAccountRediscovery(request)
+  }
+
+  func reloadAccountsDuringSwitch() async {
+    accountRediscoveryRequest &+= 1
+    let request = accountRediscoveryRequest
+    startQueuedAccountRediscoveryIfNeeded(allowWhileSwitching: true)
+    await waitForAccountRediscovery(request)
+  }
+
+  private func performQueuedAccountRediscovery(startingWith drainableRequest: UInt) async {
+    defer {
+      inFlightAccountReload = nil
+      startQueuedAccountRediscoveryIfNeeded()
+    }
+    var request = isSwitching ? drainableRequest : accountRediscoveryRequest
+    while completedAccountRediscoveryRequest != request {
+      let preservingProviders = accountPreservationProviders(through: request)
+      await performAccountReload(preserving: preservingProviders)
+      completeAccountPreservationRequests(preservingProviders, through: request)
+      completedAccountRediscoveryRequest = request
+      resumeAccountRediscoveryWaiters(through: request)
+      // Once a switch closes the gate, finish only the pass that was already
+      // reading. Its newer requests stay queued for the mandatory post-write
+      // discovery (or for the reopened gate after that pass).
+      guard !isSwitching else { return }
+      request = accountRediscoveryRequest
+    }
+  }
+
+  private func waitForAccountRediscovery(_ request: UInt) async {
+    guard completedAccountRediscoveryRequest < request else { return }
+    await withCheckedContinuation { continuation in
+      accountRediscoveryWaiters.append(.init(request: request, continuation: continuation))
+    }
+  }
+
+  private func resumeAccountRediscoveryWaiters(through request: UInt) {
+    var pending: [AccountRediscoveryWaiter] = []
+    for waiter in accountRediscoveryWaiters {
+      if waiter.request <= request {
+        waiter.continuation.resume()
+      } else {
+        pending.append(waiter)
+      }
+    }
+    accountRediscoveryWaiters = pending
+  }
+
+  private func performAccountReload(preserving providersForLogin: Set<UsageProvider>) async {
+    var result = AccountReloadResult()
+    defer { automaticallyCapturingProviders.subtract(result.gatedProviders) }
+    for descriptor in providers {
+      let state = await reloadProviderState(for: descriptor, preserving: providersForLogin)
+      result.append(state)
+    }
+    applyAccountReload(result)
+    await finishAccountReload(syncCandidates: result.syncCandidates)
+  }
+
+  private func applyAccountReload(_ result: AccountReloadResult) {
+    // Reconcile monitoring only after every provider await has completed. A
+    // Settings toggle can run while this main-actor reload is suspended.
+    let persistedMonitoringBeforeReconciliation = persistedMonitoredAccounts
+    var nextMonitoredAccounts: [UsageProvider: [ProviderAccount]] = [:]
+    for descriptor in providers {
+      nextMonitoredAccounts[descriptor.id] = reloadedMonitoredAccounts(
+        result.states[descriptor.id],
+        capturedCopies: result.capturedCopies
+      )
+    }
+    accounts = result.states.mapValues(\.accounts)
+    providersWithDiscoveredCredentials = result.providersWithDiscoveredCredentials
+    credentialDiscoveryCompleted = Set(providers.map(\.id))
+    capturedEquivalents = result.capturedCopies
+    activeCLIAccounts = result.activeCLIAccounts
+    monitoredAccounts = nextMonitoredAccounts
+    applyReloadedSelections(result.selectionUpdates)
+    if persistedMonitoredAccounts != persistedMonitoringBeforeReconciliation
+      || !isMonitoringConfigurationLoaded {
+      persistMonitoringSelections(allowsRecovery: true)
+    }
+  }
+
+  private func applyReloadedSelections(
+    _ updates: [(UsageProvider, SelectionUpdate)]
+  ) {
+    for (provider, update) in updates {
+      selectAccount(
+        update.account,
+        for: provider,
+        standingInFor: update.origin,
+        refreshInteraction: .background,
+        cancelsDelayedCredentialRefresh: false,
+        waitsForDelayedCredentialRefresh: true
+      )
+    }
+  }
+
   func finishAccountReload(syncCandidates: [ProviderAccount]) async {
     for provider in providers.map(\.id) {
       synchronizeQuotaNotificationScope(
@@ -191,6 +313,34 @@ extension UsageStore {
       return SelectionUpdate(account: live, origin: saved)
     }
     return await reconciledSelection(selected, origin: origin, in: &accounts)
+  }
+}
+
+private struct AccountReloadResult {
+  var states: [UsageProvider: ProviderAccountReloadState] = [:]
+  var providersWithDiscoveredCredentials = Set<UsageProvider>()
+  var selectionUpdates: [(UsageProvider, SelectionUpdate)] = []
+  var activeCLIAccounts: [UsageProvider: ProviderAccount] = [:]
+  var capturedCopies: [String: ProviderAccount] = [:]
+  var syncCandidates: [ProviderAccount] = []
+  var gatedProviders = Set<UsageProvider>()
+
+  mutating func append(_ state: ProviderAccountReloadState) {
+    if state.keepsCaptureGate {
+      gatedProviders.insert(state.provider)
+    }
+    if !state.accounts.isEmpty {
+      providersWithDiscoveredCredentials.insert(state.provider)
+    }
+    if let selectionUpdate = state.selectionUpdate {
+      selectionUpdates.append((state.provider, selectionUpdate))
+    }
+    if let activeCLIAccount = state.activeCLIAccount {
+      activeCLIAccounts[state.provider] = activeCLIAccount
+    }
+    capturedCopies.merge(state.capturedCopies) { current, _ in current }
+    syncCandidates += state.accounts.filter { state.capturedCopies.keys.contains($0.id) }
+    states[state.provider] = state
   }
 }
 

@@ -168,7 +168,7 @@ extension UsageStore {
       of: (UsageProvider, ProviderFetchCompletion).self
     ) { group in
       for descriptor in enabledProviderDescriptors
-      where !isCredentialRefreshDelayed(for: descriptor.id, interaction: interaction) {
+        where !isCredentialRefreshDelayed(for: descriptor.id, interaction: interaction) {
         group.addTask {
           await (
             descriptor.id,
@@ -202,7 +202,7 @@ extension UsageStore {
   ) async {
     await withTaskGroup(of: Void.self) { group in
       for descriptor in enabledProviderDescriptors
-      where delayedCredentialRefreshTasks[descriptor.id] == nil
+        where delayedCredentialRefreshTasks[descriptor.id] == nil
         && !(monitoredAccounts[descriptor.id] ?? []).isEmpty {
         group.addTask {
           await self.refreshAccountUsage(
@@ -259,17 +259,18 @@ extension UsageStore {
     provider: UsageProvider,
     serializesProviderFetch: Bool = false,
     interaction: ProviderFetchInteraction = .userInitiated,
-    bypassesDelayedCredentialRefresh: Bool = false
+    bypassesDelayedCredentialRefresh: Bool = false,
+    drainsDelayedCredentialRefresh: Bool = true
   ) async {
-    if case .userInitiated = interaction {
+    if case .userInitiated = interaction, drainsDelayedCredentialRefresh {
       await cancelDelayedCredentialRefreshAndDrainSelection(for: provider)
     }
     // A superseded selection fetch (cancelled when the selection changed) or a
     // fetch that a switch has since started must not hit the network and
     // rotate a credential slot out from under the switch.
     guard !Task.isCancelled, !isSwitching, isProviderEnabled(provider),
-          (bypassesDelayedCredentialRefresh
-            || !isCredentialRefreshDelayed(for: provider, interaction: interaction)),
+          bypassesDelayedCredentialRefresh
+          || !isCredentialRefreshDelayed(for: provider, interaction: interaction),
           let descriptor = providers.first(where: { $0.id == provider })
     else { return }
     if providersNeedingMonitoredUsageRestore.contains(provider) {
