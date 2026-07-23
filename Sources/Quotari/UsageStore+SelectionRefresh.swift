@@ -14,12 +14,16 @@ extension UsageStore {
     bypassesDelayedCredentialRefresh: Bool = false,
     waitsForDelayedCredentialRefresh: Bool = false
   ) {
-    let previousDrainGeneration = credentialRefreshDrainTasks[provider]?.generation
     if cancelsDelayedCredentialRefresh {
       cancelDelayedCredentialRefresh(for: provider)
     }
-    let cancellationDrainGeneration = credentialRefreshDrainTasks[provider]
-      .flatMap { $0.generation == previousDrainGeneration ? nil : $0.generation }
+    // General selection replacements do not wait on the credential drain,
+    // so every generation created while it is active can safely extend it.
+    // Reactivation tasks may restore monitored usage and enter the drain, so
+    // they must remain independent.
+    let cancellationDrainGeneration = waitingForProviderActivity
+      ? nil
+      : credentialRefreshDrainTasks[provider]?.generation
     let delayedRefresh = waitsForDelayedCredentialRefresh
       ? delayedCredentialRefreshTasks[provider]
       : nil

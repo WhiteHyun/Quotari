@@ -22,6 +22,7 @@ struct PostCredentialReviewTests {
     await strategy.waitUntilRequestStarts(count: 1)
 
     store.enqueueSelectionRefresh(for: .claude)
+    store.enqueueSelectionRefresh(for: .claude)
     let accountRefresh = Task {
       await store.refreshAccountUsage(for: account, force: true)
     }
