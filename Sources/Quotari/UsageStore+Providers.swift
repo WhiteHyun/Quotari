@@ -35,6 +35,7 @@ extension UsageStore {
     if enabled {
       providersNeedingMonitoredUsageRestore.insert(provider)
       enqueueQuotaNotificationScopeRestore(for: provider)
+      reconfigureUsageInsightsMonitoring()
       enqueueSelectionRefresh(for: provider, waitingForProviderActivity: true)
     } else {
       disableProvider(provider)
@@ -69,6 +70,7 @@ extension UsageStore {
     accountUsageRefreshTasks[provider]?.task.cancel()
     quotaNotifications.setActiveLogicalAccountID(nil, for: provider)
     reconcileMenuBarUsageSource()
+    reconfigureUsageInsightsMonitoring()
   }
 
   func reconcileMenuBarUsageSource() {

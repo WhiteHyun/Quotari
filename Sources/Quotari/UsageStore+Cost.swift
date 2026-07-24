@@ -13,6 +13,7 @@ private struct LocalCostRefreshRequest {
   let reportedCostFallback: CostSummary?
   let cacheHit: Bool
   let cachedInsights: UsageInsightsSummary?
+  let forcesRefresh: Bool
 }
 
 private struct CachedLocalUsage {
@@ -78,7 +79,8 @@ extension UsageStore {
         now: usage.updatedAt,
         reportedCostFallback: reportedCostFallback,
         cacheHit: cachedUsage.cost != nil,
-        cachedInsights: cachedUsage.insights.summary
+        cachedInsights: cachedUsage.insights.summary,
+        forcesRefresh: false
       ),
       needsLocalCost: needsLocalCost
     )
@@ -190,7 +192,8 @@ extension UsageStore {
 
   private func costRefreshStart(for request: LocalCostRefreshRequest) -> LocalCostRefreshStart {
     if let existingTask = costTasks[request.provider] {
-      if !existingTask.cancellationRequested,
+      if !request.forcesRefresh,
+         !existingTask.cancellationRequested,
          existingTask.credentialTransitionTargetScopeID == request.credentialTransition?.targetScopeID {
         return .skip
       }
@@ -198,6 +201,9 @@ extension UsageStore {
         existingTask.task.cancel()
       }
       return .start(after: existingTask.task)
+    }
+    if request.forcesRefresh {
+      return .start(after: nil)
     }
     if let lastEmptyCostScan = lastEmptyCostScans[request.provider],
        request.now.timeIntervalSince(lastEmptyCostScan) < Self.localCostScanThrottle {
@@ -209,6 +215,33 @@ extension UsageStore {
       return .skip
     }
     return .start(after: nil)
+  }
+
+  func refreshUsageInsightsAfterLocalLogChange(provider: UsageProvider) {
+    let account = selectedAccounts[provider]
+    let existingCost = snapshots[provider]?.cost
+    guard Self.canApplyLocalCost(over: existingCost) else { return }
+    let now = currentDate()
+    let cachedInsights = usageInsightsState(for: provider).currentSummary(at: now)
+    let reportedCostFallback = latestReportedCostFallbacks[provider]?.cost
+      ?? Self.reportedCostFallback(from: existingCost)
+    costEstimator.invalidateInsights(
+      provider: provider,
+      account: account,
+      historyDays: 30
+    )
+    lastCostScans[provider] = nil
+    lastEmptyCostScans[provider] = nil
+    refreshCost(LocalCostRefreshRequest(
+      provider: provider,
+      account: account,
+      credentialTransition: nil,
+      now: now,
+      reportedCostFallback: reportedCostFallback,
+      cacheHit: false,
+      cachedInsights: cachedInsights,
+      forcesRefresh: true
+    ))
   }
 
   func cancelCostRefresh(for provider: UsageProvider) {

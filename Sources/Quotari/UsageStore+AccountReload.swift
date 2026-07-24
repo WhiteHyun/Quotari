@@ -134,6 +134,7 @@ extension UsageStore {
     await migrateCachedClaudeProfilesToCapturedAccounts()
     await syncCapturedCopies(of: syncCandidates)
     refreshClaudeProfiles()
+    reconfigureUsageInsightsMonitoring()
   }
 
   func accountPreservationProviders(through request: UInt) -> Set<UsageProvider> {

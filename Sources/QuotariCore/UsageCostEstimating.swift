@@ -1,6 +1,10 @@
 import Foundation
 
 public protocol UsageInsightsAnalyzing: Sendable {
+  func usageInsightsObservationRoots(
+    provider: UsageProvider,
+    account: ProviderAccount?
+  ) -> [URL]
   func cachedInsights(
     provider: UsageProvider,
     account: ProviderAccount?,
@@ -28,6 +32,13 @@ public protocol UsageInsightsAnalyzing: Sendable {
 }
 
 public extension UsageInsightsAnalyzing {
+  func usageInsightsObservationRoots(
+    provider: UsageProvider,
+    account: ProviderAccount?
+  ) -> [URL] {
+    []
+  }
+
   func cachedInsights(
     provider: UsageProvider,
     account: ProviderAccount?,

@@ -215,6 +215,7 @@ extension UsageStore {
   static func isolatedForTesting(
     providers: [ProviderDescriptor],
     costEstimator: any UsageCostEstimating = NullCostEstimator(),
+    usageInsightsChangeMonitor: any UsageInsightsChangeMonitoring = DisabledUsageInsightsChangeMonitor(),
     accountDiscovery: any ProviderAccountDiscovering = StaticAccountDiscovery(),
     accountSelectionStore: ProviderAccountSelectionStore = .temporaryForTesting(),
     accountMonitoringStore: ProviderAccountMonitoringStore? = nil,
@@ -255,6 +256,7 @@ extension UsageStore {
     return UsageStore(
       providers: providers,
       costEstimator: costEstimator,
+      usageInsightsChangeMonitor: usageInsightsChangeMonitor,
       accountDiscovery: accountDiscovery,
       accountSelectionStore: accountSelectionStore,
       accountMonitoringStore: isolatedMonitoringStore,
