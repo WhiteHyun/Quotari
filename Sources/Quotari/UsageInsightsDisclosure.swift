@@ -151,6 +151,13 @@ private struct UsageInsightsSummaryView: View {
           ? L10n.string("Collapse usage insights")
           : L10n.string("Expand usage insights")
       )
+      if refreshFailed {
+        Image(systemName: "exclamationmark.circle.fill")
+          .font(.caption)
+          .foregroundStyle(.orange)
+          .help(L10n.string("Refresh failed — showing cached insights."))
+          .accessibilityLabel(L10n.string("Refresh failed — showing cached insights."))
+      }
 
       Spacer(minLength: 4)
       if isExpanded {
@@ -183,8 +190,9 @@ private struct UsageInsightsSummaryView: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
-    .accessibilityLabel(L10n.string("Expand usage insights"))
+    .accessibilityLabel(L10n.string("Usage insights"))
     .accessibilityValue(presentation.compactAccessibilityValue)
+    .accessibilityHint(L10n.string("Expand usage insights"))
   }
 
   private func expandedContent(_ presentation: UsageInsightsPresentation) -> some View {

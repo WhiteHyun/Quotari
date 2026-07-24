@@ -79,10 +79,10 @@ struct UsageInsightsPresentation: Equatable {
       points = periodSummary.daily.map {
         Point(date: $0.date, value: $0.spend.value)
       }
-    } else if case let .available(totalTokens) = periodSummary.tokens.total {
+    } else if periodSummary.tokens.total.value != nil {
       metric = .tokens
       todayValue = Self.formattedTokens(today.tokens.total)
-      periodValue = LocalizedUsageFormatter.tokens(totalTokens)
+      periodValue = Self.formattedTokens(periodSummary.tokens.total)
       points = periodSummary.daily.map {
         Point(date: $0.date, value: $0.tokens.total.value.map(Double.init))
       }
@@ -126,7 +126,7 @@ struct UsageInsightsPresentation: Equatable {
     } else {
       ""
     }
-    return prefix + LocalizedUsageFormatter.tokens(value)
+    return prefix + LocalizedUsageFormatter.tokenCount(value)
   }
 
   private static func formattedAverage(_ average: Double, metric: Metric) -> String {
@@ -134,7 +134,7 @@ struct UsageInsightsPresentation: Equatable {
     case let .spend(currencyCode):
       LocalizedUsageFormatter.currency(average, code: currencyCode)
     case .tokens:
-      LocalizedUsageFormatter.tokens(Int(average.rounded()))
+      LocalizedUsageFormatter.tokenCount(Int(average.rounded()))
     }
   }
 

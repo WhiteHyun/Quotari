@@ -108,6 +108,7 @@ struct LocalizationTests {
     #expect(L10n.string("7D", locale: korean) == "7일")
     #expect(L10n.string("Partial pricing", locale: korean) == "일부 가격만 반영")
     #expect(L10n.string("Sessions", locale: korean) == "세션")
+    #expect(LocalizedUsageFormatter.tokenCount(32000, locale: korean) == "32K 토큰")
     #expect(
       L10n.string(key: "Estimated from local Codex logs", locale: korean)
         == "로컬 Codex 로그에서 추정"

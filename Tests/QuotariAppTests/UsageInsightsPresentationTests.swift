@@ -40,6 +40,31 @@ struct UsageInsightsPresentationTests {
     #expect(presentation.metric == .tokens)
     #expect(presentation.coverageIsWarning)
     #expect(presentation.coverageLabel.contains("Pricing unavailable"))
+    #expect(presentation.todayValue.contains("tokens"))
+    #expect(presentation.periodValue.contains("tokens"))
+    #expect(presentation.averageValue.contains("tokens"))
+  }
+
+  @Test func partialTokenTotalsRemainVisibleWithTheirLowerBoundIndicator() throws {
+    let summary = fixture(
+      spend: .unavailable(.missingPricing),
+      coverage: CostEstimateCoverage(
+        pricedTokens: 0,
+        unpricedTokens: 100,
+        unpricedModels: ["future-model"]
+      ),
+      total: .partial(value: 100, limitation: .unsupportedTokenFields)
+    )
+    let presentation = try #require(UsageInsightsPresentation(
+      summary: summary,
+      period: .sevenDays
+    ))
+
+    #expect(presentation.metric == .tokens)
+    #expect(presentation.todayValue.hasPrefix("≈"))
+    #expect(presentation.periodValue.hasPrefix("≈"))
+    #expect(presentation.todayValue.contains("tokens"))
+    #expect(presentation.points.compactMap(\.value).count == 7)
   }
 
   @Test func unavailableOptionalMetricsAreOmitted() throws {
@@ -135,7 +160,8 @@ struct UsageInsightsPresentationTests {
     ),
     input: UsageMetric<Int> = .available(50),
     cacheRead: UsageMetric<Int> = .available(20),
-    sessions: UsageMetric<Int> = .available(1)
+    sessions: UsageMetric<Int> = .available(1),
+    total: UsageMetric<Int> = .available(100)
   ) -> UsageInsightsSummary {
     let calendar = Calendar(identifier: .gregorian)
     let today = Date(timeIntervalSince1970: 1_783_478_400)
@@ -144,7 +170,7 @@ struct UsageInsightsPresentationTests {
       output: .available(20),
       cacheRead: cacheRead,
       cacheWrite: .available(10),
-      total: .available(100)
+      total: total
     )
     let daily = (0 ..< 30).map { offset in
       let date = calendar.date(byAdding: .day, value: offset - 29, to: today) ?? today

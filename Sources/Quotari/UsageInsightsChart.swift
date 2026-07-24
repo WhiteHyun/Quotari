@@ -85,7 +85,7 @@ struct UsageInsightsChart: View {
     case let .spend(currencyCode):
       LocalizedUsageFormatter.currency(value, code: currencyCode)
     case .tokens:
-      LocalizedUsageFormatter.tokens(Int(value.rounded()))
+      LocalizedUsageFormatter.tokenCount(Int(value.rounded()))
     }
   }
 }

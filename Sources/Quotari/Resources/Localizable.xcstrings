@@ -17,6 +17,7 @@
     "%@ remaining quota" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"%@ 남은 사용량"}}}},
     "%@ service status, %@" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"%@ 서비스 상태, %@"}}}},
     "%@ service status: %@" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"%@ 서비스 상태: %@"}}}},
+    "%@ tokens" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"%@ 토큰"}}}},
     "%@ usage" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"%@ 사용량"}}}},
     "%@ usage is at %@%%." : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"%@ 사용량이 %@%%입니다."}}}},
     "%@ weekly quota reset" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"%@ 주간 사용 한도 초기화"}}}},
