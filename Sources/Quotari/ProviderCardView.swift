@@ -219,9 +219,14 @@ struct ProviderCardView: View {
   @ViewBuilder
   private func windowRow(_ title: String, _ window: RateWindow) -> some View {
     let pace = UsagePace.compute(window: window, now: Date())
+    let thresholds = activeQuotaThresholds
     VStack(alignment: .leading, spacing: 5) {
       Text(title).font(.subheadline)
-      bar(window.remainingPercent)
+      QuotaBarView(
+        remainingPercent: window.remainingPercent,
+        thresholds: thresholds,
+        accent: accent
+      )
       HStack(spacing: 6) {
         Text(L10n.string("\(LocalizedUsageFormatter.percent(window.remainingPercent)) left"))
           .font(.footnote)
@@ -249,32 +254,34 @@ struct ProviderCardView: View {
     }
     .accessibilityElement(children: .ignore)
     .accessibilityLabel(L10n.string("\(title) usage"))
-    .accessibilityValue(accessibilityValue(for: window))
+    .accessibilityValue(accessibilityValue(for: window, thresholds: thresholds))
   }
 
-  private func accessibilityValue(for window: RateWindow) -> String {
+  private var activeQuotaThresholds: QuotaBarThresholds? {
+    QuotaBarThresholds(
+      preferences: store.quotaNotifications.preferences,
+      provider: descriptor.id
+    )
+  }
+
+  private func accessibilityValue(
+    for window: RateWindow,
+    thresholds: QuotaBarThresholds?
+  ) -> String {
     let remaining = LocalizedUsageFormatter.percent(window.remainingPercent)
-    let status = Theme.statusWord(window.usedPercent)
+    let status = if let thresholds {
+      Theme.statusWord(
+        window.usedPercent,
+        warningThreshold: thresholds.warningUsedPercent,
+        criticalThreshold: thresholds.criticalUsedPercent
+      )
+    } else {
+      Theme.statusWord(window.usedPercent)
+    }
     var value = L10n.string("\(remaining) left, \(status)")
     if let reset = LocalizedUsageFormatter.resetCountdown(to: window.resetsAt) {
       value = L10n.string("\(value), resets \(reset)")
     }
     return value
-  }
-
-  /// Battery-style: the fill is what's left, matching the "% left" label.
-  private func bar(_ remaining: Double) -> some View {
-    GeometryReader { geo in
-      let fraction = min(1, max(0, remaining / 100))
-      ZStack(alignment: .leading) {
-        Capsule()
-          .fill(Theme.usageTrack)
-        Capsule()
-          .fill(accent)
-          .frame(width: max(fraction > 0 ? 4 : 0, geo.size.width * fraction))
-          .animation(.easeOut(duration: 0.4), value: fraction)
-      }
-    }
-    .frame(height: 5)
   }
 }

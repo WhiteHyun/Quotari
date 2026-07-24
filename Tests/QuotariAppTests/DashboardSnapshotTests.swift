@@ -64,9 +64,19 @@ struct DashboardSnapshotTests {
   }
 
   private static func makeLoadedStore() async -> UsageStore {
+    let suiteName = "DashboardSnapshotTests.quota-markers"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defaults.removePersistentDomain(forName: suiteName)
+    let notifications = QuotaNotificationController(
+      center: QuotaNotificationCenterStub(status: .authorized),
+      defaults: defaults
+    )
+    _ = await notifications.setNotificationsEnabled(true)
     let loadedStore = UsageStore.isolatedForTesting(
       providers: ProviderFixtures.descriptors,
-      costEstimator: SnapshotCostEstimator()
+      costEstimator: SnapshotCostEstimator(),
+      defaults: defaults,
+      quotaNotifications: notifications
     )
     for _ in 0 ..< 100 {
       if loadedStore.snapshots.count >= ProviderRegistry.all.count,

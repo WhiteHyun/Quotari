@@ -9,12 +9,18 @@ enum Theme {
   static let settingsCardBackground = Color(nsColor: .controlBackgroundColor)
   static let settingsSeparator = Color.primary.opacity(0.09)
   static let usageTrack = Color.primary.opacity(0.12)
+  static let quotaWarning = Color(nsColor: .systemOrange)
+  static let quotaCritical = Color(nsColor: .systemRed)
 
   /// Status word for VoiceOver, so severity isn't conveyed by color alone.
-  static func statusWord(_ usedPercent: Double) -> String {
+  static func statusWord(
+    _ usedPercent: Double,
+    warningThreshold: Int = 70,
+    criticalThreshold: Int = 90
+  ) -> String {
     switch usedPercent {
-    case ..<70: L10n.string("normal")
-    case ..<90: L10n.string("warning")
+    case ..<Double(warningThreshold): L10n.string("normal")
+    case ..<Double(criticalThreshold): L10n.string("warning")
     default: L10n.string("critical")
     }
   }
