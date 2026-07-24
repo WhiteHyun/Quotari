@@ -143,7 +143,11 @@ extension UsageStore {
     let provider = request.provider
     latestReportedCostFallbacks[provider] = ReportedCostFallback(cost: request.reportedCostFallback)
     guard case let .start(previousTask) = costRefreshStart(for: request) else { return }
-    beginUsageInsightsRefresh(provider: provider, cached: request.cachedInsights)
+    beginUsageInsightsRefresh(
+      provider: provider,
+      cached: request.cachedInsights,
+      now: request.now
+    )
     lastCostScans[provider] = request.now
     let costEstimator = costEstimator
     let generation = UUID()

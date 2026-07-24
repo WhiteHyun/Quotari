@@ -39,6 +39,15 @@ enum L10n {
     )
   }
 
+  static func string(key: String, locale: Locale? = nil) -> String {
+    let locale = locale ?? appLocale
+    return localizedBundle(for: locale).localizedString(
+      forKey: key,
+      value: key,
+      table: nil
+    )
+  }
+
   static func preferredLanguageCode(
     supportedLocalizations: [String],
     preferredLanguages: [String]

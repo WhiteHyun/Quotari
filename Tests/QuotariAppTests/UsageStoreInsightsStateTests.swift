@@ -12,7 +12,11 @@ struct UsageStoreInsightsStateTests {
       costEstimator: InsightsStateEstimator(summary: summary),
       startsAutomatically: false
     )
-    store.beginUsageInsightsRefresh(provider: .codex, cached: nil)
+    store.beginUsageInsightsRefresh(
+      provider: .codex,
+      cached: nil,
+      now: summary.generatedAt
+    )
 
     try store.finishUsageInsightsRefresh(
       .updated(#require(summary.costSummary)),
@@ -31,7 +35,11 @@ struct UsageStoreInsightsStateTests {
       providers: [ProviderFixtures.descriptor(for: .codex)],
       startsAutomatically: false
     )
-    store.beginUsageInsightsRefresh(provider: .codex, cached: summary)
+    store.beginUsageInsightsRefresh(
+      provider: .codex,
+      cached: summary,
+      now: summary.generatedAt
+    )
 
     store.finishUsageInsightsRefresh(
       .unavailable,
@@ -54,7 +62,11 @@ struct UsageStoreInsightsStateTests {
       providers: [ProviderFixtures.descriptor(for: .codex)],
       startsAutomatically: false
     )
-    store.beginUsageInsightsRefresh(provider: .codex, cached: summary)
+    store.beginUsageInsightsRefresh(
+      provider: .codex,
+      cached: summary,
+      now: summary.generatedAt
+    )
 
     store.finishUsageInsightsRefresh(
       .confirmedEmpty,
@@ -65,6 +77,49 @@ struct UsageStoreInsightsStateTests {
     )
 
     #expect(store.usageInsightsState(for: .codex) == .empty(.noLocalUsage))
+  }
+
+  @Test func refreshStartDropsAnInMemorySummaryFromThePreviousDay() {
+    let summary = fixture()
+    let store = UsageStore.isolatedForTesting(
+      providers: [ProviderFixtures.descriptor(for: .codex)],
+      startsAutomatically: false
+    )
+    store.usageInsightsStates[.codex] = .loaded(summary)
+
+    store.beginUsageInsightsRefresh(
+      provider: .codex,
+      cached: nil,
+      now: summary.generatedAt.addingTimeInterval(86400)
+    )
+
+    #expect(store.usageInsightsState(for: .codex) == .loading(cached: nil))
+  }
+
+  @Test func refreshFailureAfterMidnightDropsThePreviousDaySummary() {
+    let summary = fixture()
+    let store = UsageStore.isolatedForTesting(
+      providers: [ProviderFixtures.descriptor(for: .codex)],
+      startsAutomatically: false
+    )
+    store.beginUsageInsightsRefresh(
+      provider: .codex,
+      cached: summary,
+      now: summary.generatedAt
+    )
+
+    store.finishUsageInsightsRefresh(
+      .unavailable,
+      provider: .codex,
+      account: nil,
+      credentialTransition: nil,
+      now: summary.generatedAt.addingTimeInterval(86400)
+    )
+
+    #expect(store.usageInsightsState(for: .codex) == .failed(
+      previous: nil,
+      message: "Local insights refresh failed"
+    ))
   }
 
   private func fixture() -> UsageInsightsSummary {

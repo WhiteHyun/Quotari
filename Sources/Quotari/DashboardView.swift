@@ -115,7 +115,8 @@ struct DashboardContent: View {
   private var initialInsightsExpansionProvider: UsageProvider? {
     DashboardInsightsExpansion.initialProvider(
       enabledProviders: enabledProviderIDs,
-      states: store.usageInsightsStates
+      states: store.usageInsightsStates,
+      isRefreshing: store.isRefreshing
     )
   }
 

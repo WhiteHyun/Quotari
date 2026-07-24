@@ -56,7 +56,21 @@ struct UsageInsightsPresentationTests {
     #expect(presentation.insightCells.map(\.kind) == [.topModel])
   }
 
-  @Test func initialExpansionUsesTheFirstScopedProvider() {
+  @Test func unavailableDailySpendStaysMissingAndDoesNotLowerTheAverage() throws {
+    var summary = fixture()
+    summary.daily[summary.daily.count - 2].spend = .unavailable(.missingPricing)
+
+    let presentation = try #require(UsageInsightsPresentation(
+      summary: summary,
+      period: .sevenDays
+    ))
+
+    #expect(presentation.points.compactMap(\.value).count == 6)
+    #expect(presentation.points[presentation.points.count - 2].value == nil)
+    #expect(presentation.average == 1)
+  }
+
+  @Test func initialExpansionWaitsForAnEarlierProviderToSettle() {
     let summary = fixture()
     let states: [UsageProvider: UsageInsightsLoadState] = [
       .claude: .loading(cached: nil),
@@ -65,8 +79,38 @@ struct UsageInsightsPresentationTests {
 
     #expect(DashboardInsightsExpansion.initialProvider(
       enabledProviders: [.claude, .codex],
-      states: states
+      states: states,
+      isRefreshing: false
+    ) == nil)
+  }
+
+  @Test func initialExpansionUsesTheFirstEligibleProviderInProviderOrder() {
+    let summary = fixture()
+    let states: [UsageProvider: UsageInsightsLoadState] = [
+      .claude: .failed(previous: nil, message: "Unavailable"),
+      .codex: .loaded(summary),
+    ]
+
+    #expect(DashboardInsightsExpansion.initialProvider(
+      enabledProviders: [.claude, .codex],
+      states: states,
+      isRefreshing: false
     ) == .codex)
+  }
+
+  @Test func existingCostWinsWhileStructuredInsightsHaveNoSummary() {
+    #expect(ProviderUsageSectionContent.resolve(
+      state: .loading(cached: nil),
+      hasCost: true
+    ) == .legacyCost)
+    #expect(ProviderUsageSectionContent.resolve(
+      state: .failed(previous: nil, message: "Unavailable"),
+      hasCost: true
+    ) == .legacyCost)
+    #expect(ProviderUsageSectionContent.resolve(
+      state: .loading(cached: nil),
+      hasCost: false
+    ) == .insights)
   }
 
   private func fixture(

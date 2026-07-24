@@ -1,6 +1,30 @@
 import QuotariCore
 import SwiftUI
 
+enum ProviderUsageSectionContent: Equatable {
+  case insights
+  case legacyCost
+  case none
+
+  static func resolve(
+    state: UsageInsightsLoadState,
+    hasCost: Bool
+  ) -> Self {
+    if state.summary != nil {
+      return .insights
+    }
+    if hasCost {
+      return .legacyCost
+    }
+    return switch state {
+    case .loading, .empty, .failed:
+      .insights
+    case .idle, .loaded:
+      .none
+    }
+  }
+}
+
 struct ProviderCardView: View {
   @Environment(UsageStore.self) private var store
 
@@ -71,7 +95,8 @@ struct ProviderCardView: View {
   @ViewBuilder
   private func usageSection(cost: CostSummary?) -> some View {
     let state = store.usageInsightsState(for: descriptor.id)
-    if state.summary != nil || shouldShowInsightsStatus(state, cost: cost) {
+    switch ProviderUsageSectionContent.resolve(state: state, hasCost: cost != nil) {
+    case .insights:
       Divider().padding(.vertical, 2)
       UsageInsightsDisclosure(
         state: state,
@@ -79,25 +104,13 @@ struct ProviderCardView: View {
         isExpanded: $isInsightsExpanded,
         period: $insightsPeriod
       )
-    } else if let cost {
-      Divider().padding(.vertical, 2)
-      CostSectionView(cost: cost, accent: accent)
-    }
-  }
-
-  private func shouldShowInsightsStatus(
-    _ state: UsageInsightsLoadState,
-    cost: CostSummary?
-  ) -> Bool {
-    if let cost,
-       !cost.sourceDescription.localizedCaseInsensitiveContains("local") {
-      return false
-    }
-    return switch state {
-    case .loading, .empty, .failed:
-      true
-    case .idle, .loaded:
-      false
+    case .legacyCost:
+      if let cost {
+        Divider().padding(.vertical, 2)
+        CostSectionView(cost: cost, accent: accent)
+      }
+    case .none:
+      EmptyView()
     }
   }
 

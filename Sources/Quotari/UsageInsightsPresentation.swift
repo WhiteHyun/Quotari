@@ -15,7 +15,7 @@ struct UsageInsightsPresentation: Equatable {
 
   struct Point: Equatable, Identifiable {
     let date: Date
-    let value: Double
+    let value: Double?
 
     var id: Date {
       date
@@ -69,20 +69,23 @@ struct UsageInsightsPresentation: Equatable {
       todayValue = Self.formattedSpend(today.spend, currencyCode: currencyCode)
       periodValue = Self.formattedSpend(periodSummary.spend, currencyCode: currencyCode)
       points = periodSummary.daily.map {
-        Point(date: $0.date, value: $0.spend.value ?? 0)
+        Point(date: $0.date, value: $0.spend.value)
       }
     } else if case let .available(totalTokens) = periodSummary.tokens.total {
       metric = .tokens
       todayValue = Self.formattedTokens(today.tokens.total)
       periodValue = LocalizedUsageFormatter.tokens(totalTokens)
       points = periodSummary.daily.map {
-        Point(date: $0.date, value: Double($0.tokens.total.value ?? 0))
+        Point(date: $0.date, value: $0.tokens.total.value.map(Double.init))
       }
     } else {
       return nil
     }
 
-    average = points.isEmpty ? 0 : points.reduce(0) { $0 + $1.value } / Double(points.count)
+    let availableValues = points.compactMap(\.value)
+    average = availableValues.isEmpty
+      ? 0
+      : availableValues.reduce(0, +) / Double(availableValues.count)
     averageValue = Self.formattedAverage(average, metric: metric)
     insightCells = Self.insightCells(periodSummary)
     let coverage = Self.coverage(summary: summary, period: periodSummary, metric: metric)
@@ -196,7 +199,8 @@ struct UsageInsightsPresentation: Equatable {
       ? L10n.string("Local tokens")
       : L10n.string("Estimated locally")
     let label = ([base] + details).joined(separator: " · ")
-    let source = L10n.string("Source: \(summary.sourceDescription)")
+    let localizedSourceDescription = L10n.string(key: summary.sourceDescription)
+    let source = L10n.string("Source: \(localizedSourceDescription)")
     let unpriced = period.pricingCoverage.unpricedModels
     let help = unpriced.isEmpty
       ? source

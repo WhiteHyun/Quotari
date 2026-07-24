@@ -23,10 +23,13 @@ extension UsageStore {
 
   func beginUsageInsightsRefresh(
     provider: UsageProvider,
-    cached: UsageInsightsSummary?
+    cached: UsageInsightsSummary?,
+    now: Date
   ) {
+    let candidate = cached ?? usageInsightsState(for: provider).summary
+    let current = candidate.flatMap { $0.matchesCalendarWindow(at: now) ? $0 : nil }
     usageInsightsStates[provider] = .loading(
-      cached: cached ?? usageInsightsState(for: provider).summary
+      cached: current
     )
   }
 
@@ -37,7 +40,7 @@ extension UsageStore {
     credentialTransition: UsageCostCredentialTransition?,
     now: Date
   ) {
-    let previous = usageInsightsState(for: provider).summary
+    let previous = usageInsightsState(for: provider).currentSummary(at: now)
     switch outcome {
     case .updated:
       if let summary = cachedUsageInsights(

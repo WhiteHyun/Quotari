@@ -8,12 +8,24 @@ struct UsageInsightsChart: View {
   var body: some View {
     Chart {
       ForEach(presentation.points) { point in
-        BarMark(
-          x: .value(L10n.string("Day"), point.date, unit: .day),
-          y: .value(L10n.string("Usage"), point.value)
-        )
-        .foregroundStyle(barColor(point))
-        .cornerRadius(2)
+        if let value = point.value {
+          BarMark(
+            x: .value(L10n.string("Day"), point.date, unit: .day),
+            y: .value(L10n.string("Usage"), value)
+          )
+          .foregroundStyle(barColor(value))
+          .cornerRadius(2)
+          .accessibilityLabel(accessibilityDate(point.date))
+          .accessibilityValue(axisLabel(value))
+        } else {
+          PointMark(
+            x: .value(L10n.string("Day"), point.date, unit: .day),
+            y: .value(L10n.string("Usage"), 0)
+          )
+          .symbolSize(0)
+          .accessibilityLabel(accessibilityDate(point.date))
+          .accessibilityValue(L10n.string("Not available"))
+        }
       }
       RuleMark(y: .value(L10n.string("Average"), presentation.average))
         .foregroundStyle(.secondary.opacity(0.65))
@@ -47,9 +59,8 @@ struct UsageInsightsChart: View {
       }
     }
     .frame(height: 96)
-    .accessibilityElement(children: .ignore)
+    .accessibilityElement(children: .contain)
     .accessibilityLabel(L10n.string("Usage trend"))
-    .accessibilityValue(L10n.string("Average \(presentation.averageValue)"))
   }
 
   private var xAxisFormat: Date.FormatStyle {
@@ -59,10 +70,14 @@ struct UsageInsightsChart: View {
     return .dateTime.month(.abbreviated).day()
   }
 
-  private func barColor(_ point: UsageInsightsPresentation.Point) -> Color {
-    let peak = presentation.points.map(\.value).max() ?? 0
-    let intensity = peak > 0 ? point.value / peak : 0
+  private func barColor(_ value: Double) -> Color {
+    let peak = presentation.points.compactMap(\.value).max() ?? 0
+    let intensity = peak > 0 ? value / peak : 0
     return Theme.accent(accent, intensity: intensity)
+  }
+
+  private func accessibilityDate(_ date: Date) -> String {
+    date.formatted(.dateTime.month(.wide).day())
   }
 
   private func axisLabel(_ value: Double) -> String {
