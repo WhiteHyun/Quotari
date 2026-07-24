@@ -17,7 +17,7 @@ private struct LocalCostRefreshRequest {
 
 private struct CachedLocalUsage {
   let cost: CostSummary?
-  let insights: UsageInsightsSummary?
+  let insights: CachedUsageInsights
 }
 
 private enum LocalCostRefreshStart {
@@ -65,8 +65,8 @@ extension UsageStore {
       cachedCost: cachedUsage.cost,
       prefersLocalCost: needsLocalCost
     )
-    if let cachedInsights = cachedUsage.insights {
-      usageInsightsStates[provider] = .loaded(cachedInsights)
+    if let cachedInsightsState = cachedUsage.insights.loadState {
+      usageInsightsStates[provider] = cachedInsightsState
     }
     sourceLabels[provider] = value.sourceLabel
     errors[provider] = nil
@@ -78,7 +78,7 @@ extension UsageStore {
         now: usage.updatedAt,
         reportedCostFallback: reportedCostFallback,
         cacheHit: cachedUsage.cost != nil,
-        cachedInsights: cachedUsage.insights
+        cachedInsights: cachedUsage.insights.summary
       ),
       needsLocalCost: needsLocalCost
     )
@@ -92,8 +92,14 @@ extension UsageStore {
     enabled: Bool
   ) -> CachedLocalUsage {
     guard enabled else {
-      return CachedLocalUsage(cost: nil, insights: nil)
+      return CachedLocalUsage(cost: nil, insights: .missing)
     }
+    let insights = cachedUsageInsights(
+      provider: provider,
+      account: account,
+      credentialTransition: credentialTransition,
+      now: now
+    )
     return CachedLocalUsage(
       cost: costEstimator.cachedCostSummary(
         provider: provider,
@@ -102,12 +108,7 @@ extension UsageStore {
         now: now,
         historyDays: 30
       ),
-      insights: cachedUsageInsights(
-        provider: provider,
-        account: account,
-        credentialTransition: credentialTransition,
-        now: now
-      )
+      insights: insights
     )
   }
 

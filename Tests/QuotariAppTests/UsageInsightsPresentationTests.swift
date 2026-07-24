@@ -113,6 +113,20 @@ struct UsageInsightsPresentationTests {
     ) == .insights)
   }
 
+  @Test func collapsedAccessibilityValueIncludesBothVisibleMetrics() throws {
+    let presentation = try #require(UsageInsightsPresentation(
+      summary: fixture(),
+      period: .sevenDays
+    ))
+
+    let value = presentation.compactAccessibilityValue
+
+    #expect(value.contains(L10n.string("Today")))
+    #expect(value.contains(presentation.todayValue))
+    #expect(value.contains(presentation.periodLabel))
+    #expect(value.contains(presentation.periodValue))
+  }
+
   private func fixture(
     spend: UsageMetric<Double> = .available(1),
     coverage: CostEstimateCoverage = CostEstimateCoverage(

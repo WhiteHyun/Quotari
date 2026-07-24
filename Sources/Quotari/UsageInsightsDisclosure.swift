@@ -184,6 +184,7 @@ private struct UsageInsightsSummaryView: View {
     }
     .buttonStyle(.plain)
     .accessibilityLabel(L10n.string("Expand usage insights"))
+    .accessibilityValue(presentation.compactAccessibilityValue)
   }
 
   private func expandedContent(_ presentation: UsageInsightsPresentation) -> some View {

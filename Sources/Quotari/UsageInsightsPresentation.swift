@@ -52,6 +52,14 @@ struct UsageInsightsPresentation: Equatable {
   let coverageHelp: String
   let coverageIsWarning: Bool
 
+  var compactAccessibilityValue: String {
+    [
+      "\(L10n.string("Today")): \(todayValue)",
+      "\(periodLabel): \(periodValue)",
+    ]
+    .joined(separator: ", ")
+  }
+
   init?(
     summary: UsageInsightsSummary,
     period: UsageInsightsPeriod,
