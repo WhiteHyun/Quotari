@@ -70,13 +70,17 @@ struct DashboardSnapshotTests {
     )
     for _ in 0 ..< 100 {
       if loadedStore.snapshots.count >= ProviderRegistry.all.count,
-         loadedStore.snapshots.values.allSatisfy({ $0.cost != nil }) {
+         ProviderRegistry.all.allSatisfy({
+           loadedStore.usageInsightsState(for: $0.id).summary != nil
+         }) {
         break
       }
       try? await Task.sleep(for: .milliseconds(50))
     }
     #expect(loadedStore.snapshots.count == ProviderRegistry.all.count)
-    #expect(loadedStore.snapshots.values.allSatisfy { $0.cost != nil })
+    #expect(ProviderRegistry.all.allSatisfy {
+      loadedStore.usageInsightsState(for: $0.id).summary != nil
+    })
     return loadedStore
   }
 
@@ -86,7 +90,7 @@ struct DashboardSnapshotTests {
       costEstimator: SnapshotCostEstimator()
     )
     for _ in 0 ..< 100 {
-      if staleStore.snapshots[.codex]?.cost != nil {
+      if staleStore.usageInsightsState(for: .codex).summary != nil {
         break
       }
       try? await Task.sleep(for: .milliseconds(50))
@@ -164,28 +168,6 @@ struct DashboardSnapshotTests {
       .deletingLastPathComponent()
       .deletingLastPathComponent()
       .appendingPathComponent("Snapshots", isDirectory: true)
-  }
-
-  private struct SnapshotCostEstimator: UsageCostEstimating {
-    static let day = Date(timeIntervalSince1970: 1_783_478_400)
-
-    func costSummary(provider: UsageProvider, now: Date, historyDays: Int) async -> CostSummary? {
-      CostSummary(
-        todaySpend: 4.20,
-        monthSpend: 38.75,
-        monthTokens: 12_500_000,
-        latestTokens: 48000,
-        topModel: "gpt-5",
-        sourceDescription: "Estimated from local logs",
-        daily: (0 ..< 7).map { offset in
-          DailyCost(
-            date: Self.day.addingTimeInterval(TimeInterval(offset - 6) * 86400),
-            spend: [1.10, 0.40, 2.30, 0.85, 3.10, 1.75, 4.20][offset],
-            tokens: 250_000 * (offset + 1)
-          )
-        }
-      )
-    }
   }
 
   /// Renders in an off-screen NSWindow and captures via `cacheDisplay` (this

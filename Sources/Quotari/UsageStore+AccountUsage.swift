@@ -225,12 +225,15 @@ extension UsageStore {
     _ usage: ProviderAccountUsage?,
     account: ProviderAccount?,
     provider: UsageProvider,
+    credentialTransition: UsageCostCredentialTransition? = nil,
     carryingForwardFrom previous: UsageSnapshot? = nil
   ) {
+    let now = currentDate()
     guard let account, let usage, let snapshot = usage.snapshot,
-          !Self.isExpired(snapshot)
+          !Self.isExpired(snapshot, now: now)
     else {
       snapshots[provider] = nil
+      usageInsightsStates[provider] = .idle
       errors[provider] = nil
       sourceLabels[provider] = nil
       return
@@ -240,16 +243,26 @@ extension UsageStore {
       ? costEstimator.cachedCostSummary(
         provider: provider,
         account: account,
-        now: snapshot.updatedAt,
+        credentialTransition: credentialTransition,
+        now: now,
         historyDays: 30
       )
       : nil
+    let cachedInsights = needsLocalCost
+      ? cachedUsageInsights(
+        provider: provider,
+        account: account,
+        credentialTransition: credentialTransition,
+        now: now
+      )
+      : .missing
     snapshots[provider] = Self.displaySnapshot(
       from: snapshot,
       previous: previous,
       cachedCost: cachedCost,
       prefersLocalCost: needsLocalCost
     )
+    usageInsightsStates[provider] = cachedInsights.loadState ?? .idle
     errors[provider] = usage.error
     sourceLabels[provider] = usage.sourceLabel
   }
@@ -259,7 +272,9 @@ extension UsageStore {
   /// only a remaining error is worth surfacing.
   private func currentAccountUsage(for account: ProviderAccount) -> ProviderAccountUsage? {
     guard var usage = accountUsage[account.provider]?[account.id] else { return nil }
-    guard let snapshot = usage.snapshot, Self.isExpired(snapshot) else { return usage }
+    guard let snapshot = usage.snapshot,
+          Self.isExpired(snapshot, now: currentDate())
+    else { return usage }
     usage.snapshot = nil
     return usage.error == nil ? nil : usage
   }
@@ -268,19 +283,31 @@ extension UsageStore {
     _ result: Result<ProviderFetchResult, Error>,
     account: ProviderAccount
   ) {
+    let credentialTransition = result.credentialTransitionEvidence.map {
+      UsageCostCredentialTransition(
+        targetScopeID: $0.targetScopeID,
+        sourceScopeIDs: $0.sourceScopeIDs
+      )
+    }
     switch result {
     case let .success(value):
       _ = recordAccountUsageSuccess(value, provider: account.provider, account: account)
     case let .failure(error):
       recordAccountUsageFailure(error, provider: account.provider, account: account)
     }
-    syncSelectedAccountUsage(for: account)
+    syncSelectedAccountUsage(
+      for: account,
+      credentialTransition: credentialTransition
+    )
   }
 
   /// Per-account refreshes land in `accountUsage`; mirror the selected
   /// account's result onto the dashboard so the card and the popover
   /// never show different numbers for the same account.
-  private func syncSelectedAccountUsage(for account: ProviderAccount) {
+  private func syncSelectedAccountUsage(
+    for account: ProviderAccount,
+    credentialTransition: UsageCostCredentialTransition?
+  ) {
     let provider = account.provider
     guard selectedAccounts[provider]?.id == account.id,
           let usage = accountUsage[provider]?[account.id]
@@ -293,6 +320,7 @@ extension UsageStore {
       usage,
       account: account,
       provider: provider,
+      credentialTransition: credentialTransition,
       carryingForwardFrom: snapshots[provider]
     )
   }
@@ -305,8 +333,11 @@ extension UsageStore {
 
   /// Results without a confident name match stay unattributed rather than
   /// being credited to an arbitrary account.
-  private nonisolated static func isExpired(_ snapshot: UsageSnapshot) -> Bool {
-    Date().timeIntervalSince(snapshot.updatedAt) >= cachedAccountUsageLifetime
+  private nonisolated static func isExpired(
+    _ snapshot: UsageSnapshot,
+    now: Date
+  ) -> Bool {
+    now.timeIntervalSince(snapshot.updatedAt) >= cachedAccountUsageLifetime
   }
 
   private nonisolated static func normalizedSnapshot(

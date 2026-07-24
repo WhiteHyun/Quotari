@@ -7,6 +7,13 @@ public protocol UsageInsightsAnalyzing: Sendable {
     now: Date,
     historyDays: Int
   ) -> UsageInsightsSummary?
+  func cachedInsights(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    credentialTransition: UsageCostCredentialTransition?,
+    now: Date,
+    historyDays: Int
+  ) -> UsageInsightsSummary?
   func insights(
     provider: UsageProvider,
     account: ProviderAccount?,
@@ -20,7 +27,48 @@ public protocol UsageInsightsAnalyzing: Sendable {
   )
 }
 
-public protocol UsageCostEstimating: Sendable {
+public extension UsageInsightsAnalyzing {
+  func cachedInsights(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    now: Date,
+    historyDays: Int
+  ) -> UsageInsightsSummary? {
+    nil
+  }
+
+  func cachedInsights(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    credentialTransition: UsageCostCredentialTransition?,
+    now: Date,
+    historyDays: Int
+  ) -> UsageInsightsSummary? {
+    cachedInsights(
+      provider: provider,
+      account: account,
+      now: now,
+      historyDays: historyDays
+    )
+  }
+
+  func insights(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    now: Date,
+    historyDays: Int
+  ) async -> UsageInsightsSummary? {
+    nil
+  }
+
+  func invalidateInsights(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    historyDays: Int
+  ) {}
+}
+
+public protocol UsageCostEstimating: UsageInsightsAnalyzing {
   func cachedCostSummary(provider: UsageProvider, now: Date, historyDays: Int) -> CostSummary?
   func costSummary(provider: UsageProvider, now: Date, historyDays: Int) async -> CostSummary?
   func costRefreshOutcome(

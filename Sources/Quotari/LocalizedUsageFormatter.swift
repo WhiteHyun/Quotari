@@ -87,4 +87,11 @@ enum LocalizedUsageFormatter {
   static func tokens(_ count: Int) -> String {
     UsageFormatter.tokens(count)
   }
+
+  static func tokenCount(
+    _ count: Int,
+    locale: Locale? = nil
+  ) -> String {
+    L10n.string("\(tokens(count)) tokens", locale: locale)
+  }
 }

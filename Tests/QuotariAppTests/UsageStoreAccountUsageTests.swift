@@ -49,21 +49,24 @@ struct UsageStoreAccountUsageTests {
   }
 
   @Test func expiredCachedUsageIsHiddenFromPicker() throws {
-    let context = try Self.makeContext()
+    let now = Date(timeIntervalSince1970: 1_783_478_400)
+    let context = try Self.makeContext(currentDate: { now })
     defer { context.directory.remove() }
     let stale = UsageSnapshot(
       provider: .codex,
       plan: "Team",
       primary: RateWindow(kind: .session, usedPercent: 70),
       secondary: nil,
-      updatedAt: Date(timeIntervalSinceNow: -UsageStore.cachedAccountUsageLifetime - 1)
+      updatedAt: now.addingTimeInterval(-UsageStore.cachedAccountUsageLifetime - 1)
     )
     context.store.accountUsage = [.codex: [context.work.id: ProviderAccountUsage(snapshot: stale)]]
 
     #expect(context.store.accountUsage(for: context.work) == nil)
   }
 
-  private static func makeContext() throws -> TestContext {
+  private static func makeContext(
+    currentDate: @escaping @Sendable () -> Date = Date.init
+  ) throws -> TestContext {
     let directory = try AccountUsageDirectory()
     let selectionStore = ProviderAccountSelectionStore(
       url: directory.url.appendingPathComponent("ProviderAccounts.json")
@@ -82,6 +85,7 @@ struct UsageStoreAccountUsageTests {
       costEstimator: NoAccountUsageCostEstimator(),
       accountDiscovery: AccountUsageDiscovery(accounts: [.codex: [personal, work]]),
       accountSelectionStore: selectionStore,
+      currentDate: currentDate,
       startsAutomatically: false
     )
     return TestContext(

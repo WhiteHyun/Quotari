@@ -39,6 +39,8 @@ struct DashboardView: View {
 /// wraps this in a scroll view for the menu bar; snapshot tests render it directly.
 struct DashboardContent: View {
   @Environment(UsageStore.self) private var store
+  @State private var expandedInsightsProvider: UsageProvider?
+  @State private var hasInitializedInsightsExpansion = false
 
   let providerStatus: ProviderStatusController
   var showSettings: () -> Void = {}
@@ -58,6 +60,18 @@ struct DashboardContent: View {
       actionRows
     }
     .frame(width: 300)
+    .onChange(of: initialInsightsExpansionProvider, initial: true) { _, provider in
+      guard !hasInitializedInsightsExpansion, let provider else { return }
+      expandedInsightsProvider = provider
+      hasInitializedInsightsExpansion = true
+    }
+    .onChange(of: enabledProviderIDs) { _, providerIDs in
+      guard let expandedInsightsProvider,
+            !providerIDs.contains(expandedInsightsProvider)
+      else { return }
+      self.expandedInsightsProvider = nil
+      hasInitializedInsightsExpansion = false
+    }
   }
 
   private var sectionStack: some View {
@@ -82,6 +96,7 @@ struct DashboardContent: View {
             sourceLabel: store.sourceLabels[descriptor.id],
             error: store.errors[descriptor.id],
             providerStatus: providerStatus,
+            isInsightsExpanded: insightsExpansionBinding(for: descriptor.id),
             showSettings: showSettings
           )
           if index < providers.count - 1 {
@@ -91,6 +106,30 @@ struct DashboardContent: View {
         }
       }
     }
+  }
+
+  private var enabledProviderIDs: [UsageProvider] {
+    store.enabledProviderDescriptors.map(\.id)
+  }
+
+  private var initialInsightsExpansionProvider: UsageProvider? {
+    DashboardInsightsExpansion.initialProvider(
+      enabledProviders: enabledProviderIDs,
+      states: store.usageInsightsStates,
+      isRefreshing: store.isRefreshing
+    )
+  }
+
+  private func insightsExpansionBinding(
+    for provider: UsageProvider
+  ) -> Binding<Bool> {
+    Binding(
+      get: { expandedInsightsProvider == provider },
+      set: { isExpanded in
+        expandedInsightsProvider = isExpanded ? provider : nil
+        hasInitializedInsightsExpansion = true
+      }
+    )
   }
 
   private var actionRows: some View {

@@ -1,6 +1,30 @@
 import QuotariCore
 import SwiftUI
 
+enum ProviderUsageSectionContent: Equatable {
+  case insights
+  case legacyCost
+  case none
+
+  static func resolve(
+    state: UsageInsightsLoadState,
+    hasCost: Bool
+  ) -> Self {
+    if state.summary != nil {
+      return .insights
+    }
+    if hasCost {
+      return .legacyCost
+    }
+    return switch state {
+    case .loading, .empty, .failed:
+      .insights
+    case .idle, .loaded:
+      .none
+    }
+  }
+}
+
 struct ProviderCardView: View {
   @Environment(UsageStore.self) private var store
 
@@ -9,9 +33,11 @@ struct ProviderCardView: View {
   let sourceLabel: String?
   let error: String?
   let providerStatus: ProviderStatusController
+  @Binding var isInsightsExpanded: Bool
   var showSettings: () -> Void = {}
 
   @State private var isShowingAccounts = false
+  @State private var insightsPeriod = UsageInsightsPeriod.sevenDays
 
   private var accent: Color {
     Color(
@@ -32,10 +58,7 @@ struct ProviderCardView: View {
           windowRow(L10n.string("Weekly"), secondary)
         }
         ForEach(snapshot.extraWindows) { named in windowRow(named.title, named.window) }
-        if let cost = snapshot.cost {
-          Divider().padding(.vertical, 2)
-          CostSectionView(cost: cost, accent: accent)
-        }
+        usageSection(cost: snapshot.cost)
         if let error {
           ProviderStaleDataNotice(message: error, retry: retry)
         }
@@ -67,6 +90,28 @@ struct ProviderCardView: View {
 
   private func retry() {
     store.beginRefresh()
+  }
+
+  @ViewBuilder
+  private func usageSection(cost: CostSummary?) -> some View {
+    let state = store.usageInsightsState(for: descriptor.id)
+    switch ProviderUsageSectionContent.resolve(state: state, hasCost: cost != nil) {
+    case .insights:
+      Divider().padding(.vertical, 2)
+      UsageInsightsDisclosure(
+        state: state,
+        accent: accent,
+        isExpanded: $isInsightsExpanded,
+        period: $insightsPeriod
+      )
+    case .legacyCost:
+      if let cost {
+        Divider().padding(.vertical, 2)
+        CostSectionView(cost: cost, accent: accent)
+      }
+    case .none:
+      EmptyView()
+    }
   }
 
   private var header: some View {
