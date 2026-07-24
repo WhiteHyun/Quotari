@@ -46,6 +46,7 @@ extension UsageStore {
     cancelDelayedCredentialRefresh(for: provider)
 
     snapshots[provider] = nil
+    usageInsightsStates[provider] = nil
     errors[provider] = nil
     sourceLabels[provider] = nil
     captureErrors[provider] = nil

@@ -9,9 +9,11 @@ struct ProviderCardView: View {
   let sourceLabel: String?
   let error: String?
   let providerStatus: ProviderStatusController
+  @Binding var isInsightsExpanded: Bool
   var showSettings: () -> Void = {}
 
   @State private var isShowingAccounts = false
+  @State private var insightsPeriod = UsageInsightsPeriod.sevenDays
 
   private var accent: Color {
     Color(
@@ -32,10 +34,7 @@ struct ProviderCardView: View {
           windowRow(L10n.string("Weekly"), secondary)
         }
         ForEach(snapshot.extraWindows) { named in windowRow(named.title, named.window) }
-        if let cost = snapshot.cost {
-          Divider().padding(.vertical, 2)
-          CostSectionView(cost: cost, accent: accent)
-        }
+        usageSection(cost: snapshot.cost)
         if let error {
           ProviderStaleDataNotice(message: error, retry: retry)
         }
@@ -67,6 +66,39 @@ struct ProviderCardView: View {
 
   private func retry() {
     store.beginRefresh()
+  }
+
+  @ViewBuilder
+  private func usageSection(cost: CostSummary?) -> some View {
+    let state = store.usageInsightsState(for: descriptor.id)
+    if state.summary != nil || shouldShowInsightsStatus(state, cost: cost) {
+      Divider().padding(.vertical, 2)
+      UsageInsightsDisclosure(
+        state: state,
+        accent: accent,
+        isExpanded: $isInsightsExpanded,
+        period: $insightsPeriod
+      )
+    } else if let cost {
+      Divider().padding(.vertical, 2)
+      CostSectionView(cost: cost, accent: accent)
+    }
+  }
+
+  private func shouldShowInsightsStatus(
+    _ state: UsageInsightsLoadState,
+    cost: CostSummary?
+  ) -> Bool {
+    if let cost,
+       !cost.sourceDescription.localizedCaseInsensitiveContains("local") {
+      return false
+    }
+    return switch state {
+    case .loading, .empty, .failed:
+      true
+    case .idle, .loaded:
+      false
+    }
   }
 
   private var header: some View {

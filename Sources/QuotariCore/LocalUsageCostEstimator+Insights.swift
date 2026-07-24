@@ -7,7 +7,27 @@ extension LocalUsageCostEstimator {
     now: Date,
     historyDays: Int = 30
   ) -> UsageInsightsSummary? {
-    guard let scope = resolvedInsightsScope(provider: provider, account: account) else { return nil }
+    cachedInsights(
+      provider: provider,
+      account: account,
+      credentialTransition: nil,
+      now: now,
+      historyDays: historyDays
+    )
+  }
+
+  public func cachedInsights(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    credentialTransition: UsageCostCredentialTransition?,
+    now: Date,
+    historyDays: Int = 30
+  ) -> UsageInsightsSummary? {
+    guard let scope = resolvedInsightsScope(
+      provider: provider,
+      account: account,
+      credentialTransition: credentialTransition
+    ) else { return nil }
     let historyDays = normalizedHistoryDays(historyDays)
     let mutationKey = LocalUsageCacheMutationKey(scopeKey: scope.key, historyDays: historyDays)
     return cacheCoordinator.read(key: mutationKey) {

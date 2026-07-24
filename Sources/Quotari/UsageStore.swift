@@ -7,6 +7,7 @@ import SwiftUI
 @Observable
 final class UsageStore {
   var snapshots: [UsageProvider: UsageSnapshot] = [:]
+  var usageInsightsStates: [UsageProvider: UsageInsightsLoadState] = [:]
   var errors: [UsageProvider: String] = [:]
   var sourceLabels: [UsageProvider: String] = [:]
   var accounts: [UsageProvider: [ProviderAccount]] = [:]

@@ -231,6 +231,7 @@ extension UsageStore {
           !Self.isExpired(snapshot)
     else {
       snapshots[provider] = nil
+      usageInsightsStates[provider] = .idle
       errors[provider] = nil
       sourceLabels[provider] = nil
       return
@@ -244,12 +245,21 @@ extension UsageStore {
         historyDays: 30
       )
       : nil
+    let cachedInsights = needsLocalCost
+      ? costEstimator.cachedInsights(
+        provider: provider,
+        account: account,
+        now: snapshot.updatedAt,
+        historyDays: 30
+      )
+      : nil
     snapshots[provider] = Self.displaySnapshot(
       from: snapshot,
       previous: previous,
       cachedCost: cachedCost,
       prefersLocalCost: needsLocalCost
     )
+    usageInsightsStates[provider] = cachedInsights.map(UsageInsightsLoadState.loaded) ?? .idle
     errors[provider] = usage.error
     sourceLabels[provider] = usage.sourceLabel
   }

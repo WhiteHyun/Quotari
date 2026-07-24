@@ -12,6 +12,12 @@ private struct LocalCostRefreshRequest {
   let now: Date
   let reportedCostFallback: CostSummary?
   let cacheHit: Bool
+  let cachedInsights: UsageInsightsSummary?
+}
+
+private struct CachedLocalUsage {
+  let cost: CostSummary?
+  let insights: UsageInsightsSummary?
 }
 
 private enum LocalCostRefreshStart {
@@ -22,6 +28,7 @@ private enum LocalCostRefreshStart {
 private struct CostRefreshContext {
   let provider: UsageProvider
   let account: ProviderAccount?
+  let credentialTransition: UsageCostCredentialTransition?
   let revision: UInt
   let generation: UUID
 }
@@ -45,21 +52,22 @@ extension UsageStore {
     let needsLocalCost = Self.shouldUseLocalCost(existing: usage.cost)
     let selectedAccount = selectedAccounts[provider]
     let credentialTransition = value.usageCostCredentialTransition
-    let cachedCost = needsLocalCost
-      ? costEstimator.cachedCostSummary(
-        provider: provider,
-        account: selectedAccount,
-        credentialTransition: credentialTransition,
-        now: usage.updatedAt,
-        historyDays: 30
-      )
-      : nil
+    let cachedUsage = cachedLocalUsage(
+      provider: provider,
+      account: selectedAccount,
+      credentialTransition: credentialTransition,
+      now: usage.updatedAt,
+      enabled: needsLocalCost
+    )
     snapshots[provider] = Self.displaySnapshot(
       from: usage,
       previous: snapshots[provider],
-      cachedCost: cachedCost,
+      cachedCost: cachedUsage.cost,
       prefersLocalCost: needsLocalCost
     )
+    if let cachedInsights = cachedUsage.insights {
+      usageInsightsStates[provider] = .loaded(cachedInsights)
+    }
     sourceLabels[provider] = value.sourceLabel
     errors[provider] = nil
     updateCostRefresh(
@@ -69,9 +77,37 @@ extension UsageStore {
         credentialTransition: credentialTransition,
         now: usage.updatedAt,
         reportedCostFallback: reportedCostFallback,
-        cacheHit: cachedCost != nil
+        cacheHit: cachedUsage.cost != nil,
+        cachedInsights: cachedUsage.insights
       ),
       needsLocalCost: needsLocalCost
+    )
+  }
+
+  private func cachedLocalUsage(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    credentialTransition: UsageCostCredentialTransition?,
+    now: Date,
+    enabled: Bool
+  ) -> CachedLocalUsage {
+    guard enabled else {
+      return CachedLocalUsage(cost: nil, insights: nil)
+    }
+    return CachedLocalUsage(
+      cost: costEstimator.cachedCostSummary(
+        provider: provider,
+        account: account,
+        credentialTransition: credentialTransition,
+        now: now,
+        historyDays: 30
+      ),
+      insights: cachedUsageInsights(
+        provider: provider,
+        account: account,
+        credentialTransition: credentialTransition,
+        now: now
+      )
     )
   }
 
@@ -96,6 +132,7 @@ extension UsageStore {
     if needsLocalCost {
       refreshCost(request)
     } else {
+      usageInsightsStates[request.provider] = .idle
       lastEmptyCostScans[request.provider] = nil
       latestReportedCostFallbacks[request.provider] = nil
       cancelCostRefresh(for: request.provider)
@@ -106,12 +143,14 @@ extension UsageStore {
     let provider = request.provider
     latestReportedCostFallbacks[provider] = ReportedCostFallback(cost: request.reportedCostFallback)
     guard case let .start(previousTask) = costRefreshStart(for: request) else { return }
+    beginUsageInsightsRefresh(provider: provider, cached: request.cachedInsights)
     lastCostScans[provider] = request.now
     let costEstimator = costEstimator
     let generation = UUID()
     let context = CostRefreshContext(
       provider: provider,
       account: request.account,
+      credentialTransition: request.credentialTransition,
       revision: accountRevisions[provider] ?? 0,
       generation: generation
     )
@@ -187,6 +226,13 @@ extension UsageStore {
           (accountRevisions[provider] ?? 0) == context.revision
     else { return }
     let completionDate = currentDate()
+    finishUsageInsightsRefresh(
+      outcome,
+      provider: provider,
+      account: context.account,
+      credentialTransition: context.credentialTransition,
+      now: completionDate
+    )
     switch outcome {
     case let .updated(cost):
       lastEmptyCostScans[provider] = nil
