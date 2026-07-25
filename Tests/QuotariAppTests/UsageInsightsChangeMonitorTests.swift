@@ -212,15 +212,15 @@ struct UsageInsightsChangeMonitorTests {
     #expect(oldCapture.keys == [oldKey])
   }
 
-  @Test func unchangedObservationsRetryAStreamThatFailedToStart() throws {
+  @Test func recoveringAStreamInvalidatesChangesMissedWhileItWasUnavailable() throws {
     let fixture = try ObservationDirectoryFixture()
     defer { fixture.remove() }
     let key = UsageInsightsObservationKey(provider: .codex, credentialScopeID: nil)
     let attempts = StreamStartAttemptCapture()
+    let capture = UsageInsightsChangeCapture()
     let monitor = FSEventsUsageInsightsChangeMonitor(
       streamStartGate: {
-        attempts.record()
-        return false
+        attempts.recordAndAllowAfterFirstFailure()
       }
     )
     defer { monitor.stop() }
@@ -228,10 +228,13 @@ struct UsageInsightsChangeMonitorTests {
 
     monitor.replaceObservations([observation]) { _ in }
     monitor.recordChanges([])
-    monitor.replaceObservations([observation]) { _ in }
+    monitor.replaceObservations([observation]) { keys in
+      capture.record(keys)
+    }
     monitor.recordChanges([])
 
     #expect(attempts.count == 2)
+    #expect(capture.keys == [key])
   }
 
   @Test func replacingObservationsInvalidatesScopesRetainedAcrossTheStreamGap() throws {
@@ -287,9 +290,10 @@ private final class StreamStartAttemptCapture: @unchecked Sendable {
     lock.withLock { storedCount }
   }
 
-  func record() {
+  func recordAndAllowAfterFirstFailure() -> Bool {
     lock.withLock {
       storedCount += 1
+      return storedCount > 1
     }
   }
 }

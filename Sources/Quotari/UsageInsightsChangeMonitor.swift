@@ -100,11 +100,12 @@ final class FSEventsUsageInsightsChangeMonitor: UsageInsightsChangeMonitoring, @
     }
   }
 
-  private func startStream() {
-    guard stream == nil,
-          !registry.watchPaths.isEmpty,
+  @discardableResult
+  private func startStream() -> Bool {
+    guard stream == nil else { return true }
+    guard !registry.watchPaths.isEmpty,
           streamStartGate?() != false
-    else { return }
+    else { return false }
     var context = FSEventStreamContext(
       version: 0,
       info: Unmanaged.passUnretained(self).toOpaque(),
@@ -125,15 +126,16 @@ final class FSEventsUsageInsightsChangeMonitor: UsageInsightsChangeMonitoring, @
       FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
       0.2,
       flags
-    ) else { return }
+    ) else { return false }
     self.stream = stream
     FSEventStreamSetDispatchQueue(stream, queue)
     guard FSEventStreamStart(stream) else {
       FSEventStreamInvalidate(stream)
       FSEventStreamRelease(stream)
       self.stream = nil
-      return
+      return false
     }
+    return true
   }
 
   private func stopStream() {
@@ -163,7 +165,9 @@ final class FSEventsUsageInsightsChangeMonitor: UsageInsightsChangeMonitoring, @
   private func reconcileRegistry() {
     let nextRegistry = UsageInsightsObservationRegistry(observations: observations)
     guard nextRegistry != registry else {
-      startStream()
+      if stream == nil, startStream(), !registry.allKeys.isEmpty {
+        onChange?(registry.allKeys)
+      }
       return
     }
     let affectedKeys = takePendingChanges()

@@ -223,11 +223,6 @@ extension UsageStore {
     let account = selectedAccounts[provider]
     let credentialTransition = latestUsageCostCredentialTransitions[provider]
     let existingCost = snapshots[provider]?.cost
-    guard Self.canApplyLocalCost(over: existingCost) else { return }
-    let now = currentDate()
-    let cachedInsights = usageInsightsState(for: provider).currentSummary(at: now)
-    let reportedCostFallback = latestReportedCostFallbacks[provider]?.cost
-      ?? Self.reportedCostFallback(from: existingCost)
     costEstimator.invalidateInsights(
       provider: provider,
       account: account,
@@ -236,6 +231,11 @@ extension UsageStore {
     )
     lastCostScans[provider] = nil
     lastEmptyCostScans[provider] = nil
+    guard Self.canApplyLocalCost(over: existingCost) else { return }
+    let now = currentDate()
+    let cachedInsights = usageInsightsState(for: provider).currentSummary(at: now)
+    let reportedCostFallback = latestReportedCostFallbacks[provider]?.cost
+      ?? Self.reportedCostFallback(from: existingCost)
     refreshCost(LocalCostRefreshRequest(
       provider: provider,
       account: account,

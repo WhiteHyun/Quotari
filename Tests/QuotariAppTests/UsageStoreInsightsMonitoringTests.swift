@@ -93,11 +93,16 @@ struct UsageStoreInsightsMonitoringTests {
       cost: reportedCost,
       updatedAt: Self.referenceDay
     )
+    store.lastCostScans[.codex] = Self.referenceDay
+    store.lastEmptyCostScans[.codex] = Self.referenceDay
 
     store.refreshUsageInsightsAfterLocalLogChange(provider: .codex)
 
-    #expect(estimator.invalidatedProviders.isEmpty)
+    #expect(estimator.invalidatedProviders == [.codex])
+    #expect(estimator.invalidationTransitions == [nil])
     #expect(estimator.refreshedProviders.isEmpty)
+    #expect(store.lastCostScans[.codex] == nil)
+    #expect(store.lastEmptyCostScans[.codex] == nil)
     #expect(store.snapshots[.codex]?.cost == reportedCost)
   }
 
