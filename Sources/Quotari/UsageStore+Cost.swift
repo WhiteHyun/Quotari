@@ -231,6 +231,7 @@ extension UsageStore {
     costEstimator.invalidateInsights(
       provider: provider,
       account: account,
+      credentialTransition: credentialTransition,
       historyDays: 30
     )
     lastCostScans[provider] = nil

@@ -188,7 +188,25 @@ extension LocalUsageCostEstimator {
     account: ProviderAccount?,
     historyDays: Int = 30
   ) {
-    guard let scope = resolvedInsightsScope(provider: provider, account: account) else { return }
+    invalidateInsights(
+      provider: provider,
+      account: account,
+      credentialTransition: nil,
+      historyDays: historyDays
+    )
+  }
+
+  public func invalidateInsights(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    credentialTransition: UsageCostCredentialTransition?,
+    historyDays: Int = 30
+  ) {
+    guard let scope = resolvedInsightsScope(
+      provider: provider,
+      account: account,
+      credentialTransition: credentialTransition
+    ) else { return }
     let historyDays = normalizedHistoryDays(historyDays)
     let mutationKey = LocalUsageCacheMutationKey(scopeKey: scope.key, historyDays: historyDays)
     cacheCoordinator.invalidate(key: mutationKey) {

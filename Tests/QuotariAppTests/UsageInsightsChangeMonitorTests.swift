@@ -211,6 +211,57 @@ struct UsageInsightsChangeMonitorTests {
 
     #expect(oldCapture.keys == [oldKey])
   }
+
+  @Test func unchangedObservationsRetryAStreamThatFailedToStart() throws {
+    let fixture = try ObservationDirectoryFixture()
+    defer { fixture.remove() }
+    let key = UsageInsightsObservationKey(provider: .codex, credentialScopeID: nil)
+    let attempts = StreamStartAttemptCapture()
+    let monitor = FSEventsUsageInsightsChangeMonitor(
+      streamStartGate: {
+        attempts.record()
+        return false
+      }
+    )
+    defer { monitor.stop() }
+    let observation = UsageInsightsLogObservation(key: key, roots: [fixture.sessions])
+
+    monitor.replaceObservations([observation]) { _ in }
+    monitor.recordChanges([])
+    monitor.replaceObservations([observation]) { _ in }
+    monitor.recordChanges([])
+
+    #expect(attempts.count == 2)
+  }
+
+  @Test func replacingObservationsInvalidatesScopesRetainedAcrossTheStreamGap() throws {
+    let fixture = try ObservationDirectoryFixture()
+    defer { fixture.remove() }
+    let retainedKey = UsageInsightsObservationKey(provider: .codex, credentialScopeID: nil)
+    let addedKey = UsageInsightsObservationKey(provider: .claude, credentialScopeID: nil)
+    let capture = UsageInsightsChangeCapture()
+    let monitor = FSEventsUsageInsightsChangeMonitor(streamStartGate: { false })
+    defer { monitor.stop() }
+    let retainedObservation = UsageInsightsLogObservation(
+      key: retainedKey,
+      roots: [fixture.sessions]
+    )
+
+    monitor.replaceObservations([retainedObservation]) { _ in }
+    monitor.recordChanges([])
+    monitor.replaceObservations([
+      retainedObservation,
+      UsageInsightsLogObservation(
+        key: addedKey,
+        roots: [fixture.root.appendingPathComponent("claude", isDirectory: true)]
+      ),
+    ]) { keys in
+      capture.record(keys)
+    }
+    monitor.recordChanges([])
+
+    #expect(capture.keys == [retainedKey])
+  }
 }
 
 private final class UsageInsightsChangeCapture: @unchecked Sendable {
@@ -224,6 +275,21 @@ private final class UsageInsightsChangeCapture: @unchecked Sendable {
   func record(_ keys: Set<UsageInsightsObservationKey>) {
     lock.withLock {
       storedKeys.formUnion(keys)
+    }
+  }
+}
+
+private final class StreamStartAttemptCapture: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storedCount = 0
+
+  var count: Int {
+    lock.withLock { storedCount }
+  }
+
+  func record() {
+    lock.withLock {
+      storedCount += 1
     }
   }
 }

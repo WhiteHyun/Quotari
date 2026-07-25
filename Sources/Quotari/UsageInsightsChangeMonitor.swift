@@ -35,6 +35,7 @@ final class FSEventsUsageInsightsChangeMonitor: UsageInsightsChangeMonitoring, @
   private let quietPeriod: UInt64
   private let maximumDelay: UInt64
   private let reconciliationInterval: UInt64
+  private let streamStartGate: (@Sendable () -> Bool)?
   private var stream: FSEventStreamRef?
   private var observations: [UsageInsightsLogObservation] = []
   private var registry = UsageInsightsObservationRegistry(observations: [])
@@ -48,11 +49,13 @@ final class FSEventsUsageInsightsChangeMonitor: UsageInsightsChangeMonitoring, @
   init(
     quietPeriod: Duration = .seconds(2),
     maximumDelay: Duration = .seconds(30),
-    reconciliationInterval: Duration = .seconds(30)
+    reconciliationInterval: Duration = .seconds(30),
+    streamStartGate: (@Sendable () -> Bool)? = nil
   ) {
     self.quietPeriod = quietPeriod.nanosecondsClamped
     self.maximumDelay = max(self.quietPeriod, maximumDelay.nanosecondsClamped)
     self.reconciliationInterval = max(1, reconciliationInterval.nanosecondsClamped)
+    self.streamStartGate = streamStartGate
     queue.setSpecific(key: queueKey, value: 1)
   }
 
@@ -75,14 +78,19 @@ final class FSEventsUsageInsightsChangeMonitor: UsageInsightsChangeMonitoring, @
       }
       let pendingKeys = takePendingChanges()
       let previousOnChange = self.onChange
+      let nextRegistry = UsageInsightsObservationRegistry(observations: observations)
+      let retainedKeys = registry.allKeys.intersection(nextRegistry.allKeys)
       cancelReconciliation()
       stopStream()
       previousOnChange?(pendingKeys)
       self.observations = observations
-      registry = UsageInsightsObservationRegistry(observations: observations)
+      registry = nextRegistry
       self.onChange = onChange
       startStream()
       scheduleReconciliation()
+      if !retainedKeys.isEmpty {
+        onChange(retainedKeys)
+      }
     }
   }
 
@@ -93,7 +101,10 @@ final class FSEventsUsageInsightsChangeMonitor: UsageInsightsChangeMonitoring, @
   }
 
   private func startStream() {
-    guard !registry.watchPaths.isEmpty else { return }
+    guard stream == nil,
+          !registry.watchPaths.isEmpty,
+          streamStartGate?() != false
+    else { return }
     var context = FSEventStreamContext(
       version: 0,
       info: Unmanaged.passUnretained(self).toOpaque(),
@@ -151,7 +162,10 @@ final class FSEventsUsageInsightsChangeMonitor: UsageInsightsChangeMonitoring, @
 
   private func reconcileRegistry() {
     let nextRegistry = UsageInsightsObservationRegistry(observations: observations)
-    guard nextRegistry != registry else { return }
+    guard nextRegistry != registry else {
+      startStream()
+      return
+    }
     let affectedKeys = takePendingChanges()
       .union(registry.allKeys)
       .union(nextRegistry.allKeys)

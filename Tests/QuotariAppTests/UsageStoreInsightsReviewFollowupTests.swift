@@ -105,6 +105,7 @@ struct UsageStoreInsightsReviewFollowupTests {
 
     #expect(estimator.receivedTransition == transition)
     #expect(store.usageInsightsState(for: .claude) == .loaded(summary))
+    #expect(store.latestUsageCostCredentialTransitions[.claude] == transition)
   }
 
   private static func claudeRotationAccounts() -> (ProviderAccount, ProviderAccount) {

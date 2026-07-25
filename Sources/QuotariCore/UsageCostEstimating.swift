@@ -29,6 +29,12 @@ public protocol UsageInsightsAnalyzing: Sendable {
     account: ProviderAccount?,
     historyDays: Int
   )
+  func invalidateInsights(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    credentialTransition: UsageCostCredentialTransition?,
+    historyDays: Int
+  )
 }
 
 public extension UsageInsightsAnalyzing {
@@ -77,6 +83,19 @@ public extension UsageInsightsAnalyzing {
     account: ProviderAccount?,
     historyDays: Int
   ) {}
+
+  func invalidateInsights(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    credentialTransition _: UsageCostCredentialTransition?,
+    historyDays: Int
+  ) {
+    invalidateInsights(
+      provider: provider,
+      account: account,
+      historyDays: historyDays
+    )
+  }
 }
 
 public protocol UsageCostEstimating: UsageInsightsAnalyzing {

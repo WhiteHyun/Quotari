@@ -120,6 +120,7 @@ struct UsageStoreInsightsMonitoringTests {
     }
 
     #expect(estimator.invalidatedProviders == [.claude])
+    #expect(estimator.invalidationTransitions == [transition])
   }
 
   @Test func newerLogEventReplacesAnInFlightScanWithoutPublishingItsResult() async throws {
@@ -235,11 +236,16 @@ private final class RecordingUsageInsightsChangeMonitor: UsageInsightsChangeMoni
 private final class RecordingObservedUsageEstimator: UsageCostEstimating, @unchecked Sendable {
   private let lock = NSLock()
   private var invalidated: [UsageProvider] = []
+  private var invalidationTransitionValues: [UsageCostCredentialTransition?] = []
   private var refreshed: [UsageProvider] = []
   private var transitions: [UsageCostCredentialTransition?] = []
 
   var invalidatedProviders: [UsageProvider] {
     lock.withLock { invalidated }
+  }
+
+  var invalidationTransitions: [UsageCostCredentialTransition?] {
+    lock.withLock { invalidationTransitionValues }
   }
 
   var refreshedProviders: [UsageProvider] {
@@ -287,8 +293,25 @@ private final class RecordingObservedUsageEstimator: UsageCostEstimating, @unche
     account _: ProviderAccount?,
     historyDays _: Int
   ) {
+    recordInvalidation(provider: provider, credentialTransition: nil)
+  }
+
+  func invalidateInsights(
+    provider: UsageProvider,
+    account _: ProviderAccount?,
+    credentialTransition: UsageCostCredentialTransition?,
+    historyDays _: Int
+  ) {
+    recordInvalidation(provider: provider, credentialTransition: credentialTransition)
+  }
+
+  private func recordInvalidation(
+    provider: UsageProvider,
+    credentialTransition: UsageCostCredentialTransition?
+  ) {
     lock.withLock {
       invalidated.append(provider)
+      invalidationTransitionValues.append(credentialTransition)
     }
   }
 }
