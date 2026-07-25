@@ -101,6 +101,27 @@ struct UsageStoreInsightsMonitoringTests {
     #expect(store.snapshots[.codex]?.cost == reportedCost)
   }
 
+  @Test func localLogRefreshCarriesLatestCredentialTransition() async throws {
+    let estimator = RecordingObservedUsageEstimator()
+    let transition = UsageCostCredentialTransition(
+      targetScopeID: "claude:rotated",
+      sourceScopeIDs: ["claude:previous"]
+    )
+    let store = UsageStore.isolatedForTesting(
+      providers: ProviderFixtures.descriptors,
+      costEstimator: estimator,
+      startsAutomatically: false
+    )
+    store.latestUsageCostCredentialTransitions[.claude] = transition
+
+    store.refreshUsageInsightsAfterLocalLogChange(provider: .claude)
+    try await eventually {
+      estimator.credentialTransitions == [transition]
+    }
+
+    #expect(estimator.invalidatedProviders == [.claude])
+  }
+
   @Test func newerLogEventReplacesAnInFlightScanWithoutPublishingItsResult() async throws {
     let firstCost = Self.localCost(tokens: 100)
     let secondCost = Self.localCost(tokens: 200)
@@ -215,6 +236,7 @@ private final class RecordingObservedUsageEstimator: UsageCostEstimating, @unche
   private let lock = NSLock()
   private var invalidated: [UsageProvider] = []
   private var refreshed: [UsageProvider] = []
+  private var transitions: [UsageCostCredentialTransition?] = []
 
   var invalidatedProviders: [UsageProvider] {
     lock.withLock { invalidated }
@@ -222,6 +244,10 @@ private final class RecordingObservedUsageEstimator: UsageCostEstimating, @unche
 
   var refreshedProviders: [UsageProvider] {
     lock.withLock { refreshed }
+  }
+
+  var credentialTransitions: [UsageCostCredentialTransition?] {
+    lock.withLock { transitions }
   }
 
   func usageInsightsObservationRoots(
@@ -245,11 +271,13 @@ private final class RecordingObservedUsageEstimator: UsageCostEstimating, @unche
   func costRefreshOutcome(
     provider: UsageProvider,
     account _: ProviderAccount?,
+    credentialTransition: UsageCostCredentialTransition?,
     now _: Date,
     historyDays _: Int
   ) async -> UsageCostRefreshOutcome {
     lock.withLock {
       refreshed.append(provider)
+      transitions.append(credentialTransition)
     }
     return .confirmedEmpty
   }

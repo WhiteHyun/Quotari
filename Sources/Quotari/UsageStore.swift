@@ -122,6 +122,7 @@ final class UsageStore {
   var lastCostScans: [UsageProvider: Date] = [:]
   var lastEmptyCostScans: [UsageProvider: Date] = [:]
   var latestReportedCostFallbacks: [UsageProvider: ReportedCostFallback] = [:]
+  var latestUsageCostCredentialTransitions: [UsageProvider: UsageCostCredentialTransition] = [:]
   var accountUsageRefreshTasks: [UsageProvider: AccountUsageRefreshTask] = [:]
   var providerFetchTasks: [UsageProvider: ProviderFetchTask] = [:]
   var selectionProviderFetchTasks: [UsageProvider: ProviderFetchTask] = [:]
@@ -294,6 +295,7 @@ extension UsageStore {
     lastCostScans[provider] = nil
     lastEmptyCostScans[provider] = nil
     latestReportedCostFallbacks[provider] = nil
+    latestUsageCostCredentialTransitions[provider] = nil
     reconfigureUsageInsightsMonitoring()
     enqueueSelectionRefresh(
       for: provider,

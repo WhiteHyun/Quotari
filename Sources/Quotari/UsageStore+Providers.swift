@@ -63,6 +63,7 @@ extension UsageStore {
     lastCostScans[provider] = nil
     lastEmptyCostScans[provider] = nil
     latestReportedCostFallbacks[provider] = nil
+    latestUsageCostCredentialTransitions[provider] = nil
 
     selectionRefreshTasks[provider]?.cancel()
     providerFetchTasks[provider]?.task.cancel()

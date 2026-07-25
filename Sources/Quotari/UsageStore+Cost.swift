@@ -53,6 +53,7 @@ extension UsageStore {
     let needsLocalCost = Self.shouldUseLocalCost(existing: usage.cost)
     let selectedAccount = selectedAccounts[provider]
     let credentialTransition = value.usageCostCredentialTransition
+    latestUsageCostCredentialTransitions[provider] = credentialTransition
     let cachedUsage = cachedLocalUsage(
       provider: provider,
       account: selectedAccount,
@@ -138,6 +139,7 @@ extension UsageStore {
       usageInsightsStates[request.provider] = .idle
       lastEmptyCostScans[request.provider] = nil
       latestReportedCostFallbacks[request.provider] = nil
+      latestUsageCostCredentialTransitions[request.provider] = nil
       cancelCostRefresh(for: request.provider)
     }
   }
@@ -219,6 +221,7 @@ extension UsageStore {
 
   func refreshUsageInsightsAfterLocalLogChange(provider: UsageProvider) {
     let account = selectedAccounts[provider]
+    let credentialTransition = latestUsageCostCredentialTransitions[provider]
     let existingCost = snapshots[provider]?.cost
     guard Self.canApplyLocalCost(over: existingCost) else { return }
     let now = currentDate()
@@ -235,7 +238,7 @@ extension UsageStore {
     refreshCost(LocalCostRefreshRequest(
       provider: provider,
       account: account,
-      credentialTransition: nil,
+      credentialTransition: credentialTransition,
       now: now,
       reportedCostFallback: reportedCostFallback,
       cacheHit: false,

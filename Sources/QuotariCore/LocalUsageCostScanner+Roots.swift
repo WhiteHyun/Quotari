@@ -16,23 +16,6 @@ extension LocalUsageCostScanner {
     return existing.isEmpty ? configured : existing
   }
 
-  func observationRoots(provider: UsageProvider, account: ProviderAccount?) -> [URL] {
-    let configured = configuredRoots(provider: provider, account: account)
-    guard provider == .claude,
-          usesAutomaticRootFamily(provider: provider, account: account),
-          environment["CLAUDE_CONFIG_DIR"]?
-          .trimmingCharacters(in: .whitespacesAndNewlines)
-          .isEmpty != false
-    else {
-      return configured
-    }
-
-    return normalized(
-      configured + ClaudeDesktopProjectRoots.sessionRoots(homeDirectory: homeDirectory),
-      resolvesSymlinks: true
-    )
-  }
-
   func scopeIdentityRoots(provider: UsageProvider, account: ProviderAccount?) -> [URL] {
     guard provider == .claude,
           usesAutomaticRootFamily(provider: provider, account: account),
@@ -219,6 +202,6 @@ public extension LocalUsageCostEstimator {
       environment: environment,
       homeDirectory: homeDirectory
     )
-    .observationRoots(provider: provider, account: account)
+    .scopeIdentityRoots(provider: provider, account: account)
   }
 }

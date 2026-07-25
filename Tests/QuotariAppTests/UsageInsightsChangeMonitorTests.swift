@@ -49,6 +49,41 @@ struct UsageInsightsChangeMonitorTests {
     ) == [key])
   }
 
+  @Test func registryDoesNotRecursivelyWatchAnExcludedBroadAncestor() throws {
+    let fixture = try ObservationDirectoryFixture(createsSessions: false)
+    defer { fixture.remove() }
+    let key = UsageInsightsObservationKey(provider: .codex, credentialScopeID: nil)
+    let registry = UsageInsightsObservationRegistry(
+      observations: [
+        UsageInsightsLogObservation(key: key, roots: [fixture.sessions]),
+      ],
+      excludedAncestorPaths: [fixture.root.path]
+    )
+
+    #expect(registry.watchPaths.isEmpty)
+  }
+
+  @Test func registryReResolvesARetargetedSymlink() throws {
+    let fixture = try SymlinkObservationFixture()
+    defer { fixture.remove() }
+    let key = UsageInsightsObservationKey(provider: .codex, credentialScopeID: nil)
+    let observation = UsageInsightsLogObservation(
+      key: key,
+      roots: [fixture.link.appendingPathComponent("sessions", isDirectory: true)]
+    )
+    let first = UsageInsightsObservationRegistry(observations: [observation])
+
+    try fixture.retargetLink()
+    let second = UsageInsightsObservationRegistry(observations: [observation])
+
+    #expect(first != second)
+    #expect(second.watchPaths.contains(fixture.secondSessions.path))
+    #expect(second.affectedKeys(
+      path: fixture.secondSessions.appendingPathComponent("session.jsonl").path,
+      flags: FSEventStreamEventFlags(kFSEventStreamEventFlagItemModified)
+    ) == [key])
+  }
+
   @Test func droppedEventInvalidatesEveryObservedScope() throws {
     let fixture = try ObservationDirectoryFixture()
     defer { fixture.remove() }
@@ -122,6 +157,60 @@ struct UsageInsightsChangeMonitorTests {
     }
     #expect(capture.keys.contains(key))
   }
+
+  @Test func monitorReconcilesARetargetedSymlinkAndInvalidatesItsScope() async throws {
+    let fixture = try SymlinkObservationFixture()
+    defer { fixture.remove() }
+    let key = UsageInsightsObservationKey(provider: .codex, credentialScopeID: nil)
+    let capture = UsageInsightsChangeCapture()
+    let monitor = FSEventsUsageInsightsChangeMonitor(
+      quietPeriod: .milliseconds(20),
+      maximumDelay: .milliseconds(100),
+      reconciliationInterval: .milliseconds(20)
+    )
+    defer { monitor.stop() }
+    monitor.replaceObservations([
+      UsageInsightsLogObservation(
+        key: key,
+        roots: [fixture.link.appendingPathComponent("sessions", isDirectory: true)]
+      ),
+    ]) { keys in
+      capture.record(keys)
+    }
+    try await Task.sleep(for: .milliseconds(100))
+
+    try fixture.retargetLink()
+
+    for _ in 0 ..< 200 {
+      if capture.keys.contains(key) {
+        break
+      }
+      try await Task.sleep(for: .milliseconds(25))
+    }
+    #expect(capture.keys.contains(key))
+  }
+
+  @Test func replacingObservationsDeliversPendingChangesToThePreviousCallback() {
+    let oldKey = UsageInsightsObservationKey(provider: .codex, credentialScopeID: nil)
+    let newKey = UsageInsightsObservationKey(provider: .claude, credentialScopeID: nil)
+    let oldCapture = UsageInsightsChangeCapture()
+    let monitor = FSEventsUsageInsightsChangeMonitor(
+      quietPeriod: .seconds(10),
+      maximumDelay: .seconds(10)
+    )
+    defer { monitor.stop() }
+    monitor.replaceObservations([]) { keys in
+      oldCapture.record(keys)
+    }
+    monitor.recordChanges([oldKey])
+
+    monitor.replaceObservations([
+      UsageInsightsLogObservation(key: newKey, roots: []),
+    ]) { _ in }
+    monitor.recordChanges([])
+
+    #expect(oldCapture.keys == [oldKey])
+  }
 }
 
 private final class UsageInsightsChangeCapture: @unchecked Sendable {
@@ -150,6 +239,38 @@ private struct ObservationDirectoryFixture {
     try FileManager.default.createDirectory(
       at: createsSessions ? sessions : root,
       withIntermediateDirectories: true
+    )
+  }
+
+  func remove() {
+    try? FileManager.default.removeItem(at: root)
+  }
+}
+
+private struct SymlinkObservationFixture {
+  let root: URL
+  let link: URL
+  let firstSessions: URL
+  let secondSessions: URL
+
+  init() throws {
+    root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("quotari-symlink-observer-\(UUID().uuidString)", isDirectory: true)
+    let first = root.appendingPathComponent("first", isDirectory: true)
+    let second = root.appendingPathComponent("second", isDirectory: true)
+    firstSessions = first.appendingPathComponent("sessions", isDirectory: true)
+    secondSessions = second.appendingPathComponent("sessions", isDirectory: true)
+    link = root.appendingPathComponent("current", isDirectory: true)
+    try FileManager.default.createDirectory(at: firstSessions, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: secondSessions, withIntermediateDirectories: true)
+    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: first)
+  }
+
+  func retargetLink() throws {
+    try FileManager.default.removeItem(at: link)
+    try FileManager.default.createSymbolicLink(
+      at: link,
+      withDestinationURL: secondSessions.deletingLastPathComponent()
     )
   }
 
