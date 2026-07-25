@@ -39,7 +39,7 @@ struct QuotaBarView: View {
     let fillWidth = trackWidth * fraction
     if fraction > 0, fillWidth < 4 {
       Capsule()
-        .fill(Theme.quotaCritical)
+        .fill(color(for: thresholds.zone(forRemainingPercent: remainingPercent)))
         .frame(width: 4, height: 5)
     } else {
       let segments = thresholds.segments(forRemainingPercent: remainingPercent)
@@ -57,6 +57,17 @@ struct QuotaBarView: View {
       .frame(width: fillWidth, height: 5, alignment: .leading)
       .clipShape(Capsule())
       .animation(.easeOut(duration: 0.4), value: fraction)
+    }
+  }
+
+  private func color(for zone: QuotaBarZone) -> Color {
+    switch zone {
+    case .critical:
+      Theme.quotaCritical
+    case .warning:
+      Theme.quotaWarning
+    case .provider:
+      accent
     }
   }
 }

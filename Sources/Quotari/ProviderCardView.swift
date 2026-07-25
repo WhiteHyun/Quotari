@@ -219,7 +219,7 @@ struct ProviderCardView: View {
   @ViewBuilder
   private func windowRow(_ title: String, _ window: RateWindow) -> some View {
     let pace = UsagePace.compute(window: window, now: Date())
-    let thresholds = activeQuotaThresholds
+    let thresholds = activeQuotaThresholds?.applicable(to: window.kind)
     VStack(alignment: .leading, spacing: 5) {
       Text(title).font(.subheadline)
       QuotaBarView(

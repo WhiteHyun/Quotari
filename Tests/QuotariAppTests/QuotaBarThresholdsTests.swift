@@ -42,6 +42,31 @@ struct QuotaBarThresholdsTests {
     #expect(critical.providerFraction == 0)
   }
 
+  @Test func derivesMinimumFillColorFromTheActiveZone() throws {
+    let thresholds = try #require(QuotaBarThresholds(
+      preferences: QuotaNotificationPreferences(
+        isEnabled: true,
+        warningThreshold: 80,
+        criticalThreshold: 100
+      ),
+      provider: .codex
+    ))
+
+    #expect(thresholds.zone(forRemainingPercent: 0.5) == .warning)
+    #expect(thresholds.zone(forRemainingPercent: 30) == .provider)
+  }
+
+  @Test func limitsAlertZonesToPolicyEvaluatedWindows() throws {
+    let thresholds = try #require(QuotaBarThresholds(
+      preferences: enabledPreferences(),
+      provider: .codex
+    ))
+
+    #expect(thresholds.applicable(to: .session) == thresholds)
+    #expect(thresholds.applicable(to: .weekly) == thresholds)
+    #expect(thresholds.applicable(to: .custom) == nil)
+  }
+
   @Test func hidesRiskZonesWhenNotificationsAreDisabled() {
     let preferences = QuotaNotificationPreferences(
       isEnabled: false,
