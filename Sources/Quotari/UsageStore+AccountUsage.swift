@@ -292,8 +292,15 @@ extension UsageStore {
     switch result {
     case let .success(value):
       _ = recordAccountUsageSuccess(value, provider: account.provider, account: account)
+      if selectedAccounts[account.provider]?.id == account.id {
+        latestUsageCostCredentialTransitions[account.provider] = credentialTransition
+      }
     case let .failure(error):
       recordAccountUsageFailure(error, provider: account.provider, account: account)
+      if selectedAccounts[account.provider]?.id == account.id,
+         let credentialTransition {
+        latestUsageCostCredentialTransitions[account.provider] = credentialTransition
+      }
     }
     syncSelectedAccountUsage(
       for: account,

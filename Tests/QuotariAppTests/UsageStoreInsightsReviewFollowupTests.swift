@@ -105,6 +105,33 @@ struct UsageStoreInsightsReviewFollowupTests {
 
     #expect(estimator.receivedTransition == transition)
     #expect(store.usageInsightsState(for: .claude) == .loaded(summary))
+    #expect(store.latestUsageCostCredentialTransitions[.claude] == transition)
+  }
+
+  @Test func failedSelectedAccountRefreshRetainsCredentialTransitionEvidence() throws {
+    let now = Date(timeIntervalSince1970: 1_783_478_400)
+    let (account, rotated) = Self.claudeRotationAccounts()
+    let transition = UsageCostCredentialTransition(
+      targetScopeID: rotated.credentialScopeID,
+      sourceScopeIDs: [account.credentialScopeID]
+    )
+    let selectionStore = ProviderAccountSelectionStore.temporaryForTesting()
+    try selectionStore.save([.claude: account])
+    let store = UsageStore.isolatedForTesting(
+      providers: [ProviderFixtures.descriptor(for: .claude)],
+      costEstimator: FixedCachedInsightsEstimator(summary: Self.summary(provider: .claude, now: now)),
+      accountSelectionStore: selectionStore,
+      startsAutomatically: false
+    )
+    let error = ProviderFetchTransitionError(
+      underlying: ProviderFetchError.emptyUsage(.claude),
+      credentialTransitionTargetScopeID: transition.targetScopeID,
+      credentialTransitionSourceScopeIDs: transition.sourceScopeIDs
+    )
+
+    store.applyAccountUsageResult(.failure(error), account: account)
+
+    #expect(store.latestUsageCostCredentialTransitions[.claude] == transition)
   }
 
   private static func claudeRotationAccounts() -> (ProviderAccount, ProviderAccount) {

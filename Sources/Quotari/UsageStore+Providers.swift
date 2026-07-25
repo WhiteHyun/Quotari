@@ -35,6 +35,7 @@ extension UsageStore {
     if enabled {
       providersNeedingMonitoredUsageRestore.insert(provider)
       enqueueQuotaNotificationScopeRestore(for: provider)
+      reconfigureUsageInsightsMonitoring()
       enqueueSelectionRefresh(for: provider, waitingForProviderActivity: true)
     } else {
       disableProvider(provider)
@@ -62,6 +63,7 @@ extension UsageStore {
     lastCostScans[provider] = nil
     lastEmptyCostScans[provider] = nil
     latestReportedCostFallbacks[provider] = nil
+    latestUsageCostCredentialTransitions[provider] = nil
 
     selectionRefreshTasks[provider]?.cancel()
     providerFetchTasks[provider]?.task.cancel()
@@ -69,6 +71,7 @@ extension UsageStore {
     accountUsageRefreshTasks[provider]?.task.cancel()
     quotaNotifications.setActiveLogicalAccountID(nil, for: provider)
     reconcileMenuBarUsageSource()
+    reconfigureUsageInsightsMonitoring()
   }
 
   func reconcileMenuBarUsageSource() {

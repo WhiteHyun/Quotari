@@ -84,6 +84,7 @@ final class UsageStore {
 
   let providers: [ProviderDescriptor]
   let costEstimator: any UsageCostEstimating
+  let usageInsightsChangeMonitor: any UsageInsightsChangeMonitoring
   let accountDiscovery: any ProviderAccountDiscovering
   private let accountSelectionStore: ProviderAccountSelectionStore
   let accountMonitoringStore: ProviderAccountMonitoringStore
@@ -121,6 +122,7 @@ final class UsageStore {
   var lastCostScans: [UsageProvider: Date] = [:]
   var lastEmptyCostScans: [UsageProvider: Date] = [:]
   var latestReportedCostFallbacks: [UsageProvider: ReportedCostFallback] = [:]
+  var latestUsageCostCredentialTransitions: [UsageProvider: UsageCostCredentialTransition] = [:]
   var accountUsageRefreshTasks: [UsageProvider: AccountUsageRefreshTask] = [:]
   var providerFetchTasks: [UsageProvider: ProviderFetchTask] = [:]
   var selectionProviderFetchTasks: [UsageProvider: ProviderFetchTask] = [:]
@@ -163,6 +165,7 @@ final class UsageStore {
   init(
     providers: [ProviderDescriptor] = ProviderRegistry.all,
     costEstimator: any UsageCostEstimating = LocalUsageCostEstimator(),
+    usageInsightsChangeMonitor: any UsageInsightsChangeMonitoring = FSEventsUsageInsightsChangeMonitor(),
     accountDiscovery: any ProviderAccountDiscovering = ProviderAccountDiscovery(),
     accountSelectionStore: ProviderAccountSelectionStore = ProviderAccountSelectionStore(),
     accountMonitoringStore: ProviderAccountMonitoringStore? = nil,
@@ -192,6 +195,7 @@ final class UsageStore {
     assert(ProviderRegistry.isComplete, "Every UsageProvider case needs a descriptor")
     self.providers = providers
     self.costEstimator = costEstimator
+    self.usageInsightsChangeMonitor = usageInsightsChangeMonitor
     self.accountDiscovery = accountDiscovery
     self.accountSelectionStore = accountSelectionStore
     self.accountMonitoringStore = accountMonitoringStore ?? ProviderAccountMonitoringStore(
@@ -246,6 +250,10 @@ final class UsageStore {
       }
     }
   }
+
+  deinit {
+    usageInsightsChangeMonitor.stop()
+  }
 }
 
 extension UsageStore {
@@ -287,6 +295,8 @@ extension UsageStore {
     lastCostScans[provider] = nil
     lastEmptyCostScans[provider] = nil
     latestReportedCostFallbacks[provider] = nil
+    latestUsageCostCredentialTransitions[provider] = nil
+    reconfigureUsageInsightsMonitoring()
     enqueueSelectionRefresh(
       for: provider,
       interaction: refreshInteraction,

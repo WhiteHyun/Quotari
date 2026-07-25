@@ -193,6 +193,42 @@ extension LocalUsageInsightsEstimatorTests {
     expectNoDifference(refreshedCost, previousCost)
   }
 
+  @Test func provenCredentialRotationInvalidatesTheResolvedSharedScope() async throws {
+    let fixture = try ClaudeInsightsEstimatorFixture()
+    defer { fixture.cleanup() }
+    let estimator = fixture.estimator()
+    let previousAccount = fixture.account(identity: "current-token")
+    _ = await estimator.insights(
+      provider: .claude,
+      account: previousAccount,
+      now: fixture.now,
+      historyDays: 30
+    )
+    try Data(
+      #"{"claudeAiOauth":{"accessToken":"rotated-token","refreshToken":"refresh"}}"#.utf8
+    ).write(to: fixture.config.appendingPathComponent(".credentials.json"))
+    let rotatedAccount = fixture.account(identity: "rotated-token")
+    let transition = UsageCostCredentialTransition(
+      targetScopeID: rotatedAccount.credentialScopeID,
+      sourceScopeIDs: [previousAccount.credentialScopeID]
+    )
+
+    estimator.invalidateInsights(
+      provider: .claude,
+      account: previousAccount,
+      credentialTransition: transition,
+      historyDays: 30
+    )
+
+    #expect(estimator.cachedCostSummary(
+      provider: .claude,
+      account: previousAccount,
+      credentialTransition: transition,
+      now: fixture.now,
+      historyDays: 30
+    ) == nil)
+  }
+
   @Test func unrelatedCredentialTransitionCannotClaimAReplacedClaudeSlot() async throws {
     let fixture = try ClaudeInsightsEstimatorFixture()
     defer { fixture.cleanup() }

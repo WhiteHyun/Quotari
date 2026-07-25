@@ -192,3 +192,16 @@ extension LocalUsageCostScanner {
     return resolvesSymlinks ? standardized.resolvingSymlinksInPath() : standardized
   }
 }
+
+public extension LocalUsageCostEstimator {
+  func usageInsightsObservationRoots(
+    provider: UsageProvider,
+    account: ProviderAccount?
+  ) -> [URL] {
+    LocalUsageCostScanner(
+      environment: environment,
+      homeDirectory: homeDirectory
+    )
+    .scopeIdentityRoots(provider: provider, account: account)
+  }
+}

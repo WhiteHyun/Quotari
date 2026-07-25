@@ -1,6 +1,10 @@
 import Foundation
 
 public protocol UsageInsightsAnalyzing: Sendable {
+  func usageInsightsObservationRoots(
+    provider: UsageProvider,
+    account: ProviderAccount?
+  ) -> [URL]
   func cachedInsights(
     provider: UsageProvider,
     account: ProviderAccount?,
@@ -25,9 +29,22 @@ public protocol UsageInsightsAnalyzing: Sendable {
     account: ProviderAccount?,
     historyDays: Int
   )
+  func invalidateInsights(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    credentialTransition: UsageCostCredentialTransition?,
+    historyDays: Int
+  )
 }
 
 public extension UsageInsightsAnalyzing {
+  func usageInsightsObservationRoots(
+    provider: UsageProvider,
+    account: ProviderAccount?
+  ) -> [URL] {
+    []
+  }
+
   func cachedInsights(
     provider: UsageProvider,
     account: ProviderAccount?,
@@ -66,6 +83,19 @@ public extension UsageInsightsAnalyzing {
     account: ProviderAccount?,
     historyDays: Int
   ) {}
+
+  func invalidateInsights(
+    provider: UsageProvider,
+    account: ProviderAccount?,
+    credentialTransition _: UsageCostCredentialTransition?,
+    historyDays: Int
+  ) {
+    invalidateInsights(
+      provider: provider,
+      account: account,
+      historyDays: historyDays
+    )
+  }
 }
 
 public protocol UsageCostEstimating: UsageInsightsAnalyzing {
