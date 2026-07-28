@@ -166,6 +166,35 @@ struct LocalUsageFileScanCacheTests {
       fixture.secondUsageURL.lastPathComponent,
     ])
   }
+
+  @Test func cacheHitIsRevalidatedBeforeReturningCachedRecords() throws {
+    let fixture = try FileScanFixture()
+    defer { fixture.cleanup() }
+    _ = fixture.scanner(capture: FileParseCapture()).scan(
+      provider: .codex,
+      now: fixture.now,
+      historyDays: 30
+    )
+    let capture = FileParseCapture()
+    let scanner = fixture.scanner(
+      capture: capture,
+      onCacheLoaded: { url in
+        guard url.lastPathComponent == fixture.firstUsageURL.lastPathComponent else {
+          return
+        }
+        try? fixture.rewriteUsage(to: url, input: 900)
+      }
+    )
+
+    let rescanned = scanner.scan(
+      provider: .codex,
+      now: fixture.now,
+      historyDays: 30
+    )
+
+    #expect(rescanned.totalInputTokens == 1100)
+    #expect(capture.paths == [fixture.firstUsageURL.lastPathComponent])
+  }
 }
 
 private final class FileParseCapture: @unchecked Sendable {
@@ -206,7 +235,8 @@ private struct FileScanFixture {
 
   func scanner(
     capture: FileParseCapture,
-    timeZone: TimeZone? = nil
+    timeZone: TimeZone? = nil,
+    onCacheLoaded: (@Sendable (URL) -> Void)? = nil
   ) -> LocalUsageCostScanner {
     var calendar = Calendar(identifier: .gregorian)
     if let timeZone {
@@ -217,7 +247,8 @@ private struct FileScanFixture {
       homeDirectory: root,
       calendar: calendar,
       fileScanCacheDirectory: cacheDirectory,
-      onFileParsed: capture.record
+      onFileParsed: capture.record,
+      onCacheLoaded: onCacheLoaded
     )
   }
 

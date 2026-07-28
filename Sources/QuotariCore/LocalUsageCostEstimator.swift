@@ -163,6 +163,7 @@ struct LocalUsageCostScanner {
   let fileManager: FileManager
   let fileScanCache: LocalUsageFileScanCache?
   let onFileParsed: (@Sendable (URL) -> Void)?
+  let onCacheLoaded: (@Sendable (URL) -> Void)?
   private let calendar: Calendar
 
   init(
@@ -171,7 +172,8 @@ struct LocalUsageCostScanner {
     fileManager: FileManager = .default,
     calendar: Calendar = Calendar(identifier: .gregorian),
     fileScanCacheDirectory: URL? = nil,
-    onFileParsed: (@Sendable (URL) -> Void)? = nil
+    onFileParsed: (@Sendable (URL) -> Void)? = nil,
+    onCacheLoaded: (@Sendable (URL) -> Void)? = nil
   ) {
     self.environment = environment
     self.homeDirectory = homeDirectory
@@ -181,6 +183,7 @@ struct LocalUsageCostScanner {
       LocalUsageFileScanCache(cacheDirectory: $0, fileManager: fileManager)
     }
     self.onFileParsed = onFileParsed
+    self.onCacheLoaded = onCacheLoaded
   }
 
   func scan(
@@ -277,43 +280,6 @@ struct LocalUsageCostScanner {
       }
     }
     return .success(scans)
-  }
-
-  private func scanFile(
-    _ file: URL,
-    provider: UsageProvider,
-    range: DayRange,
-    parser: (URL) -> LocalUsageFileParseOutcome
-  ) -> LocalUsageFileParseOutcome {
-    guard !Task.isCancelled else { return .cancelled }
-    guard let fingerprint = LocalUsageFileFingerprint(url: file) else {
-      return .failure
-    }
-    if let cached = fileScanCache?.load(
-      provider: provider,
-      url: file,
-      fingerprint: fingerprint,
-      timeZoneIdentifier: range.calendar.timeZone.identifier
-    ) {
-      return .success(cached.filtered(to: range))
-    }
-    switch parser(file) {
-    case let .success(scan):
-      guard !Task.isCancelled else { return .cancelled }
-      onFileParsed?(file)
-      fileScanCache?.save(
-        scan,
-        provider: provider,
-        url: file,
-        fingerprint: fingerprint,
-        timeZoneIdentifier: range.calendar.timeZone.identifier
-      )
-      return .success(scan.filtered(to: range))
-    case .cancelled:
-      return .cancelled
-    case .failure:
-      return .failure
-    }
   }
 
   private func aggregate(_ scans: [LocalUsageFileScan]) -> LocalUsageScanOutcome {
