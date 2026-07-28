@@ -96,6 +96,7 @@ struct ClaudeUsageRateLimitTests {
     let gateNow = contextNow.addingTimeInterval(600)
     let gate = ClaudeUsageRateLimitGate(now: { gateNow })
     await gate.recordRateLimit(
+      for: "token",
       retryAfter: gateNow.addingTimeInterval(-1),
       now: contextNow
     )
@@ -133,18 +134,22 @@ struct ClaudeUsageRateLimitTests {
       Issue.record("Unexpected error: \(error)")
     }
 
-    #expect(await gate.blockedUntil(now: gateNow) == gateNow.addingTimeInterval(300))
+    #expect(
+      await gate.blockedUntil(for: "token", now: gateNow) == gateNow.addingTimeInterval(300)
+    )
   }
 
   @Test func zeroOrElapsedRetryAfterDoesNotImposeDefaultCooldown() async {
     let now = Date(timeIntervalSince1970: 1_783_478_400)
     let gate = ClaudeUsageRateLimitGate(defaultCooldown: 300, now: { now })
-    await gate.recordRateLimit(retryAfter: nil)
-    #expect(await gate.blockedUntil(now: now) == now.addingTimeInterval(300))
+    await gate.recordRateLimit(for: "token", retryAfter: nil)
+    #expect(
+      await gate.blockedUntil(for: "token", now: now) == now.addingTimeInterval(300)
+    )
 
-    await gate.recordRateLimit(retryAfter: now)
+    await gate.recordRateLimit(for: "token", retryAfter: now)
 
-    #expect(await gate.blockedUntil(now: now) == nil)
+    #expect(await gate.blockedUntil(for: "token", now: now) == nil)
   }
 
   @Test func persistedCooldownSurvivesGateRecreation() async throws {
@@ -155,13 +160,72 @@ struct ClaudeUsageRateLimitTests {
     let blockedUntil = now.addingTimeInterval(120)
 
     let first = ClaudeUsageRateLimitGate(persistence: .suite(suiteName))
-    await first.recordRateLimit(retryAfter: blockedUntil, now: now)
+    await first.recordRateLimit(for: "secret-token", retryAfter: blockedUntil, now: now)
 
     let relaunched = ClaudeUsageRateLimitGate(persistence: .suite(suiteName))
-    #expect(await relaunched.blockedUntil(now: now) == blockedUntil)
-    await relaunched.recordSuccess()
+    #expect(await relaunched.blockedUntil(for: "secret-token", now: now) == blockedUntil)
+    #expect(!defaults.dictionaryRepresentation().keys.contains { $0.contains("secret-token") })
+    await relaunched.recordSuccess(for: "secret-token")
     let cleared = ClaudeUsageRateLimitGate(persistence: .suite(suiteName))
-    #expect(await cleared.blockedUntil(now: now) == nil)
+    #expect(await cleared.blockedUntil(for: "secret-token", now: now) == nil)
+  }
+
+  @Test func rateLimitCooldownIsIsolatedByCredential() async throws {
+    let now = Date(timeIntervalSince1970: 1_783_478_400)
+    let transport = SequencedClaudeUsageTransport([
+      .init(status: 429),
+      .init(status: 200, body: Self.usageJSON),
+    ])
+    let gate = ClaudeUsageRateLimitGate(defaultCooldown: 300, now: { now })
+    let first = Self.strategy(transport: transport, gate: gate, accessToken: "token-a")
+    let second = Self.strategy(transport: transport, gate: gate, accessToken: "token-b")
+
+    await #expect(throws: ProviderHTTPError.self) {
+      _ = try await first.fetch(ProviderFetchContext(provider: .claude, now: now))
+    }
+    _ = try await second.fetch(ProviderFetchContext(provider: .claude, now: now))
+    await #expect(throws: ProviderHTTPError.self) {
+      _ = try await first.fetch(ProviderFetchContext(
+        provider: .claude,
+        now: now.addingTimeInterval(60)
+      ))
+    }
+
+    #expect(await transport.requestCount == 2)
+  }
+
+  @Test func invalidGrantTakesPriorityOverAUsageRateLimit() async {
+    let now = Date(timeIntervalSince1970: 1_783_478_400)
+    let transport = SequencedClaudeUsageTransport([.init(status: 429)])
+    let strategy = ClaudeUsageStrategy(
+      transport: transport,
+      resolveCredentials: {
+        ResolvedClaudeCredentials(
+          credentials: ClaudeCredentials(
+            accessToken: "expired-token",
+            refreshToken: "invalid-refresh-token",
+            expiresAt: now.addingTimeInterval(-60)
+          ),
+          source: .claudeEnvironment(name: "QUOTARI_INVALID_GRANT_TEST")
+        )
+      },
+      refresher: StubRefresher(result: .failure(
+        ClaudeTokenRefreshError.reauthenticationRequired
+      )),
+      refreshCoordinator: ClaudeTokenRefreshCoordinator(),
+      rateLimitGate: ClaudeUsageRateLimitGate()
+    )
+
+    do {
+      _ = try await strategy.fetch(ProviderFetchContext(provider: .claude, now: now))
+      Issue.record("Expected the terminal refresh error")
+    } catch let error as ClaudeTokenRefreshError {
+      #expect(error.requiresReauthentication)
+      #expect(error.localizedDescription.contains("login expired"))
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+    #expect(await transport.requestCount == 0)
   }
 
   @Test func rateLimitMessageExplainsAutomaticAndManualRetry() {
@@ -172,13 +236,14 @@ struct ClaudeUsageRateLimitTests {
 
   private static func strategy(
     transport: any ProviderHTTPTransport,
-    gate: ClaudeUsageRateLimitGate
+    gate: ClaudeUsageRateLimitGate,
+    accessToken: String = "token"
   ) -> ClaudeUsageStrategy {
     ClaudeUsageStrategy(
       transport: transport,
       resolveCredentials: {
         ResolvedClaudeCredentials(
-          credentials: ClaudeCredentials(accessToken: "token"),
+          credentials: ClaudeCredentials(accessToken: accessToken),
           source: .claudeEnvironment(name: "QUOTARI_TEST")
         )
       },

@@ -103,8 +103,23 @@ struct ClaudeTokenRefresherTests {
     }
   }
 
-  @Test func rejectedRefreshSurfacesHTTPError() async {
-    let transport = RefreshStubTransport(json: #"{"error": "invalid_grant"}"#, status: 401)
+  @Test(arguments: [400, 401])
+  func invalidGrantRequiresReauthentication(status: Int) async {
+    let transport = RefreshStubTransport(json: #"{"error": "invalid_grant"}"#, status: status)
+    do {
+      _ = try await ClaudeTokenRefresher(transport: transport)
+        .refresh(refreshToken: "ref", scopes: [], now: Date())
+      Issue.record("Expected invalid_grant to require reauthentication")
+    } catch let error as ClaudeTokenRefreshError {
+      #expect(error.requiresReauthentication)
+      #expect(error.localizedDescription.contains("login expired"))
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+  }
+
+  @Test func unrelatedRejectedRefreshKeepsHTTPError() async {
+    let transport = RefreshStubTransport(json: #"{"error": "temporarily_unavailable"}"#, status: 401)
     await #expect(throws: ProviderHTTPError.self) {
       _ = try await ClaudeTokenRefresher(transport: transport)
         .refresh(refreshToken: "ref", scopes: [], now: Date())

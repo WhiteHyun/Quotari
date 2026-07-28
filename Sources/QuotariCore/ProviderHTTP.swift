@@ -57,6 +57,22 @@ public extension ProviderHTTPTransport {
     body: Data,
     headers: [String: String] = [:]
   ) async throws -> Data {
+    let (data, response) = try await postJSONResponse(
+      url: url,
+      body: body,
+      headers: headers
+    )
+    return try payload(data: data, response: response)
+  }
+
+  /// Performs the same JSON POST without interpreting the status code. OAuth
+  /// refreshers use this to classify structured errors such as `invalid_grant`
+  /// before falling back to the provider-wide HTTP mapping.
+  internal func postJSONResponse(
+    url: URL,
+    body: Data,
+    headers: [String: String] = [:]
+  ) async throws -> (Data, HTTPURLResponse) {
     var request = URLRequest(url: url)
     request.httpMethod = "POST"
     request.httpBody = body
@@ -65,11 +81,10 @@ public extension ProviderHTTPTransport {
     for (key, value) in headers {
       request.setValue(value, forHTTPHeaderField: key)
     }
-    let (data, response) = try await data(for: request)
-    return try payload(data: data, response: response)
+    return try await data(for: request)
   }
 
-  private func payload(data: Data, response: HTTPURLResponse) throws -> Data {
+  internal func payload(data: Data, response: HTTPURLResponse) throws -> Data {
     switch response.statusCode {
     case 200 ..< 300: return data
     case 401, 403: throw ProviderHTTPError.unauthorized

@@ -14,8 +14,8 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
 
   static let logger = Logger(subsystem: "com.quotari.QuotariCore", category: "claude-oauth")
 
-  private let transport: any ProviderHTTPTransport
-  private let usageURL: URL
+  let transport: any ProviderHTTPTransport
+  let usageURL: URL
   private let resolveCredentials: @Sendable () throws -> ResolvedClaudeCredentials
   let reloadCredentials: @Sendable (ProviderCredentialSource) throws -> ClaudeCredentials
   private let refresher: (any ClaudeTokenRefreshing)?
@@ -62,10 +62,6 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
   }
 
   public func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
-    if context.interaction == .background,
-       let blockedUntil = await rateLimitGate.blockedUntil() {
-      throw ProviderHTTPError.rateLimited(retryAfter: blockedUntil)
-    }
     if let capturedRegistryID = context.capturedRegistryID {
       try recoverLinkedRegistryGrant(id: capturedRegistryID)
     }
@@ -75,7 +71,16 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
       now: context.now,
       capturedRegistryID: context.capturedRegistryID
     )
+    if let terminalError = refresh.terminalError {
+      throw terminalError
+    }
     resolved = refresh.resolved
+    if context.interaction == .background,
+       let blockedUntil = await rateLimitGate.blockedUntil(
+         for: resolved.credentials.accessToken
+       ) {
+      throw ProviderHTTPError.rateLimited(retryAfter: blockedUntil)
+    }
     let transitionSources = credentialTransitionSourceScopeIDs(
       refresh.acceptedGrant,
       source: resolved.source
@@ -132,46 +137,6 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
         credentialTransitionSourceScopeIDs: credentialTransitionSourceScopeIDs
       )
     }
-  }
-
-  private func usageResult(
-    with resolved: ResolvedClaudeCredentials,
-    context: ProviderFetchContext,
-    credentialTransitionSourceScopeIDs: Set<String> = []
-  ) async throws -> ProviderFetchResult {
-    let credentials = resolved.credentials
-    let data: Data
-    do {
-      data = try await transport.getJSON(
-        url: usageURL,
-        bearer: credentials.accessToken,
-        headers: ["anthropic-beta": "oauth-2025-04-20"]
-      )
-    } catch let ProviderHTTPError.rateLimited(retryAfter) {
-      await rateLimitGate.recordRateLimit(retryAfter: retryAfter)
-      throw ProviderHTTPError.rateLimited(retryAfter: retryAfter)
-    }
-    var usage = try ClaudeUsageParser.parse(data, provider: context.provider, now: context.now)
-    await rateLimitGate.recordSuccess()
-    if usage.plan == nil {
-      usage.plan = PlanLabel.claude(
-        subscriptionType: credentials.subscriptionType,
-        rateLimitTier: credentials.rateLimitTier
-      )
-    }
-    let account = ProviderAccount(
-      provider: context.provider,
-      displayName: "Claude Code",
-      detail: nil,
-      credentialSource: resolved.source,
-      credentialIdentity: credentials.accessToken
-    )
-    return ProviderFetchResult(
-      usage: usage,
-      sourceLabel: "Claude",
-      credentialScopeID: account.credentialScopeID,
-      credentialTransitionSourceScopeIDs: credentialTransitionSourceScopeIDs
-    )
   }
 
   public func shouldFallback(on error: Error) -> Bool {
@@ -336,7 +301,16 @@ private extension ClaudeUsageStrategy {
       // will already be at the source, so re-read once before giving up.
       // If that doesn't help either, let the API answer 401 as before.
       Self.logger.error("Token refresh failed: \(error.localizedDescription, privacy: .public)")
-      return ClaudeRefreshResolution(resolved: reloadedFromSource(base, now: now) ?? base)
+      let reloaded = reloadedFromSource(base, now: now)
+      if let reloaded, !reloaded.credentials.isExpired(now: now) {
+        return ClaudeRefreshResolution(resolved: reloaded)
+      }
+      return ClaudeRefreshResolution(
+        resolved: reloaded ?? base,
+        terminalError: (error as? ClaudeTokenRefreshError)?.requiresReauthentication == true
+          ? .reauthenticationRequired
+          : nil
+      )
     }
   }
 
