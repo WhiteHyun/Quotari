@@ -68,4 +68,73 @@ struct ClaudeReviewFollowupTests {
     #expect(await gate.blockedUntil(for: "new-tok", now: now) == now.addingTimeInterval(300))
     #expect(recorder.requests.isEmpty)
   }
+
+  @Test func aFreshSameGenerationStaleWriterCarriesTheCooldown() async throws {
+    try await assertStaleWriterCarriesCooldown(
+      writerExpiresAt: 100_000,
+      expectedAccessToken: "writer-tok"
+    )
+  }
+
+  @Test func anExpiredSameGenerationStaleWriterCarriesTheCooldownToTheGrant() async throws {
+    try await assertStaleWriterCarriesCooldown(
+      writerExpiresAt: 1000,
+      expectedAccessToken: "grant-tok"
+    )
+  }
+
+  private func assertStaleWriterCarriesCooldown(
+    writerExpiresAt: TimeInterval,
+    expectedAccessToken: String
+  ) async throws {
+    let now = Date(timeIntervalSince1970: 2000)
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("claude-stale-writer-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try claudePayload(
+      accessToken: "old-tok",
+      refreshToken: "ref-1",
+      expiresAt: 1000
+    ).write(to: url)
+    let source = ProviderCredentialSource.claudeCredentialsFile(path: url.path)
+    let recorder = RefreshStubTransport.Recorder()
+    let gate = ClaudeUsageRateLimitGate(now: { now })
+    await gate.recordRateLimit(for: "old-tok", retryAfter: now.addingTimeInterval(300))
+    let refresher = StubRefresher(
+      result: .success(ClaudeTokenGrant(accessToken: "grant-tok")),
+      onRefresh: {
+        try? claudePayload(
+          accessToken: "writer-tok",
+          refreshToken: "ref-1",
+          expiresAt: writerExpiresAt
+        ).write(to: url)
+      }
+    )
+    let strategy = ClaudeUsageStrategy(
+      transport: RefreshStubTransport(json: usageJSON, recorder: recorder),
+      resolveCredentials: {
+        try ResolvedClaudeCredentials(
+          credentials: ClaudeCredentialsStore.load(source: source),
+          source: source
+        )
+      },
+      refresher: refresher,
+      persister: RecordingPersister(error: ClaudeCredentialPersistError.staleSource),
+      refreshCoordinator: ClaudeTokenRefreshCoordinator(),
+      rateLimitGate: gate
+    )
+
+    await #expect(throws: ProviderHTTPError.self) {
+      _ = try await strategy.fetch(ProviderFetchContext(
+        provider: .claude,
+        now: now,
+        interaction: .background
+      ))
+    }
+
+    #expect(
+      await gate.blockedUntil(for: expectedAccessToken, now: now) == now.addingTimeInterval(300)
+    )
+    #expect(recorder.requests.isEmpty)
+  }
 }

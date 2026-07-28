@@ -293,7 +293,8 @@ private extension ClaudeUsageStrategy {
         // Same still-valid (non-rotating) token: their write stays stored
         // and can refresh itself later; the grant still serves this fetch.
         return ClaudeRefreshResolution(
-          resolved: current.credentials.isExpired(now: now) ? inMemory(current, grant) : current
+          resolved: current.credentials.isExpired(now: now) ? inMemory(current, grant) : current,
+          rotatedFromAccessToken: pending.previousAccessToken
         )
       }
     } catch {
@@ -369,7 +370,12 @@ private extension ClaudeUsageStrategy {
     // so it isn't retried (against a pair that has moved on) every launch.
     removeDurableGrantIfMatching(pending, source: fallback.source)
     guard current.isExpired(now: now) else {
-      return .resolved(ClaudeRefreshResolution(resolved: stored))
+      return .resolved(ClaudeRefreshResolution(
+        resolved: stored,
+        rotatedFromAccessToken: current.refreshToken == refreshToken
+          ? pending.previousAccessToken
+          : nil
+      ))
     }
     if current.refreshToken != refreshToken {
       return await .resolved(refreshResolutionIfExpired(stored, now: now))
