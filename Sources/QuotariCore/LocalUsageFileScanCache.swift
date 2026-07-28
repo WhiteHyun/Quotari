@@ -27,22 +27,33 @@ struct LocalUsageFileFingerprint: Codable, Equatable, Sendable {
 final class LocalUsageFileSnapshot {
   let handle: FileHandle
   let fingerprint: LocalUsageFileFingerprint
+  let sourcePath: String
 
   init?(url: URL) {
     guard let handle = try? FileHandle(forReadingFrom: url),
-          let fingerprint = LocalUsageFileFingerprint(handle: handle)
+          let fingerprint = LocalUsageFileFingerprint(handle: handle),
+          let sourcePath = Self.sourcePath(handle: handle)
     else { return nil }
     self.handle = handle
     self.fingerprint = fingerprint
+    self.sourcePath = sourcePath
   }
 
   deinit {
     try? handle.close()
   }
+
+  private static func sourcePath(handle: FileHandle) -> String? {
+    var path = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+    guard fcntl(handle.fileDescriptor, F_GETPATH, &path) == 0 else { return nil }
+    let pathBytes = path.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+    guard let sourcePath = String(bytes: pathBytes, encoding: .utf8) else { return nil }
+    return URL(fileURLWithPath: sourcePath).standardizedFileURL.path
+  }
 }
 
 struct LocalUsageFileScanCache: @unchecked Sendable {
-  static let schemaVersion = 3
+  static let schemaVersion = 4
 
   private let cacheDirectory: URL
   private let fileManager: FileManager
@@ -54,11 +65,11 @@ struct LocalUsageFileScanCache: @unchecked Sendable {
 
   func load(
     provider: UsageProvider,
-    url: URL,
+    sourcePath: String,
     fingerprint: LocalUsageFileFingerprint,
     timeZoneIdentifier: String
   ) -> LocalUsageFileScan? {
-    let cacheURL = cacheURL(provider: provider, sourceURL: url)
+    let cacheURL = cacheURL(provider: provider, sourcePath: sourcePath)
     guard let data = try? Data(contentsOf: cacheURL) else { return nil }
     guard let entry = try? JSONDecoder().decode(Entry.self, from: data) else {
       try? fileManager.removeItem(at: cacheURL)
@@ -66,7 +77,7 @@ struct LocalUsageFileScanCache: @unchecked Sendable {
     }
     guard entry.schemaVersion == Self.schemaVersion,
           entry.provider == provider,
-          entry.sourcePath == canonicalPath(url),
+          entry.sourcePath == sourcePath,
           entry.fingerprint == fingerprint,
           entry.timeZoneIdentifier == timeZoneIdentifier
     else { return nil }
@@ -76,14 +87,14 @@ struct LocalUsageFileScanCache: @unchecked Sendable {
   func save(
     _ scan: LocalUsageFileScan,
     provider: UsageProvider,
-    url: URL,
+    sourcePath: String,
     fingerprint: LocalUsageFileFingerprint,
     timeZoneIdentifier: String
   ) {
     let entry = Entry(
       schemaVersion: Self.schemaVersion,
       provider: provider,
-      sourcePath: canonicalPath(url),
+      sourcePath: sourcePath,
       fingerprint: fingerprint,
       timeZoneIdentifier: timeZoneIdentifier,
       scan: scan
@@ -91,7 +102,7 @@ struct LocalUsageFileScanCache: @unchecked Sendable {
     guard let data = try? JSONEncoder().encode(entry) else { return }
     try? fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
     try? data.write(
-      to: cacheURL(provider: provider, sourceURL: url),
+      to: cacheURL(provider: provider, sourcePath: sourcePath),
       options: [.atomic]
     )
   }
@@ -118,7 +129,11 @@ struct LocalUsageFileScanCache: @unchecked Sendable {
   }
 
   func cacheURL(provider: UsageProvider, sourceURL: URL) -> URL {
-    let pathHash = ProviderCredentialIdentity.fingerprint(of: canonicalPath(sourceURL))
+    cacheURL(provider: provider, sourcePath: canonicalPath(sourceURL))
+  }
+
+  private func cacheURL(provider: UsageProvider, sourcePath: String) -> URL {
+    let pathHash = ProviderCredentialIdentity.fingerprint(of: sourcePath)
     return cacheDirectory.appendingPathComponent(
       "v\(Self.schemaVersion)-\(provider.rawValue)-\(pathHash).json",
       isDirectory: false

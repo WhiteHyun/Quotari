@@ -212,27 +212,33 @@ struct LocalUsageFileScanCacheTests {
     let range = DayRange(start: start, end: fixture.now, calendar: calendar)
     let scanner = fixture.scanner(capture: FileParseCapture(), timeZone: calendar.timeZone)
 
-    let first = scanner.scanFile(link, provider: .codex, range: range) { url, handle in
+    let first = scanner.scanFile(link, provider: .codex, range: range) { handle, sourcePath in
       try? FileManager.default.removeItem(at: link)
       try? FileManager.default.createSymbolicLink(
         atPath: link.path,
         withDestinationPath: fixture.secondUsageURL.path
       )
-      defer {
-        try? FileManager.default.removeItem(at: link)
-        try? FileManager.default.createSymbolicLink(
-          atPath: link.path,
-          withDestinationPath: fixture.firstUsageURL.path
-        )
-      }
-      return scanner.parseCodexFile(url, handle: handle, range: range)
+      return scanner.parseCodexFile(
+        handle: handle,
+        sourcePath: sourcePath,
+        range: range
+      )
     }
+    try FileManager.default.removeItem(at: link)
+    try FileManager.default.createSymbolicLink(
+      atPath: link.path,
+      withDestinationPath: fixture.firstUsageURL.path
+    )
     let warm = scanner.scanFile(link, provider: .codex, range: range) { _, _ in
       Issue.record("Expected the descriptor-bound parse to be reused")
       return .failure
     }
+    let expectedSessionID = ProviderCredentialIdentity.fingerprint(
+      of: fixture.firstUsageURL.standardizedFileURL.path
+    )
 
     #expect(first.totalInputTokens == 100)
+    #expect(first.sessionIDs == [expectedSessionID])
     #expect(warm.totalInputTokens == 100)
   }
 }
@@ -340,5 +346,10 @@ private extension LocalUsageFileParseOutcome {
   var totalInputTokens: Int? {
     guard case let .success(scan) = self else { return nil }
     return scan.records.reduce(0) { $0 + $1.tokens.input }
+  }
+
+  var sessionIDs: Set<String>? {
+    guard case let .success(scan) = self else { return nil }
+    return Set(scan.records.compactMap(\.sessionID))
   }
 }

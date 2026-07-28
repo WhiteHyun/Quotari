@@ -5,14 +5,14 @@ extension LocalUsageCostScanner {
     _ file: URL,
     provider: UsageProvider,
     range: DayRange,
-    parser: (URL, FileHandle) -> LocalUsageFileParseOutcome
+    parser: (FileHandle, String) -> LocalUsageFileParseOutcome
   ) -> LocalUsageFileParseOutcome {
     guard !Task.isCancelled else { return .cancelled }
     guard let snapshot = LocalUsageFileSnapshot(url: file) else { return .failure }
     let fingerprint = snapshot.fingerprint
     if let cached = fileScanCache?.load(
       provider: provider,
-      url: file,
+      sourcePath: snapshot.sourcePath,
       fingerprint: fingerprint,
       timeZoneIdentifier: range.calendar.timeZone.identifier
     ) {
@@ -45,16 +45,16 @@ extension LocalUsageCostScanner {
     snapshot: LocalUsageFileSnapshot,
     provider: UsageProvider,
     range: DayRange,
-    parser: (URL, FileHandle) -> LocalUsageFileParseOutcome
+    parser: (FileHandle, String) -> LocalUsageFileParseOutcome
   ) -> LocalUsageFileParseOutcome {
-    switch parser(file, snapshot.handle) {
+    switch parser(snapshot.handle, snapshot.sourcePath) {
     case let .success(scan):
       guard !Task.isCancelled else { return .cancelled }
       onFileParsed?(file)
       fileScanCache?.save(
         scan,
         provider: provider,
-        url: file,
+        sourcePath: snapshot.sourcePath,
         fingerprint: snapshot.fingerprint,
         timeZoneIdentifier: range.calendar.timeZone.identifier
       )

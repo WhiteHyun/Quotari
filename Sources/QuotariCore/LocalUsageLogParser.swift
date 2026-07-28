@@ -2,11 +2,11 @@ import Foundation
 
 extension LocalUsageCostScanner {
   func parseCodexFile(
-    _ url: URL,
     handle: FileHandle,
+    sourcePath: String,
     range: DayRange
   ) -> LocalUsageFileParseOutcome {
-    let sessionID = localSessionID(for: url)
+    let sessionID = localSessionID(forSourcePath: sourcePath)
     var previousTotals: TokenTotals?
     var currentModel: String?
     var records: [LocalTokenRecord] = []
@@ -61,11 +61,11 @@ extension LocalUsageCostScanner {
   }
 
   func parseClaudeFile(
-    _ url: URL,
     handle: FileHandle,
+    sourcePath: String,
     range: DayRange
   ) -> LocalUsageFileParseOutcome {
-    let sessionID = localSessionID(for: url)
+    let sessionID = localSessionID(forSourcePath: sourcePath)
     var state = ClaudeFileParseState()
 
     let readOutcome = forEachLine(handle: handle) { line in
@@ -144,9 +144,8 @@ extension LocalUsageCostScanner {
     return nil
   }
 
-  func localSessionID(for url: URL) -> String {
-    let canonicalPath = url.resolvingSymlinksInPath().standardizedFileURL.path
-    return ProviderCredentialIdentity.fingerprint(of: canonicalPath)
+  func localSessionID(forSourcePath sourcePath: String) -> String {
+    ProviderCredentialIdentity.fingerprint(of: sourcePath)
   }
 
   func forEachLine(
