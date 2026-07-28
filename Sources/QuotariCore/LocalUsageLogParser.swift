@@ -1,14 +1,18 @@
 import Foundation
 
 extension LocalUsageCostScanner {
-  func parseCodexFile(_ url: URL, range: DayRange) -> LocalUsageFileParseOutcome {
+  func parseCodexFile(
+    _ url: URL,
+    handle: FileHandle,
+    range: DayRange
+  ) -> LocalUsageFileParseOutcome {
     let sessionID = localSessionID(for: url)
     var previousTotals: TokenTotals?
     var currentModel: String?
     var records: [LocalTokenRecord] = []
     var unsupportedUsage: [LocalUnsupportedUsage] = []
 
-    let readOutcome = forEachLine(in: url) { line in
+    let readOutcome = forEachLine(handle: handle) { line in
       // A trailing partial line is expected while a writer is active, but
       // caching a total before that line completes would undercount. Preserve
       // the previous summary until every observed line is valid JSON.
@@ -56,11 +60,15 @@ extension LocalUsageCostScanner {
     }
   }
 
-  func parseClaudeFile(_ url: URL, range: DayRange) -> LocalUsageFileParseOutcome {
+  func parseClaudeFile(
+    _ url: URL,
+    handle: FileHandle,
+    range: DayRange
+  ) -> LocalUsageFileParseOutcome {
     let sessionID = localSessionID(for: url)
     var state = ClaudeFileParseState()
 
-    let readOutcome = forEachLine(in: url) { line in
+    let readOutcome = forEachLine(handle: handle) { line in
       consumeClaudeLine(line, sessionID: sessionID, range: range, state: &state)
     }
     return switch readOutcome {
@@ -148,6 +156,13 @@ extension LocalUsageCostScanner {
     guard !Task.isCancelled else { return .cancelled }
     guard let handle = try? FileHandle(forReadingFrom: url) else { return .failure }
     defer { try? handle.close() }
+    return forEachLine(handle: handle, body: body)
+  }
+
+  private func forEachLine(
+    handle: FileHandle,
+    body: (Data) -> Bool
+  ) -> LocalUsageLineReadOutcome {
     var pending = Data()
     do {
       while let chunk = try handle.read(upToCount: 256 * 1024), !chunk.isEmpty {

@@ -195,6 +195,46 @@ struct LocalUsageFileScanCacheTests {
     #expect(rescanned.totalInputTokens == 1100)
     #expect(capture.paths == [fixture.firstUsageURL.lastPathComponent])
   }
+
+  @Test func fingerprintAndParserStayBoundToTheSameOpenFile() throws {
+    let fixture = try FileScanFixture()
+    defer { fixture.cleanup() }
+    let link = fixture.root.appendingPathComponent("active.jsonl")
+    try FileManager.default.createSymbolicLink(
+      atPath: link.path,
+      withDestinationPath: fixture.firstUsageURL.path
+    )
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+    let start = try #require(
+      calendar.date(byAdding: .day, value: -29, to: fixture.now)
+    )
+    let range = DayRange(start: start, end: fixture.now, calendar: calendar)
+    let scanner = fixture.scanner(capture: FileParseCapture(), timeZone: calendar.timeZone)
+
+    let first = scanner.scanFile(link, provider: .codex, range: range) { url, handle in
+      try? FileManager.default.removeItem(at: link)
+      try? FileManager.default.createSymbolicLink(
+        atPath: link.path,
+        withDestinationPath: fixture.secondUsageURL.path
+      )
+      defer {
+        try? FileManager.default.removeItem(at: link)
+        try? FileManager.default.createSymbolicLink(
+          atPath: link.path,
+          withDestinationPath: fixture.firstUsageURL.path
+        )
+      }
+      return scanner.parseCodexFile(url, handle: handle, range: range)
+    }
+    let warm = scanner.scanFile(link, provider: .codex, range: range) { _, _ in
+      Issue.record("Expected the descriptor-bound parse to be reused")
+      return .failure
+    }
+
+    #expect(first.totalInputTokens == 100)
+    #expect(warm.totalInputTokens == 100)
+  }
 }
 
 private final class FileParseCapture: @unchecked Sendable {
@@ -293,5 +333,12 @@ private extension LocalUsageScan {
   var firstRecordDay: Date? {
     guard case let .success(result) = outcome else { return nil }
     return result.records.first?.day
+  }
+}
+
+private extension LocalUsageFileParseOutcome {
+  var totalInputTokens: Int? {
+    guard case let .success(scan) = self else { return nil }
+    return scan.records.reduce(0) { $0 + $1.tokens.input }
   }
 }

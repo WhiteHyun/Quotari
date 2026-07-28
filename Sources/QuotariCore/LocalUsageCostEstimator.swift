@@ -214,7 +214,7 @@ struct LocalUsageCostScanner {
       provider: .codex,
       roots: scopeRoots(provider: .codex, account: account),
       range: range,
-      parser: { parseCodexFile($0, range: range) }
+      parser: { parseCodexFile($0, handle: $1, range: range) }
     )
   }
 
@@ -223,7 +223,7 @@ struct LocalUsageCostScanner {
       provider: .claude,
       roots: scopeRoots(provider: .claude, account: account),
       range: range,
-      parser: { parseClaudeFile($0, range: range) }
+      parser: { parseClaudeFile($0, handle: $1, range: range) }
     )
   }
 
@@ -231,7 +231,7 @@ struct LocalUsageCostScanner {
     provider: UsageProvider,
     roots: [URL],
     range: DayRange,
-    parser: (URL) -> LocalUsageFileParseOutcome
+    parser: (URL, FileHandle) -> LocalUsageFileParseOutcome
   ) -> LocalUsageScanOutcome {
     guard !Task.isCancelled else { return .cancelled }
     guard !roots.isEmpty else { return .noLocalLogs }
@@ -258,7 +258,7 @@ struct LocalUsageCostScanner {
     _ root: URL,
     provider: UsageProvider,
     range: DayRange,
-    parser: (URL) -> LocalUsageFileParseOutcome
+    parser: (URL, FileHandle) -> LocalUsageFileParseOutcome
   ) -> LocalUsageFilesOutcome {
     guard !Task.isCancelled else { return .cancelled }
     guard let files = jsonlFiles(in: root, modifiedSince: range.start) else {

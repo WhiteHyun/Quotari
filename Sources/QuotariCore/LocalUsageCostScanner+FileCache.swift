@@ -5,12 +5,11 @@ extension LocalUsageCostScanner {
     _ file: URL,
     provider: UsageProvider,
     range: DayRange,
-    parser: (URL) -> LocalUsageFileParseOutcome
+    parser: (URL, FileHandle) -> LocalUsageFileParseOutcome
   ) -> LocalUsageFileParseOutcome {
     guard !Task.isCancelled else { return .cancelled }
-    guard let fingerprint = LocalUsageFileFingerprint(url: file) else {
-      return .failure
-    }
+    guard let snapshot = LocalUsageFileSnapshot(url: file) else { return .failure }
+    let fingerprint = snapshot.fingerprint
     if let cached = fileScanCache?.load(
       provider: provider,
       url: file,
@@ -18,37 +17,37 @@ extension LocalUsageCostScanner {
       timeZoneIdentifier: range.calendar.timeZone.identifier
     ) {
       onCacheLoaded?(file)
-      guard let currentFingerprint = LocalUsageFileFingerprint(url: file) else {
+      guard let currentSnapshot = LocalUsageFileSnapshot(url: file) else {
         return .failure
       }
-      guard currentFingerprint != fingerprint else {
+      guard currentSnapshot.fingerprint != fingerprint else {
         return .success(cached.filtered(to: range))
       }
       return parseAndCacheFile(
         file,
+        snapshot: currentSnapshot,
         provider: provider,
         range: range,
-        fingerprint: currentFingerprint,
         parser: parser
       )
     }
     return parseAndCacheFile(
       file,
+      snapshot: snapshot,
       provider: provider,
       range: range,
-      fingerprint: fingerprint,
       parser: parser
     )
   }
 
   private func parseAndCacheFile(
     _ file: URL,
+    snapshot: LocalUsageFileSnapshot,
     provider: UsageProvider,
     range: DayRange,
-    fingerprint: LocalUsageFileFingerprint,
-    parser: (URL) -> LocalUsageFileParseOutcome
+    parser: (URL, FileHandle) -> LocalUsageFileParseOutcome
   ) -> LocalUsageFileParseOutcome {
-    switch parser(file) {
+    switch parser(file, snapshot.handle) {
     case let .success(scan):
       guard !Task.isCancelled else { return .cancelled }
       onFileParsed?(file)
@@ -56,7 +55,7 @@ extension LocalUsageCostScanner {
         scan,
         provider: provider,
         url: file,
-        fingerprint: fingerprint,
+        fingerprint: snapshot.fingerprint,
         timeZoneIdentifier: range.calendar.timeZone.identifier
       )
       return .success(scan.filtered(to: range))

@@ -7,14 +7,9 @@ struct LocalUsageFileFingerprint: Codable, Equatable, Sendable {
   let statusChangedAt: Date
   let fileID: UInt64
 
-  init?(url: URL) {
-    let stream = url.withUnsafeFileSystemRepresentation {
-      fopen($0, "r")
-    }
-    guard let stream else { return nil }
-    defer { fclose(stream) }
+  init?(handle: FileHandle) {
     var metadata = stat()
-    guard fstat(fileno(stream), &metadata) == 0 else { return nil }
+    guard fstat(handle.fileDescriptor, &metadata) == 0 else { return nil }
     byteCount = metadata.st_size
     modifiedAt = Self.date(metadata.st_mtimespec)
     statusChangedAt = Self.date(metadata.st_ctimespec)
@@ -26,6 +21,23 @@ struct LocalUsageFileFingerprint: Codable, Equatable, Sendable {
       timeIntervalSince1970: TimeInterval(value.tv_sec)
         + TimeInterval(value.tv_nsec) / 1_000_000_000
     )
+  }
+}
+
+final class LocalUsageFileSnapshot {
+  let handle: FileHandle
+  let fingerprint: LocalUsageFileFingerprint
+
+  init?(url: URL) {
+    guard let handle = try? FileHandle(forReadingFrom: url),
+          let fingerprint = LocalUsageFileFingerprint(handle: handle)
+    else { return nil }
+    self.handle = handle
+    self.fingerprint = fingerprint
+  }
+
+  deinit {
+    try? handle.close()
   }
 }
 
