@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public struct LocalUsageCostEstimator: UsageCostEstimating, UsageInsightsAnalyzing {
@@ -160,16 +161,24 @@ struct LocalUsageCostScanner {
   let environment: [String: String]
   let homeDirectory: URL
   let fileManager: FileManager
+  let fileScanCache: LocalUsageFileScanCache?
+  let onFileParsed: (@Sendable (URL) -> Void)?
   private let calendar = Calendar(identifier: .gregorian)
 
   init(
     environment: [String: String] = ProcessInfo.processInfo.environment,
     homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
-    fileManager: FileManager = .default
+    fileManager: FileManager = .default,
+    fileScanCacheDirectory: URL? = nil,
+    onFileParsed: (@Sendable (URL) -> Void)? = nil
   ) {
     self.environment = environment
     self.homeDirectory = homeDirectory
     self.fileManager = fileManager
+    fileScanCache = fileScanCacheDirectory.map {
+      LocalUsageFileScanCache(cacheDirectory: $0, fileManager: fileManager)
+    }
+    self.onFileParsed = onFileParsed
   }
 
   func scan(
@@ -196,37 +205,115 @@ struct LocalUsageCostScanner {
   }
 
   private func scanCodex(range: DayRange, account: ProviderAccount?) -> LocalUsageScanOutcome {
-    scanFiles(roots: scopeRoots(provider: .codex, account: account), range: range) {
-      parseCodexFile($0, range: range)
-    }
+    scanFiles(
+      provider: .codex,
+      roots: scopeRoots(provider: .codex, account: account),
+      range: range,
+      parser: { parseCodexFile($0, range: range) }
+    )
   }
 
   private func scanClaude(range: DayRange, account: ProviderAccount?) -> LocalUsageScanOutcome {
-    scanFiles(roots: scopeRoots(provider: .claude, account: account), range: range) {
-      parseClaudeFile($0, range: range)
-    }
+    scanFiles(
+      provider: .claude,
+      roots: scopeRoots(provider: .claude, account: account),
+      range: range,
+      parser: { parseClaudeFile($0, range: range) }
+    )
   }
 
   private func scanFiles(
+    provider: UsageProvider,
     roots: [URL],
     range: DayRange,
-    parser: (URL) -> LocalUsageFileScan?
+    parser: (URL) -> LocalUsageFileParseOutcome
   ) -> LocalUsageScanOutcome {
+    guard !Task.isCancelled else { return .cancelled }
     guard !roots.isEmpty else { return .noLocalLogs }
     let existingRoots = roots.filter { fileManager.fileExists(atPath: $0.path) }
     guard !existingRoots.isEmpty else { return .noLocalLogs }
 
     var scans: [LocalUsageFileScan] = []
     for root in existingRoots {
-      guard let files = jsonlFiles(in: root, modifiedSince: range.start) else {
+      switch scanRoot(root, provider: provider, range: range, parser: parser) {
+      case let .success(rootScans):
+        scans.append(contentsOf: rootScans)
+      case .cancelled:
+        return .cancelled
+      case .failure:
         return .failure
       }
-      for file in files {
-        guard let scan = parser(file) else { return .failure }
+    }
+    fileScanCache?.prune(olderThan: range.start)
+
+    return aggregate(scans)
+  }
+
+  private func scanRoot(
+    _ root: URL,
+    provider: UsageProvider,
+    range: DayRange,
+    parser: (URL) -> LocalUsageFileParseOutcome
+  ) -> LocalUsageFilesOutcome {
+    guard !Task.isCancelled else { return .cancelled }
+    guard let files = jsonlFiles(in: root, modifiedSince: range.start) else {
+      return Task.isCancelled ? .cancelled : .failure
+    }
+    var scans: [LocalUsageFileScan] = []
+    for file in files {
+      let outcome = autoreleasepool {
+        scanFile(file, provider: provider, range: range, parser: parser)
+      }
+      malloc_zone_pressure_relief(nil, 0)
+      switch outcome {
+      case let .success(scan):
         scans.append(scan)
+      case .cancelled:
+        return .cancelled
+      case .failure:
+        return .failure
       }
     }
+    return .success(scans)
+  }
 
+  private func scanFile(
+    _ file: URL,
+    provider: UsageProvider,
+    range: DayRange,
+    parser: (URL) -> LocalUsageFileParseOutcome
+  ) -> LocalUsageFileParseOutcome {
+    guard !Task.isCancelled else { return .cancelled }
+    guard let fingerprint = LocalUsageFileFingerprint(
+      url: file,
+      fileManager: fileManager
+    ) else { return .failure }
+    if let cached = fileScanCache?.load(
+      provider: provider,
+      url: file,
+      fingerprint: fingerprint
+    ) {
+      return .success(cached.filtered(to: range))
+    }
+    switch parser(file) {
+    case let .success(scan):
+      guard !Task.isCancelled else { return .cancelled }
+      onFileParsed?(file)
+      fileScanCache?.save(
+        scan,
+        provider: provider,
+        url: file,
+        fingerprint: fingerprint
+      )
+      return .success(scan.filtered(to: range))
+    case .cancelled:
+      return .cancelled
+    case .failure:
+      return .failure
+    }
+  }
+
+  private func aggregate(_ scans: [LocalUsageFileScan]) -> LocalUsageScanOutcome {
     let records = scans.flatMap(\.records)
     let unsupportedUsage = scans.flatMap(\.unsupportedUsage)
     if records.isEmpty, !unsupportedUsage.isEmpty {
@@ -244,6 +331,7 @@ struct LocalUsageCostScanner {
 
     var urls: [URL] = []
     for case let url as URL in enumerator where url.pathExtension.lowercased() == "jsonl" {
+      guard !Task.isCancelled else { return nil }
       let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
       guard values?.isRegularFile == true else { continue }
       if let modified = values?.contentModificationDate, modified < modifiedSince {
@@ -265,6 +353,7 @@ enum LocalUsageScanOutcome: Sendable {
   case success(LocalUsageScanResult)
   case noLocalLogs
   case unsupportedUsage
+  case cancelled
   case failure
 }
 
@@ -273,7 +362,13 @@ struct LocalUsageScanResult: Sendable {
   let unsupportedUsage: [LocalUnsupportedUsage]
 }
 
-struct LocalUnsupportedUsage: Sendable {
+private enum LocalUsageFilesOutcome {
+  case success([LocalUsageFileScan])
+  case cancelled
+  case failure
+}
+
+struct LocalUnsupportedUsage: Codable, Equatable, Sendable {
   let day: Date
   let model: String?
   let sessionID: String?

@@ -240,7 +240,9 @@ extension LocalUsageCostEstimator {
     await Task.detached(priority: .utility) {
       LocalUsageCostScanner(
         environment: environment,
-        homeDirectory: homeDirectory
+        homeDirectory: homeDirectory,
+        fileScanCacheDirectory: insightsCacheDirectory
+          .appendingPathComponent("file-scans", isDirectory: true)
       )
       .scan(provider: provider, account: account, now: now, historyDays: historyDays)
     }.value
@@ -305,7 +307,7 @@ extension LocalUsageCostEstimator {
         )
       }
       return removed ? .confirmedEmpty : .unavailable
-    case .unsupportedUsage, .failure:
+    case .unsupportedUsage, .cancelled, .failure:
       // Preserve the previous valid summary until a later scan can prove a
       // replacement value.
       return .unavailable
