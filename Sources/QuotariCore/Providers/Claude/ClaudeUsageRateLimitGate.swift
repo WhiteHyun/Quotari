@@ -2,7 +2,7 @@ import Foundation
 
 /// Persists the Claude usage endpoint's cooldown so background refreshes do
 /// not repeatedly hit Anthropic after a 429. User-initiated fetches bypass the
-/// read gate, but a successful response still clears the shared cooldown.
+/// read gate, but a successful response still clears that credential's cooldown.
 public actor ClaudeUsageRateLimitGate {
   public enum Persistence: Sendable {
     case standard
@@ -11,12 +11,13 @@ public actor ClaudeUsageRateLimitGate {
 
   public static let shared = ClaudeUsageRateLimitGate(persistence: .standard)
 
-  private static let blockedUntilKey = "claudeOAuthUsageRateLimitBlockedUntilV1"
+  private static let legacyBlockedUntilKey = "claudeOAuthUsageRateLimitBlockedUntilV1"
+  private static let blockedUntilKeyPrefix = "claudeOAuthUsageRateLimitBlockedUntilV2."
 
   private let persistence: Persistence?
   private let defaultCooldown: TimeInterval
   private let currentDate: @Sendable () -> Date
-  private var inMemoryBlockedUntil: Date?
+  private var inMemoryBlockedUntil: [String: Date] = [:]
 
   /// Passing no persistence creates an isolated in-memory gate, useful for tests.
   public init(
@@ -29,57 +30,97 @@ public actor ClaudeUsageRateLimitGate {
     currentDate = now
   }
 
-  public func blockedUntil(now: Date? = nil) -> Date? {
+  public func blockedUntil(
+    for accessToken: String,
+    now: Date? = nil
+  ) -> Date? {
     let now = now ?? currentDate()
-    guard let blockedUntil = storedBlockedUntil else { return nil }
+    let key = storageKey(for: accessToken)
+    guard let blockedUntil = storedBlockedUntil(for: key) else { return nil }
     guard blockedUntil > now else {
-      clear()
+      clear(key)
       return nil
     }
     return blockedUntil
   }
 
-  public func recordRateLimit(retryAfter: Date?, now: Date? = nil) {
+  public func recordRateLimit(
+    for accessToken: String,
+    retryAfter: Date?,
+    now: Date? = nil
+  ) {
     let now = now ?? currentDate()
+    let key = storageKey(for: accessToken)
     if let retryAfter {
       guard retryAfter > now else {
-        clear()
+        clear(key)
         return
       }
-      store(retryAfter)
+      store(max(storedBlockedUntil(for: key) ?? retryAfter, retryAfter), for: key)
       return
     }
-    store(now.addingTimeInterval(defaultCooldown))
+    let fallback = now.addingTimeInterval(defaultCooldown)
+    store(max(storedBlockedUntil(for: key) ?? fallback, fallback), for: key)
   }
 
-  public func recordSuccess() {
-    clear()
+  public func recordSuccess(for accessToken: String) {
+    clear(storageKey(for: accessToken))
   }
 
-  private var storedBlockedUntil: Date? {
+  public func transferCooldown(
+    from previousAccessToken: String,
+    to currentAccessToken: String,
+    now: Date? = nil
+  ) {
+    guard previousAccessToken != currentAccessToken else { return }
+    let now = now ?? currentDate()
+    let previousKey = storageKey(for: previousAccessToken)
+    guard let deadline = storedBlockedUntil(for: previousKey), deadline > now else {
+      clear(previousKey)
+      return
+    }
+    let currentKey = storageKey(for: currentAccessToken)
+    store(max(storedBlockedUntil(for: currentKey) ?? deadline, deadline), for: currentKey)
+    clear(previousKey)
+  }
+
+  private func storedBlockedUntil(for key: String) -> Date? {
     if let defaults = persistedDefaults {
-      guard let raw = defaults.object(forKey: Self.blockedUntilKey) as? Double else {
+      let currentRaw = defaults.object(forKey: key) as? Double
+      if let legacyRaw = defaults.object(forKey: Self.legacyBlockedUntilKey) as? Double {
+        let migratedRaw = max(currentRaw ?? legacyRaw, legacyRaw)
+        defaults.set(migratedRaw, forKey: key)
+        defaults.removeObject(forKey: Self.legacyBlockedUntilKey)
+        return Date(timeIntervalSince1970: migratedRaw)
+      }
+      guard let currentRaw else {
         return nil
       }
-      return Date(timeIntervalSince1970: raw)
+      return Date(timeIntervalSince1970: currentRaw)
     }
-    return inMemoryBlockedUntil
+    return inMemoryBlockedUntil[key]
   }
 
-  private func store(_ blockedUntil: Date) {
+  private func store(_ blockedUntil: Date, for key: String) {
     if let defaults = persistedDefaults {
-      defaults.set(blockedUntil.timeIntervalSince1970, forKey: Self.blockedUntilKey)
+      defaults.removeObject(forKey: Self.legacyBlockedUntilKey)
+      defaults.set(blockedUntil.timeIntervalSince1970, forKey: key)
     } else {
-      inMemoryBlockedUntil = blockedUntil
+      inMemoryBlockedUntil[key] = blockedUntil
     }
   }
 
-  private func clear() {
+  private func clear(_ key: String) {
     if let defaults = persistedDefaults {
-      defaults.removeObject(forKey: Self.blockedUntilKey)
+      defaults.removeObject(forKey: Self.legacyBlockedUntilKey)
+      defaults.removeObject(forKey: key)
     } else {
-      inMemoryBlockedUntil = nil
+      inMemoryBlockedUntil[key] = nil
     }
+  }
+
+  private func storageKey(for accessToken: String) -> String {
+    Self.blockedUntilKeyPrefix + ProviderCredentialIdentity.fingerprint(of: accessToken)
   }
 
   private var persistedDefaults: UserDefaults? {

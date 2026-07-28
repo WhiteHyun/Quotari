@@ -26,11 +26,21 @@ public protocol ClaudeTokenRefreshing: Sendable {
 
 public enum ClaudeTokenRefreshError: LocalizedError, Sendable {
   case malformedResponse
+  case reauthenticationRequired
 
   public var errorDescription: String? {
     switch self {
     case .malformedResponse: "The OAuth token endpoint returned an unexpected payload."
+    case .reauthenticationRequired:
+      "Claude Code login expired. Log in again, then refresh Quotari."
     }
+  }
+
+  var requiresReauthentication: Bool {
+    if case .reauthenticationRequired = self {
+      return true
+    }
+    return false
   }
 }
 
@@ -71,7 +81,12 @@ public struct ClaudeTokenRefresher: ClaudeTokenRefreshing {
       "client_id": Self.clientID,
       "scope": scope,
     ])
-    let data = try await transport.postJSON(url: tokenURL, body: body)
+    let (rawData, response) = try await transport.postJSONResponse(url: tokenURL, body: body)
+    if response.statusCode == 400 || response.statusCode == 401,
+       Self.oauthErrorCode(in: rawData) == "invalid_grant" {
+      throw ClaudeTokenRefreshError.reauthenticationRequired
+    }
+    let data = try transport.payload(data: rawData, response: response)
     guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let accessToken = root["access_token"] as? String,
           !accessToken.isEmpty
@@ -86,6 +101,13 @@ public struct ClaudeTokenRefresher: ClaudeTokenRefreshing {
         return scopes.isEmpty ? nil : scopes
       }
     )
+  }
+
+  private static func oauthErrorCode(in data: Data) -> String? {
+    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+      return nil
+    }
+    return (root["error"] as? String)?.lowercased()
   }
 }
 
@@ -245,13 +267,19 @@ public struct ClaudePendingGrant: Codable, Equatable, Sendable {
 public struct ClaudeRefreshResolution: Sendable {
   public var resolved: ResolvedClaudeCredentials
   public var acceptedGrant: ClaudePendingGrant?
+  public var terminalError: ClaudeTokenRefreshError?
+  public var rotatedFromAccessToken: String?
 
   public init(
     resolved: ResolvedClaudeCredentials,
-    acceptedGrant: ClaudePendingGrant? = nil
+    acceptedGrant: ClaudePendingGrant? = nil,
+    terminalError: ClaudeTokenRefreshError? = nil,
+    rotatedFromAccessToken: String? = nil
   ) {
     self.resolved = resolved
     self.acceptedGrant = acceptedGrant
+    self.terminalError = terminalError
+    self.rotatedFromAccessToken = rotatedFromAccessToken
   }
 }
 
