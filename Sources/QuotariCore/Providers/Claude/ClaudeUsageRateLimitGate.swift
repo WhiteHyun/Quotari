@@ -86,11 +86,17 @@ public actor ClaudeUsageRateLimitGate {
 
   private func storedBlockedUntil(for key: String) -> Date? {
     if let defaults = persistedDefaults {
-      defaults.removeObject(forKey: Self.legacyBlockedUntilKey)
-      guard let raw = defaults.object(forKey: key) as? Double else {
+      let currentRaw = defaults.object(forKey: key) as? Double
+      if let legacyRaw = defaults.object(forKey: Self.legacyBlockedUntilKey) as? Double {
+        let migratedRaw = max(currentRaw ?? legacyRaw, legacyRaw)
+        defaults.set(migratedRaw, forKey: key)
+        defaults.removeObject(forKey: Self.legacyBlockedUntilKey)
+        return Date(timeIntervalSince1970: migratedRaw)
+      }
+      guard let currentRaw else {
         return nil
       }
-      return Date(timeIntervalSince1970: raw)
+      return Date(timeIntervalSince1970: currentRaw)
     }
     return inMemoryBlockedUntil[key]
   }

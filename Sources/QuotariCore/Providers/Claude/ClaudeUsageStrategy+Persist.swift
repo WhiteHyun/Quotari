@@ -28,7 +28,10 @@ extension ClaudeUsageStrategy {
       return ClaudeRefreshResolution(
         resolved: applied.resolved,
         acceptedGrant: stored.source.isCaptured ? nil : pending,
-        rotatedFromAccessToken: applied.rotatedFromAccessToken
+        // The rebased write only changes the compare-and-swap owner. The
+        // refresh still rotated from the pending grant's original token, so
+        // carry that token's cooldown into the installed generation.
+        rotatedFromAccessToken: pending.previousAccessToken
       )
     }
     // Yet another concurrent write landed; at some point theirs is the truth.

@@ -170,6 +170,24 @@ struct ClaudeUsageRateLimitTests {
     #expect(await cleared.blockedUntil(for: "secret-token", now: now) == nil)
   }
 
+  @Test func legacyCooldownMigratesToTheCurrentCredential() async throws {
+    let suiteName = "quotari-rate-limit-legacy-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let now = Date(timeIntervalSince1970: 1_783_478_400)
+    let blockedUntil = now.addingTimeInterval(120)
+    let legacyKey = "claudeOAuthUsageRateLimitBlockedUntilV1"
+    defaults.set(blockedUntil.timeIntervalSince1970, forKey: legacyKey)
+
+    let migrated = ClaudeUsageRateLimitGate(persistence: .suite(suiteName))
+    #expect(await migrated.blockedUntil(for: "secret-token", now: now) == blockedUntil)
+    #expect(defaults.object(forKey: legacyKey) == nil)
+
+    let relaunched = ClaudeUsageRateLimitGate(persistence: .suite(suiteName))
+    #expect(await relaunched.blockedUntil(for: "secret-token", now: now) == blockedUntil)
+    #expect(await relaunched.blockedUntil(for: "other-token", now: now) == nil)
+  }
+
   @Test func rateLimitCooldownIsIsolatedByCredential() async throws {
     let now = Date(timeIntervalSince1970: 1_783_478_400)
     let transport = SequencedClaudeUsageTransport([

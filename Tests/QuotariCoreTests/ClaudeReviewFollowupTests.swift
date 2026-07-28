@@ -83,6 +83,60 @@ struct ClaudeReviewFollowupTests {
     )
   }
 
+  @Test func aSupersededRotationCarriesTheOriginalTokensCooldown() async throws {
+    let now = Date(timeIntervalSince1970: 2000)
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("claude-superseded-rotation-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try claudePayload(
+      accessToken: "old-tok",
+      refreshToken: "ref-1",
+      expiresAt: 1000
+    ).write(to: url)
+    let source = ProviderCredentialSource.claudeCredentialsFile(path: url.path)
+    let recorder = RefreshStubTransport.Recorder()
+    let gate = ClaudeUsageRateLimitGate(now: { now })
+    await gate.recordRateLimit(for: "old-tok", retryAfter: now.addingTimeInterval(300))
+    let refresher = StubRefresher(
+      result: .success(ClaudeTokenGrant(
+        accessToken: "grant-tok",
+        refreshToken: "ref-2",
+        expiresAt: Date(timeIntervalSince1970: 100_000)
+      )),
+      onRefresh: {
+        try? claudePayload(
+          accessToken: "writer-tok",
+          refreshToken: "ref-1",
+          expiresAt: 100_000
+        ).write(to: url)
+      }
+    )
+    let strategy = ClaudeUsageStrategy(
+      transport: RefreshStubTransport(json: usageJSON, recorder: recorder),
+      resolveCredentials: {
+        try ResolvedClaudeCredentials(
+          credentials: ClaudeCredentialsStore.load(source: source),
+          source: source
+        )
+      },
+      refresher: refresher,
+      persister: StaleThenWritingClaudePersister(),
+      refreshCoordinator: ClaudeTokenRefreshCoordinator(),
+      rateLimitGate: gate
+    )
+
+    await #expect(throws: ProviderHTTPError.self) {
+      _ = try await strategy.fetch(ProviderFetchContext(
+        provider: .claude,
+        now: now,
+        interaction: .background
+      ))
+    }
+
+    #expect(await gate.blockedUntil(for: "grant-tok", now: now) == now.addingTimeInterval(300))
+    #expect(recorder.requests.isEmpty)
+  }
+
   private func assertStaleWriterCarriesCooldown(
     writerExpiresAt: TimeInterval,
     expectedAccessToken: String
@@ -136,5 +190,28 @@ struct ClaudeReviewFollowupTests {
       await gate.blockedUntil(for: expectedAccessToken, now: now) == now.addingTimeInterval(300)
     )
     #expect(recorder.requests.isEmpty)
+  }
+}
+
+private final class StaleThenWritingClaudePersister:
+  ClaudeCredentialPersisting,
+  @unchecked Sendable {
+  private let inner = ClaudeCredentialsWriter()
+  private let lock = NSLock()
+  private var shouldReportStale = true
+
+  func persist(
+    _ grant: ClaudeTokenGrant,
+    replacing previousAccessToken: String,
+    to source: ProviderCredentialSource
+  ) throws {
+    let reportStale = lock.withLock {
+      defer { shouldReportStale = false }
+      return shouldReportStale
+    }
+    if reportStale {
+      throw ClaudeCredentialPersistError.staleSource
+    }
+    try inner.persist(grant, replacing: previousAccessToken, to: source)
   }
 }
