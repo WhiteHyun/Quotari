@@ -284,10 +284,9 @@ struct LocalUsageCostScanner {
     parser: (URL) -> LocalUsageFileParseOutcome
   ) -> LocalUsageFileParseOutcome {
     guard !Task.isCancelled else { return .cancelled }
-    guard let fingerprint = LocalUsageFileFingerprint(
-      url: file,
-      fileManager: fileManager
-    ) else { return .failure }
+    guard let fingerprint = LocalUsageFileFingerprint(url: file) else {
+      return .failure
+    }
     if let cached = fileScanCache?.load(
       provider: provider,
       url: file,

@@ -108,6 +108,36 @@ struct LocalUsageFileScanCacheTests {
     #expect(rescanned.recordCount == 1)
     #expect(!FileManager.default.fileExists(atPath: deletedCacheURL.path))
   }
+
+  @Test func sameSizeRewriteWithRestoredModificationDateInvalidatesCache() throws {
+    let fixture = try FileScanFixture()
+    defer { fixture.cleanup() }
+    _ = fixture.scanner(capture: FileParseCapture()).scan(
+      provider: .codex,
+      now: fixture.now,
+      historyDays: 30
+    )
+    let attributes = try FileManager.default.attributesOfItem(
+      atPath: fixture.firstUsageURL.path
+    )
+    let modifiedAt = try #require(attributes[.modificationDate] as? Date)
+    Thread.sleep(forTimeInterval: 0.01)
+    try fixture.rewriteUsage(to: fixture.firstUsageURL, input: 900)
+    try FileManager.default.setAttributes(
+      [.modificationDate: modifiedAt],
+      ofItemAtPath: fixture.firstUsageURL.path
+    )
+    let capture = FileParseCapture()
+
+    let rescanned = fixture.scanner(capture: capture).scan(
+      provider: .codex,
+      now: fixture.now,
+      historyDays: 30
+    )
+
+    #expect(rescanned.totalInputTokens == 1100)
+    #expect(capture.paths == [fixture.firstUsageURL.lastPathComponent])
+  }
 }
 
 private final class FileParseCapture: @unchecked Sendable {
@@ -162,6 +192,10 @@ private struct FileScanFixture {
     try handle.write(contentsOf: Data("\n\(usageLine(input: input))".utf8))
   }
 
+  func rewriteUsage(to url: URL, input: Int) throws {
+    try Data(usageLine(input: input).utf8).write(to: url)
+  }
+
   func cleanup() {
     try? FileManager.default.removeItem(at: root)
   }
@@ -182,5 +216,10 @@ private extension LocalUsageScan {
   var recordCount: Int? {
     guard case let .success(result) = outcome else { return nil }
     return result.records.count
+  }
+
+  var totalInputTokens: Int? {
+    guard case let .success(result) = outcome else { return nil }
+    return result.records.reduce(0) { $0 + $1.tokens.input }
   }
 }

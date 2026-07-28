@@ -1,21 +1,36 @@
+import Darwin
 import Foundation
 
 struct LocalUsageFileFingerprint: Codable, Equatable, Sendable {
   let byteCount: Int64
   let modifiedAt: Date
+  let statusChangedAt: Date
+  let fileID: UInt64
 
-  init?(url: URL, fileManager: FileManager) {
-    guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
-          let size = attributes[.size] as? NSNumber,
-          let modifiedAt = attributes[.modificationDate] as? Date
-    else { return nil }
-    byteCount = size.int64Value
-    self.modifiedAt = modifiedAt
+  init?(url: URL) {
+    let stream = url.withUnsafeFileSystemRepresentation {
+      fopen($0, "r")
+    }
+    guard let stream else { return nil }
+    defer { fclose(stream) }
+    var metadata = stat()
+    guard fstat(fileno(stream), &metadata) == 0 else { return nil }
+    byteCount = metadata.st_size
+    modifiedAt = Self.date(metadata.st_mtimespec)
+    statusChangedAt = Self.date(metadata.st_ctimespec)
+    fileID = metadata.st_ino
+  }
+
+  private static func date(_ value: timespec) -> Date {
+    Date(
+      timeIntervalSince1970: TimeInterval(value.tv_sec)
+        + TimeInterval(value.tv_nsec) / 1_000_000_000
+    )
   }
 }
 
 struct LocalUsageFileScanCache: @unchecked Sendable {
-  static let schemaVersion = 1
+  static let schemaVersion = 2
 
   private let cacheDirectory: URL
   private let fileManager: FileManager
