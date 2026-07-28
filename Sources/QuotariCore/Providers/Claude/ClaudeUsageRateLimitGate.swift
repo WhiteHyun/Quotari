@@ -67,6 +67,23 @@ public actor ClaudeUsageRateLimitGate {
     clear(storageKey(for: accessToken))
   }
 
+  public func transferCooldown(
+    from previousAccessToken: String,
+    to currentAccessToken: String,
+    now: Date? = nil
+  ) {
+    guard previousAccessToken != currentAccessToken else { return }
+    let now = now ?? currentDate()
+    let previousKey = storageKey(for: previousAccessToken)
+    guard let deadline = storedBlockedUntil(for: previousKey), deadline > now else {
+      clear(previousKey)
+      return
+    }
+    let currentKey = storageKey(for: currentAccessToken)
+    store(max(storedBlockedUntil(for: currentKey) ?? deadline, deadline), for: currentKey)
+    clear(previousKey)
+  }
+
   private func storedBlockedUntil(for key: String) -> Date? {
     if let defaults = persistedDefaults {
       defaults.removeObject(forKey: Self.legacyBlockedUntilKey)

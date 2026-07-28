@@ -268,15 +268,18 @@ public struct ClaudeRefreshResolution: Sendable {
   public var resolved: ResolvedClaudeCredentials
   public var acceptedGrant: ClaudePendingGrant?
   public var terminalError: ClaudeTokenRefreshError?
+  public var rotatedFromAccessToken: String?
 
   public init(
     resolved: ResolvedClaudeCredentials,
     acceptedGrant: ClaudePendingGrant? = nil,
-    terminalError: ClaudeTokenRefreshError? = nil
+    terminalError: ClaudeTokenRefreshError? = nil,
+    rotatedFromAccessToken: String? = nil
   ) {
     self.resolved = resolved
     self.acceptedGrant = acceptedGrant
     self.terminalError = terminalError
+    self.rotatedFromAccessToken = rotatedFromAccessToken
   }
 }
 

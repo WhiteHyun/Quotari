@@ -71,10 +71,7 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
       now: context.now,
       capturedRegistryID: context.capturedRegistryID
     )
-    if let terminalError = refresh.terminalError {
-      throw terminalError
-    }
-    resolved = refresh.resolved
+    resolved = try await resolvedCredentials(from: refresh)
     if context.interaction == .background,
        let blockedUntil = await rateLimitGate.blockedUntil(
          for: resolved.credentials.accessToken
@@ -104,10 +101,11 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
         deniedAccessToken: resolved.credentials.accessToken,
         capturedRegistryID: context.capturedRegistryID
       )
-      guard retried.resolved.credentials.accessToken != resolved.credentials.accessToken else {
+      let retriedCredentials = try await resolvedCredentials(from: retried)
+      guard retriedCredentials.credentials.accessToken != resolved.credentials.accessToken else {
         throw ProviderHTTPError.unauthorized
       }
-      return try await usageResult(with: retried.resolved, context: context)
+      return try await usageResult(with: retriedCredentials, context: context)
     }
   }
 
@@ -256,6 +254,7 @@ private extension ClaudeUsageStrategy {
       base,
       refreshToken: refreshToken,
       refresher: refresher,
+      deniedAccessToken: deniedAccessToken,
       now: now
     )
   }
@@ -267,6 +266,7 @@ private extension ClaudeUsageStrategy {
     _ base: ResolvedClaudeCredentials,
     refreshToken: String,
     refresher: any ClaudeTokenRefreshing,
+    deniedAccessToken: String?,
     now: Date
   ) async -> ClaudeRefreshResolution {
     do {
@@ -302,7 +302,9 @@ private extension ClaudeUsageStrategy {
       // If that doesn't help either, let the API answer 401 as before.
       Self.logger.error("Token refresh failed: \(error.localizedDescription, privacy: .public)")
       let reloaded = reloadedFromSource(base, now: now)
-      if let reloaded, !reloaded.credentials.isExpired(now: now) {
+      if let reloaded,
+         !reloaded.credentials.isExpired(now: now),
+         reloaded.credentials.accessToken != deniedAccessToken {
         return ClaudeRefreshResolution(resolved: reloaded)
       }
       return ClaudeRefreshResolution(
@@ -340,7 +342,10 @@ private extension ClaudeUsageStrategy {
       // the only refresh token that still works, so keep it queued for the
       // next transaction and fetch with it in the meantime.
       await rememberPending(pending, source: fallback.source)
-      return .resolved(ClaudeRefreshResolution(resolved: inMemory(fallback, pending.grant)))
+      return .resolved(ClaudeRefreshResolution(
+        resolved: inMemory(fallback, pending.grant),
+        rotatedFromAccessToken: pending.previousAccessToken
+      ))
     }
     let stored = ResolvedClaudeCredentials(credentials: current, source: fallback.source)
     if pending.matchesInstalledGeneration(
@@ -350,7 +355,8 @@ private extension ClaudeUsageStrategy {
       removeDurableGrantIfMatching(pending, source: fallback.source)
       return .resolved(ClaudeRefreshResolution(
         resolved: stored,
-        acceptedGrant: fallback.source.isCaptured ? nil : pending
+        acceptedGrant: fallback.source.isCaptured ? nil : pending,
+        rotatedFromAccessToken: pending.previousAccessToken
       ))
     }
     if pending.supersedes(
