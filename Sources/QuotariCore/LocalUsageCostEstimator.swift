@@ -163,18 +163,20 @@ struct LocalUsageCostScanner {
   let fileManager: FileManager
   let fileScanCache: LocalUsageFileScanCache?
   let onFileParsed: (@Sendable (URL) -> Void)?
-  private let calendar = Calendar(identifier: .gregorian)
+  private let calendar: Calendar
 
   init(
     environment: [String: String] = ProcessInfo.processInfo.environment,
     homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
     fileManager: FileManager = .default,
+    calendar: Calendar = Calendar(identifier: .gregorian),
     fileScanCacheDirectory: URL? = nil,
     onFileParsed: (@Sendable (URL) -> Void)? = nil
   ) {
     self.environment = environment
     self.homeDirectory = homeDirectory
     self.fileManager = fileManager
+    self.calendar = calendar
     fileScanCache = fileScanCacheDirectory.map {
       LocalUsageFileScanCache(cacheDirectory: $0, fileManager: fileManager)
     }
@@ -290,7 +292,8 @@ struct LocalUsageCostScanner {
     if let cached = fileScanCache?.load(
       provider: provider,
       url: file,
-      fingerprint: fingerprint
+      fingerprint: fingerprint,
+      timeZoneIdentifier: range.calendar.timeZone.identifier
     ) {
       return .success(cached.filtered(to: range))
     }
@@ -302,7 +305,8 @@ struct LocalUsageCostScanner {
         scan,
         provider: provider,
         url: file,
-        fingerprint: fingerprint
+        fingerprint: fingerprint,
+        timeZoneIdentifier: range.calendar.timeZone.identifier
       )
       return .success(scan.filtered(to: range))
     case .cancelled:

@@ -138,6 +138,34 @@ struct LocalUsageFileScanCacheTests {
     #expect(rescanned.totalInputTokens == 1100)
     #expect(capture.paths == [fixture.firstUsageURL.lastPathComponent])
   }
+
+  @Test func timeZoneChangeInvalidatesCalendarNormalizedCache() throws {
+    let fixture = try FileScanFixture()
+    defer { fixture.cleanup() }
+    let utc = try #require(TimeZone(secondsFromGMT: 0))
+    _ = fixture.scanner(capture: FileParseCapture(), timeZone: utc).scan(
+      provider: .codex,
+      now: fixture.now,
+      historyDays: 30
+    )
+    let losAngeles = try #require(TimeZone(identifier: "America/Los_Angeles"))
+    let capture = FileParseCapture()
+
+    let rescanned = fixture.scanner(capture: capture, timeZone: losAngeles).scan(
+      provider: .codex,
+      now: fixture.now,
+      historyDays: 30
+    )
+    var calendar = Calendar(identifier: .gregorian)
+    calendar.timeZone = losAngeles
+    let timestamp = try #require(LenientDateParser.parse("2026-07-28T07:00:00Z"))
+
+    #expect(rescanned.firstRecordDay == calendar.startOfDay(for: timestamp))
+    #expect(capture.paths == [
+      fixture.firstUsageURL.lastPathComponent,
+      fixture.secondUsageURL.lastPathComponent,
+    ])
+  }
 }
 
 private final class FileParseCapture: @unchecked Sendable {
@@ -176,10 +204,18 @@ private struct FileScanFixture {
     try writeUsage(to: secondUsageURL, input: 200)
   }
 
-  func scanner(capture: FileParseCapture) -> LocalUsageCostScanner {
-    LocalUsageCostScanner(
+  func scanner(
+    capture: FileParseCapture,
+    timeZone: TimeZone? = nil
+  ) -> LocalUsageCostScanner {
+    var calendar = Calendar(identifier: .gregorian)
+    if let timeZone {
+      calendar.timeZone = timeZone
+    }
+    return LocalUsageCostScanner(
       environment: ["CODEX_HOME": codexHome.path],
       homeDirectory: root,
+      calendar: calendar,
       fileScanCacheDirectory: cacheDirectory,
       onFileParsed: capture.record
     )
@@ -221,5 +257,10 @@ private extension LocalUsageScan {
   var totalInputTokens: Int? {
     guard case let .success(result) = outcome else { return nil }
     return result.records.reduce(0) { $0 + $1.tokens.input }
+  }
+
+  var firstRecordDay: Date? {
+    guard case let .success(result) = outcome else { return nil }
+    return result.records.first?.day
   }
 }

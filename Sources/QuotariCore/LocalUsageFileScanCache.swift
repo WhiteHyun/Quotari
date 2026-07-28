@@ -30,7 +30,7 @@ struct LocalUsageFileFingerprint: Codable, Equatable, Sendable {
 }
 
 struct LocalUsageFileScanCache: @unchecked Sendable {
-  static let schemaVersion = 2
+  static let schemaVersion = 3
 
   private let cacheDirectory: URL
   private let fileManager: FileManager
@@ -43,7 +43,8 @@ struct LocalUsageFileScanCache: @unchecked Sendable {
   func load(
     provider: UsageProvider,
     url: URL,
-    fingerprint: LocalUsageFileFingerprint
+    fingerprint: LocalUsageFileFingerprint,
+    timeZoneIdentifier: String
   ) -> LocalUsageFileScan? {
     let cacheURL = cacheURL(provider: provider, sourceURL: url)
     guard let data = try? Data(contentsOf: cacheURL) else { return nil }
@@ -54,7 +55,8 @@ struct LocalUsageFileScanCache: @unchecked Sendable {
     guard entry.schemaVersion == Self.schemaVersion,
           entry.provider == provider,
           entry.sourcePath == canonicalPath(url),
-          entry.fingerprint == fingerprint
+          entry.fingerprint == fingerprint,
+          entry.timeZoneIdentifier == timeZoneIdentifier
     else { return nil }
     return entry.scan
   }
@@ -63,13 +65,15 @@ struct LocalUsageFileScanCache: @unchecked Sendable {
     _ scan: LocalUsageFileScan,
     provider: UsageProvider,
     url: URL,
-    fingerprint: LocalUsageFileFingerprint
+    fingerprint: LocalUsageFileFingerprint,
+    timeZoneIdentifier: String
   ) {
     let entry = Entry(
       schemaVersion: Self.schemaVersion,
       provider: provider,
       sourcePath: canonicalPath(url),
       fingerprint: fingerprint,
+      timeZoneIdentifier: timeZoneIdentifier,
       scan: scan
     )
     guard let data = try? JSONEncoder().encode(entry) else { return }
@@ -118,6 +122,7 @@ struct LocalUsageFileScanCache: @unchecked Sendable {
     let provider: UsageProvider
     let sourcePath: String
     let fingerprint: LocalUsageFileFingerprint
+    let timeZoneIdentifier: String
     let scan: LocalUsageFileScan
   }
 }
