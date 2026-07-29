@@ -5,6 +5,7 @@ struct LocalUsageFileFingerprint: Codable, Equatable, Sendable {
   let byteCount: Int64
   let modifiedAt: Date
   let statusChangedAt: Date
+  let deviceID: UInt64
   let fileID: UInt64
 
   init?(handle: FileHandle) {
@@ -13,6 +14,7 @@ struct LocalUsageFileFingerprint: Codable, Equatable, Sendable {
     byteCount = metadata.st_size
     modifiedAt = Self.date(metadata.st_mtimespec)
     statusChangedAt = Self.date(metadata.st_ctimespec)
+    deviceID = UInt64(metadata.st_dev)
     fileID = metadata.st_ino
   }
 
@@ -53,7 +55,7 @@ final class LocalUsageFileSnapshot {
 }
 
 struct LocalUsageFileScanCache: @unchecked Sendable {
-  static let schemaVersion = 4
+  static let schemaVersion = 5
 
   private let cacheDirectory: URL
   private let fileManager: FileManager

@@ -276,7 +276,7 @@ struct LocalUsageFileScanCacheTests {
   }
 }
 
-private final class FileParseCapture: @unchecked Sendable {
+final class FileParseCapture: @unchecked Sendable {
   private let lock = NSLock()
   private var storage: [String] = []
 
@@ -289,7 +289,7 @@ private final class FileParseCapture: @unchecked Sendable {
   }
 }
 
-private struct FileScanFixture {
+struct FileScanFixture {
   let root: URL
   let codexHome: URL
   let sessions: URL
@@ -375,7 +375,7 @@ private extension LocalUsageScan {
   }
 }
 
-private extension LocalUsageFileParseOutcome {
+extension LocalUsageFileParseOutcome {
   var totalInputTokens: Int? {
     guard case let .success(scan) = self else { return nil }
     return scan.records.reduce(0) { $0 + $1.tokens.input }

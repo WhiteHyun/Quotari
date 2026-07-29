@@ -20,7 +20,9 @@ extension LocalUsageCostScanner {
       guard let currentSnapshot = LocalUsageFileSnapshot(url: file) else {
         return .failure
       }
-      guard currentSnapshot.fingerprint != fingerprint else {
+      guard currentSnapshot.fingerprint != fingerprint
+        || currentSnapshot.sourcePath != snapshot.sourcePath
+      else {
         return .success(cached.filtered(to: range))
       }
       return parseAndCacheFile(

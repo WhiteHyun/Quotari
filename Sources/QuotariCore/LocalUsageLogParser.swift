@@ -96,7 +96,7 @@ extension LocalUsageCostScanner {
       let model = string(message["model"]),
       let usage = message["usage"] as? [String: Any]
     else { return true }
-    let day = range.calendar.startOfDay(for: timestamp)
+    guard let day = range.day(containing: timestamp) else { return true }
 
     guard let tokens = claudeTokenTotals(from: usage) else {
       state.appendUnsupportedUsage(
