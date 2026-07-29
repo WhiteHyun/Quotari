@@ -73,6 +73,99 @@ struct LocalUsageCostEstimatorClaudeReviewTests {
     #expect(await estimator.costSummary(provider: .claude, now: env.now, historyDays: 30) == nil)
   }
 
+  @Test func outOfWindowDuplicateCannotReplaceInWindowClaudeUsage() async throws {
+    let env = try ClaudeReviewCostTestEnvironment()
+    defer { env.cleanup() }
+    let claudeConfig = env.root.appendingPathComponent("claude-config", isDirectory: true)
+    let project = claudeConfig
+      .appendingPathComponent("projects", isDirectory: true)
+      .appendingPathComponent("quotari", isDirectory: true)
+    try env.createDirectory(project)
+    try env.writeJSONL(
+      project.appendingPathComponent("usage.jsonl"),
+      [
+        Self.claudeAssistantLine(
+          timestamp: "2026-07-08T10:00:00Z",
+          requestID: "req-1",
+          input: 100,
+          cacheRead: 50,
+          cacheWrite: 5,
+          output: 20
+        ),
+        Self.claudeAssistantLine(
+          timestamp: "2026-06-01T10:00:00Z",
+          requestID: "req-1",
+          input: 900,
+          cacheRead: 800,
+          cacheWrite: 80,
+          output: 90
+        ),
+      ]
+    )
+    let estimator = LocalUsageCostEstimator.testing(
+      environment: ["CLAUDE_CONFIG_DIR": claudeConfig.path],
+      homeDirectory: env.root
+    )
+
+    let summary = try #require(await estimator.costSummary(
+      provider: .claude,
+      now: env.now,
+      historyDays: 30
+    ))
+
+    #expect(summary.monthTokens == 55)
+  }
+
+  @Test func widerClaudeWindowDoesNotReuseNarrowFileCache() async throws {
+    let env = try ClaudeReviewCostTestEnvironment()
+    defer { env.cleanup() }
+    let claudeConfig = env.root.appendingPathComponent("claude-config", isDirectory: true)
+    let project = claudeConfig
+      .appendingPathComponent("projects", isDirectory: true)
+      .appendingPathComponent("quotari", isDirectory: true)
+    try env.createDirectory(project)
+    try env.writeJSONL(
+      project.appendingPathComponent("usage.jsonl"),
+      [
+        Self.claudeAssistantLine(
+          timestamp: "2026-07-08T10:00:00Z",
+          requestID: "current",
+          input: 100,
+          cacheRead: 50,
+          cacheWrite: 5,
+          output: 20
+        ),
+        Self.claudeAssistantLine(
+          timestamp: "2026-06-20T10:00:00Z",
+          requestID: "older",
+          input: 100,
+          cacheRead: 80,
+          cacheWrite: 8,
+          output: 20
+        ),
+      ]
+    )
+    let estimator = LocalUsageCostEstimator.testing(
+      environment: ["CLAUDE_CONFIG_DIR": claudeConfig.path],
+      homeDirectory: env.root,
+      cacheDirectory: env.root.appendingPathComponent("cache", isDirectory: true)
+    )
+
+    let narrow = try #require(await estimator.costSummary(
+      provider: .claude,
+      now: env.now,
+      historyDays: 1
+    ))
+    let wide = try #require(await estimator.costSummary(
+      provider: .claude,
+      now: env.now,
+      historyDays: 30
+    ))
+
+    #expect(narrow.monthTokens == 55)
+    #expect(wide.monthTokens == 143)
+  }
+
   private static func claudeAssistantLine(
     timestamp: String,
     requestID: String? = nil,

@@ -202,6 +202,32 @@ extension LocalUsageInsightsEstimatorTests {
     ) == nil)
   }
 
+  @Test func cancelingInsightsStopsTheDetachedLocalScan() async throws {
+    let fixture = try InsightsEstimatorFixture()
+    defer { fixture.cleanup() }
+    let hook = CancellationObservationHook()
+    let estimator = LocalUsageCostEstimator.testing(
+      environment: ["CODEX_HOME": fixture.codexHome.path],
+      homeDirectory: fixture.root,
+      cacheDirectory: fixture.cache,
+      localUsageScanHook: hook.waitForCancellation
+    )
+    let task = Task {
+      await estimator.insights(
+        provider: .codex,
+        account: fixture.codexAccount(identity: "account"),
+        now: fixture.now,
+        historyDays: 30
+      )
+    }
+    await hook.waitUntilReached()
+
+    task.cancel()
+
+    #expect(await task.value == nil)
+    #expect(hook.didObserveCancellation)
+  }
+
   @Test func invalidationAtTheWriteBoundaryWinsOverTheAnalysis() async throws {
     let fixture = try InsightsEstimatorFixture()
     defer { fixture.cleanup() }

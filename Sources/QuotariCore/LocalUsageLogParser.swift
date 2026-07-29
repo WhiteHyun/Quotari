@@ -1,19 +1,22 @@
 import Foundation
 
 extension LocalUsageCostScanner {
-  func parseCodexFile(_ url: URL, range: DayRange) -> LocalUsageFileScan? {
-    guard let lines = lines(in: url) else { return nil }
-    let sessionID = localSessionID(for: url)
+  func parseCodexFile(
+    handle: FileHandle,
+    sourcePath: String,
+    range: DayRange
+  ) -> LocalUsageFileParseOutcome {
+    let sessionID = localSessionID(forSourcePath: sourcePath)
     var previousTotals: TokenTotals?
     var currentModel: String?
     var records: [LocalTokenRecord] = []
     var unsupportedUsage: [LocalUnsupportedUsage] = []
 
-    for line in lines {
+    let readOutcome = forEachLine(handle: handle) { line in
       // A trailing partial line is expected while a writer is active, but
       // caching a total before that line completes would undercount. Preserve
       // the previous summary until every observed line is valid JSON.
-      guard let object = jsonObject(from: line) else { return nil }
+      guard let object = jsonObject(from: line) else { return false }
       if let model = codexModel(from: object) {
         currentModel = model
       }
@@ -23,20 +26,20 @@ extension LocalUsageCostScanner {
             payload["type"] as? String == "token_count",
             let info = payload["info"] as? [String: Any],
             let timestamp = timestamp(from: object)
-      else { continue }
+      else { return true }
 
       let model = string(info["model"]) ?? currentModel
       let tokens = codexTokens(from: info, previousTotals: &previousTotals)
-      guard let day = range.day(containing: timestamp) else { continue }
+      let day = range.calendar.startOfDay(for: timestamp)
       guard let tokens else {
         if hasPositiveCodexUsage(in: info) {
           unsupportedUsage.append(
             LocalUnsupportedUsage(day: day, model: model, sessionID: sessionID)
           )
         }
-        continue
+        return true
       }
-      guard tokens.total > 0 else { continue }
+      guard tokens.total > 0 else { return true }
       records.append(LocalTokenRecord(
         day: day,
         model: model,
@@ -45,67 +48,81 @@ extension LocalUsageCostScanner {
           ?? (tokens.input + tokens.cacheRead + tokens.cacheWrite),
         sessionID: sessionID
       ))
+      return true
     }
-    return LocalUsageFileScan(records: records, unsupportedUsage: unsupportedUsage)
+    return switch readOutcome {
+    case .completed:
+      .success(LocalUsageFileScan(records: records, unsupportedUsage: unsupportedUsage))
+    case .cancelled:
+      .cancelled
+    case .failure:
+      .failure
+    }
   }
 
-  func parseClaudeFile(_ url: URL, range: DayRange) -> LocalUsageFileScan? {
-    guard let lines = lines(in: url) else { return nil }
-    let sessionID = localSessionID(for: url)
-    var records: [PendingClaudeTokenRecord] = []
-    var keyedRecords: [String: PendingClaudeTokenRecord] = [:]
-    var unsupportedUsage: [LocalUnsupportedUsage] = []
-    var keyedUnsupportedUsage: [String: LocalUnsupportedUsage] = [:]
+  func parseClaudeFile(
+    handle: FileHandle,
+    sourcePath: String,
+    range: DayRange
+  ) -> LocalUsageFileParseOutcome {
+    let sessionID = localSessionID(forSourcePath: sourcePath)
+    var state = ClaudeFileParseState()
 
-    for (lineNumber, line) in lines.enumerated() {
-      guard let object = jsonObject(from: line) else { return nil }
-      guard
-        object["type"] as? String == "assistant",
-        let timestamp = timestamp(from: object),
-        let day = range.day(containing: timestamp),
-        let message = object["message"] as? [String: Any],
-        let model = string(message["model"]),
-        let usage = message["usage"] as? [String: Any]
-      else { continue }
-
-      guard let tokens = claudeTokenTotals(from: usage) else {
-        if hasPositiveUsage(in: usage) {
-          let unsupported = LocalUnsupportedUsage(day: day, model: model, sessionID: sessionID)
-          if let key = claudeUsageKey(from: object, message: message) {
-            keyedUnsupportedUsage[key] = unsupported
-          } else {
-            unsupportedUsage.append(unsupported)
-          }
-        }
-        continue
-      }
-      let record = PendingClaudeTokenRecord(
-        lineNumber: lineNumber,
-        record: LocalTokenRecord(
-          day: day,
-          model: model,
-          tokens: tokens,
-          contextInputTokens: claudeContextInputTokens(from: usage),
-          sessionID: sessionID
-        )
-      )
-      if let key = claudeUsageKey(from: object, message: message) {
-        keyedRecords[key] = record
-        keyedUnsupportedUsage[key] = nil
-      } else {
-        records.append(record)
-      }
+    let readOutcome = forEachLine(handle: handle) { line in
+      consumeClaudeLine(line, sessionID: sessionID, range: range, state: &state)
     }
-    return LocalUsageFileScan(
-      records: (records + keyedRecords.values)
-        .sorted { $0.lineNumber < $1.lineNumber }
-        .map(\.record),
-      unsupportedUsage: unsupportedUsage + Array(keyedUnsupportedUsage.values)
+    return switch readOutcome {
+    case .completed:
+      .success(state.scan)
+    case .cancelled:
+      .cancelled
+    case .failure:
+      .failure
+    }
+  }
+
+  private func consumeClaudeLine(
+    _ line: Data,
+    sessionID: String,
+    range: DayRange,
+    state: inout ClaudeFileParseState
+  ) -> Bool {
+    defer { state.lineNumber += 1 }
+    guard let object = jsonObject(from: line) else { return false }
+    guard
+      object["type"] as? String == "assistant",
+      let timestamp = timestamp(from: object),
+      let message = object["message"] as? [String: Any],
+      let model = string(message["model"]),
+      let usage = message["usage"] as? [String: Any]
+    else { return true }
+    guard let day = range.day(containing: timestamp) else { return true }
+
+    guard let tokens = claudeTokenTotals(from: usage) else {
+      state.appendUnsupportedUsage(
+        day: day,
+        model: model,
+        sessionID: sessionID,
+        key: claudeUsageKey(from: object, message: message),
+        hasPositiveUsage: hasPositiveUsage(in: usage)
+      )
+      return true
+    }
+    state.append(
+      record: LocalTokenRecord(
+        day: day,
+        model: model,
+        tokens: tokens,
+        contextInputTokens: claudeContextInputTokens(from: usage),
+        sessionID: sessionID
+      ),
+      key: claudeUsageKey(from: object, message: message)
     )
+    return true
   }
 }
 
-private extension LocalUsageCostScanner {
+extension LocalUsageCostScanner {
   func codexModel(from object: [String: Any]) -> String? {
     if let model = string(object["model"]) {
       return model
@@ -127,21 +144,56 @@ private extension LocalUsageCostScanner {
     return nil
   }
 
-  func localSessionID(for url: URL) -> String {
-    let canonicalPath = url.resolvingSymlinksInPath().standardizedFileURL.path
-    return ProviderCredentialIdentity.fingerprint(of: canonicalPath)
+  func localSessionID(forSourcePath sourcePath: String) -> String {
+    ProviderCredentialIdentity.fingerprint(of: sourcePath)
   }
 
-  func lines(in url: URL) -> [Substring]? {
-    guard let data = try? Data(contentsOf: url),
-          let text = String(data: data, encoding: .utf8)
-    else { return nil }
-    return text.split(whereSeparator: \.isNewline)
+  func forEachLine(
+    in url: URL,
+    body: (Data) -> Bool
+  ) -> LocalUsageLineReadOutcome {
+    guard !Task.isCancelled else { return .cancelled }
+    guard let handle = try? FileHandle(forReadingFrom: url) else { return .failure }
+    defer { try? handle.close() }
+    return forEachLine(handle: handle, body: body)
   }
 
-  func jsonObject(from line: Substring) -> [String: Any]? {
-    guard let data = String(line).data(using: .utf8) else { return nil }
-    return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+  private func forEachLine(
+    handle: FileHandle,
+    body: (Data) -> Bool
+  ) -> LocalUsageLineReadOutcome {
+    var pending = Data()
+    var newlineSearchOffset = 0
+    do {
+      while let chunk = try handle.read(upToCount: 256 * 1024), !chunk.isEmpty {
+        guard !Task.isCancelled else { return .cancelled }
+        pending.append(chunk)
+        if let outcome = consumeCompleteLines(
+          from: &pending,
+          newlineSearchOffset: &newlineSearchOffset,
+          body: body
+        ) {
+          return outcome
+        }
+      }
+    } catch {
+      return .failure
+    }
+    guard !Task.isCancelled else { return .cancelled }
+    let finalLine = normalizedLine(pending)
+    guard finalLine.isEmpty || autoreleasepool(invoking: { body(finalLine) }) else {
+      return .failure
+    }
+    return .completed
+  }
+
+  func normalizedLine(_ data: Data) -> Data {
+    guard data.last == 0x0D else { return data }
+    return data.dropLast()
+  }
+
+  func jsonObject(from line: Data) -> [String: Any]? {
+    (try? JSONSerialization.jsonObject(with: line)) as? [String: Any]
   }
 
   func timestamp(from object: [String: Any]) -> Date? {
@@ -259,7 +311,69 @@ private struct PendingClaudeTokenRecord {
   let record: LocalTokenRecord
 }
 
-struct LocalUsageFileScan {
+private struct ClaudeFileParseState {
+  var records: [PendingClaudeTokenRecord] = []
+  var keyedRecords: [String: PendingClaudeTokenRecord] = [:]
+  var unsupportedUsage: [LocalUnsupportedUsage] = []
+  var keyedUnsupportedUsage: [String: LocalUnsupportedUsage] = [:]
+  var lineNumber = 0
+
+  var scan: LocalUsageFileScan {
+    LocalUsageFileScan(
+      records: (records + keyedRecords.values)
+        .sorted { $0.lineNumber < $1.lineNumber }
+        .map(\.record),
+      unsupportedUsage: unsupportedUsage + Array(keyedUnsupportedUsage.values)
+    )
+  }
+
+  mutating func append(record: LocalTokenRecord, key: String?) {
+    let pending = PendingClaudeTokenRecord(lineNumber: lineNumber, record: record)
+    if let key {
+      keyedRecords[key] = pending
+      keyedUnsupportedUsage[key] = nil
+    } else {
+      records.append(pending)
+    }
+  }
+
+  mutating func appendUnsupportedUsage(
+    day: Date,
+    model: String,
+    sessionID: String,
+    key: String?,
+    hasPositiveUsage: Bool
+  ) {
+    guard hasPositiveUsage else { return }
+    let unsupported = LocalUnsupportedUsage(day: day, model: model, sessionID: sessionID)
+    if let key {
+      keyedUnsupportedUsage[key] = unsupported
+    } else {
+      unsupportedUsage.append(unsupported)
+    }
+  }
+}
+
+enum LocalUsageFileParseOutcome: Sendable {
+  case success(LocalUsageFileScan)
+  case cancelled
+  case failure
+}
+
+enum LocalUsageLineReadOutcome: Sendable {
+  case completed
+  case cancelled
+  case failure
+}
+
+struct LocalUsageFileScan: Codable, Equatable, Sendable {
   let records: [LocalTokenRecord]
   let unsupportedUsage: [LocalUnsupportedUsage]
+
+  func filtered(to range: DayRange) -> LocalUsageFileScan {
+    LocalUsageFileScan(
+      records: records.filter { range.day(containing: $0.day) != nil },
+      unsupportedUsage: unsupportedUsage.filter { range.day(containing: $0.day) != nil }
+    )
+  }
 }

@@ -202,3 +202,42 @@ final class BlockingCacheMutationHook: @unchecked Sendable {
     resume.signal()
   }
 }
+
+final class CancellationObservationHook: @unchecked Sendable {
+  private let lock = NSLock()
+  private var didReach = false
+  private var observedCancellation = false
+  private var reachWaiters: [CheckedContinuation<Void, Never>] = []
+
+  var didObserveCancellation: Bool {
+    lock.withLock { observedCancellation }
+  }
+
+  func waitForCancellation() {
+    let waiters = lock.withLock {
+      didReach = true
+      defer { reachWaiters.removeAll() }
+      return reachWaiters
+    }
+    waiters.forEach { $0.resume() }
+    while !Task.isCancelled {
+      Thread.sleep(forTimeInterval: 0.001)
+    }
+    lock.withLock { observedCancellation = true }
+  }
+
+  func waitUntilReached() async {
+    await withCheckedContinuation { continuation in
+      let shouldResume = lock.withLock {
+        if didReach {
+          return true
+        }
+        reachWaiters.append(continuation)
+        return false
+      }
+      if shouldResume {
+        continuation.resume()
+      }
+    }
+  }
+}

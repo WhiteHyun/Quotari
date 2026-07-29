@@ -319,7 +319,7 @@ struct DayRange: Sendable {
   }
 }
 
-struct LocalTokenRecord: Sendable {
+struct LocalTokenRecord: Codable, Equatable, Sendable {
   let day: Date
   let model: String?
   let tokens: TokenTotals
@@ -341,7 +341,7 @@ struct LocalTokenRecord: Sendable {
   }
 }
 
-struct TokenTotals: Sendable {
+struct TokenTotals: Codable, Equatable, Sendable {
   let input: Int
   let cacheRead: Int
   let cacheWrite: Int
