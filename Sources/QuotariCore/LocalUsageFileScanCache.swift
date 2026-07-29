@@ -54,8 +54,26 @@ final class LocalUsageFileSnapshot {
   }
 }
 
+struct LocalUsageFileScanRange: Codable, Equatable, Sendable {
+  let start: Date
+  let end: Date
+
+  init(_ range: DayRange) {
+    start = range.start
+    end = range.end
+  }
+}
+
+struct LocalUsageFileScanCacheIdentity: Sendable {
+  let provider: UsageProvider
+  let sourcePath: String
+  let fingerprint: LocalUsageFileFingerprint
+  let timeZoneIdentifier: String
+  let scanRange: LocalUsageFileScanRange?
+}
+
 struct LocalUsageFileScanCache: @unchecked Sendable {
-  static let schemaVersion = 5
+  static let schemaVersion = 6
 
   private let cacheDirectory: URL
   private let fileManager: FileManager
@@ -65,46 +83,43 @@ struct LocalUsageFileScanCache: @unchecked Sendable {
     self.fileManager = fileManager
   }
 
-  func load(
-    provider: UsageProvider,
-    sourcePath: String,
-    fingerprint: LocalUsageFileFingerprint,
-    timeZoneIdentifier: String
-  ) -> LocalUsageFileScan? {
-    let cacheURL = cacheURL(provider: provider, sourcePath: sourcePath)
+  func load(_ identity: LocalUsageFileScanCacheIdentity) -> LocalUsageFileScan? {
+    let cacheURL = cacheURL(
+      provider: identity.provider,
+      sourcePath: identity.sourcePath
+    )
     guard let data = try? Data(contentsOf: cacheURL) else { return nil }
     guard let entry = try? JSONDecoder().decode(Entry.self, from: data) else {
       try? fileManager.removeItem(at: cacheURL)
       return nil
     }
     guard entry.schemaVersion == Self.schemaVersion,
-          entry.provider == provider,
-          entry.sourcePath == sourcePath,
-          entry.fingerprint == fingerprint,
-          entry.timeZoneIdentifier == timeZoneIdentifier
+          entry.provider == identity.provider,
+          entry.sourcePath == identity.sourcePath,
+          entry.fingerprint == identity.fingerprint,
+          entry.timeZoneIdentifier == identity.timeZoneIdentifier,
+          entry.scanRange == identity.scanRange
     else { return nil }
     return entry.scan
   }
 
   func save(
     _ scan: LocalUsageFileScan,
-    provider: UsageProvider,
-    sourcePath: String,
-    fingerprint: LocalUsageFileFingerprint,
-    timeZoneIdentifier: String
+    identity: LocalUsageFileScanCacheIdentity
   ) {
     let entry = Entry(
       schemaVersion: Self.schemaVersion,
-      provider: provider,
-      sourcePath: sourcePath,
-      fingerprint: fingerprint,
-      timeZoneIdentifier: timeZoneIdentifier,
+      provider: identity.provider,
+      sourcePath: identity.sourcePath,
+      fingerprint: identity.fingerprint,
+      timeZoneIdentifier: identity.timeZoneIdentifier,
+      scanRange: identity.scanRange,
       scan: scan
     )
     guard let data = try? JSONEncoder().encode(entry) else { return }
     try? fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
     try? data.write(
-      to: cacheURL(provider: provider, sourcePath: sourcePath),
+      to: cacheURL(provider: identity.provider, sourcePath: identity.sourcePath),
       options: [.atomic]
     )
   }
@@ -152,6 +167,7 @@ struct LocalUsageFileScanCache: @unchecked Sendable {
     let sourcePath: String
     let fingerprint: LocalUsageFileFingerprint
     let timeZoneIdentifier: String
+    let scanRange: LocalUsageFileScanRange?
     let scan: LocalUsageFileScan
   }
 }
