@@ -65,7 +65,7 @@ public struct CapturedAccountStore: Sendable {
   private let indexService: String
 
   public init(
-    keychain: KeychainItemStore = KeychainItemStore(),
+    keychain: KeychainItemStore = .appOwned(),
     itemPrefix: String = CapturedAccountStore.itemPrefix,
     indexService: String = CapturedAccountStore.indexService
   ) {
