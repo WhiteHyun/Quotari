@@ -59,6 +59,39 @@ struct LocalUsageFileScanCacheTests {
     }
   }
 
+  @Test func unterminatedMultiChunkLineResumesSearchingAtTheAppendBoundary() throws {
+    let fixture = try FileScanFixture()
+    defer { fixture.cleanup() }
+    let scanner = fixture.scanner(capture: FileParseCapture())
+    var pending = Data(repeating: 0x61, count: 512 * 1024)
+    var searchOffset = 0
+
+    let initial = scanner.consumeCompleteLines(
+      from: &pending,
+      newlineSearchOffset: &searchOffset,
+      body: { _ in true }
+    )
+
+    #expect(initial == nil)
+    #expect(searchOffset == pending.count)
+    pending.append(contentsOf: [0x62, 0x0A])
+    var consumedLine: Data?
+
+    let completed = scanner.consumeCompleteLines(
+      from: &pending,
+      newlineSearchOffset: &searchOffset,
+      body: {
+        consumedLine = $0
+        return true
+      }
+    )
+
+    #expect(completed == nil)
+    #expect(consumedLine?.count == (512 * 1024) + 1)
+    #expect(pending.isEmpty)
+    #expect(searchOffset == 0)
+  }
+
   @Test func corruptCacheEntryIsDiscardedAndRebuilt() throws {
     let fixture = try FileScanFixture()
     defer { fixture.cleanup() }

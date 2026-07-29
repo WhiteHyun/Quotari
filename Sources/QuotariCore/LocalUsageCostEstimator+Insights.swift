@@ -237,15 +237,21 @@ extension LocalUsageCostEstimator {
     now: Date,
     historyDays: Int
   ) async -> LocalUsageScan {
-    await Task.detached(priority: .utility) {
-      LocalUsageCostScanner(
+    let scanTask = Task.detached(priority: .utility) {
+      localUsageScanHook?()
+      return LocalUsageCostScanner(
         environment: environment,
         homeDirectory: homeDirectory,
         fileScanCacheDirectory: insightsCacheDirectory
           .appendingPathComponent("file-scans", isDirectory: true)
       )
       .scan(provider: provider, account: account, now: now, historyDays: historyDays)
-    }.value
+    }
+    return await withTaskCancellationHandler {
+      await scanTask.value
+    } onCancel: {
+      scanTask.cancel()
+    }
   }
 
   private func buildSummary(

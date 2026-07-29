@@ -163,11 +163,16 @@ extension LocalUsageCostScanner {
     body: (Data) -> Bool
   ) -> LocalUsageLineReadOutcome {
     var pending = Data()
+    var newlineSearchOffset = 0
     do {
       while let chunk = try handle.read(upToCount: 256 * 1024), !chunk.isEmpty {
         guard !Task.isCancelled else { return .cancelled }
         pending.append(chunk)
-        if let outcome = consumeCompleteLines(from: &pending, body: body) {
+        if let outcome = consumeCompleteLines(
+          from: &pending,
+          newlineSearchOffset: &newlineSearchOffset,
+          body: body
+        ) {
           return outcome
         }
       }
@@ -180,25 +185,6 @@ extension LocalUsageCostScanner {
       return .failure
     }
     return .completed
-  }
-
-  private func consumeCompleteLines(
-    from pending: inout Data,
-    body: (Data) -> Bool
-  ) -> LocalUsageLineReadOutcome? {
-    var lineStart = pending.startIndex
-    while let newline = pending[lineStart...].firstIndex(of: 0x0A) {
-      guard !Task.isCancelled else { return .cancelled }
-      let line = normalizedLine(pending.subdata(in: lineStart ..< newline))
-      guard line.isEmpty || autoreleasepool(invoking: { body(line) }) else {
-        return .failure
-      }
-      lineStart = pending.index(after: newline)
-    }
-    if lineStart > pending.startIndex {
-      pending.removeSubrange(pending.startIndex ..< lineStart)
-    }
-    return nil
   }
 
   func normalizedLine(_ data: Data) -> Data {

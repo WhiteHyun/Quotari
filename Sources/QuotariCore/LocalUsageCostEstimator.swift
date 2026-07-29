@@ -10,6 +10,7 @@ public struct LocalUsageCostEstimator: UsageCostEstimating, UsageInsightsAnalyzi
   let cacheCoordinator: LocalUsageCacheCoordinator
   let scopeIdentityStore: LocalUsageScopeIdentityStore
   let cacheMutationHook: (@Sendable () -> Void)?
+  let localUsageScanHook: (@Sendable () -> Void)?
 
   public init(
     environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -32,7 +33,8 @@ public struct LocalUsageCostEstimator: UsageCostEstimating, UsageInsightsAnalyzi
     homeDirectory: URL,
     cacheDirectory: URL? = nil,
     pricingCatalogProvider: any ModelPricingCatalogProviding,
-    cacheMutationHook: (@Sendable () -> Void)? = nil
+    cacheMutationHook: (@Sendable () -> Void)? = nil,
+    localUsageScanHook: (@Sendable () -> Void)? = nil
   ) {
     self.environment = environment
     self.homeDirectory = homeDirectory
@@ -49,6 +51,7 @@ public struct LocalUsageCostEstimator: UsageCostEstimating, UsageInsightsAnalyzi
     cacheCoordinator = LocalUsageCacheCoordinator()
     scopeIdentityStore = LocalUsageScopeIdentityStore(cacheDirectory: insightsCacheDirectory)
     self.cacheMutationHook = cacheMutationHook
+    self.localUsageScanHook = localUsageScanHook
   }
 
   public func cachedCostSummary(provider: UsageProvider, now: Date, historyDays: Int = 30) -> CostSummary? {

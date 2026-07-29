@@ -5,13 +5,15 @@ extension LocalUsageCostEstimator {
   static func testing(
     environment: [String: String],
     homeDirectory: URL,
-    cacheDirectory: URL? = nil
+    cacheDirectory: URL? = nil,
+    localUsageScanHook: (@Sendable () -> Void)? = nil
   ) -> Self {
     Self(
       environment: environment,
       homeDirectory: homeDirectory,
       cacheDirectory: cacheDirectory,
-      pricingCatalogProvider: BundledModelPricingCatalogProvider()
+      pricingCatalogProvider: BundledModelPricingCatalogProvider(),
+      localUsageScanHook: localUsageScanHook
     )
   }
 }
