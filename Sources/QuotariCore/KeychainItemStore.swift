@@ -1,11 +1,11 @@
 import Foundation
 
-/// Reads and writes generic-password keychain items. In production the
-/// operations shell out to the `security` CLI rather than Security.framework:
-/// the ACL consent then sticks to the stable system binary, so rebuilt dev
-/// binaries don't re-prompt every run (the same rationale the Claude
-/// credential reader already relies on). The operations are injectable so
-/// tests can run against an in-memory backend instead of the real keychain.
+/// Reads and writes generic-password keychain items. Provider-owned credential
+/// slots keep using the stable `/usr/bin/security` binary so their ACL consent
+/// does not follow each rebuilt development binary. Quotari-owned items use
+/// ``appOwned(account:)`` instead, which passes arbitrary-sized payloads to
+/// Security.framework as `Data` without the line-oriented `security -i` parser.
+/// Operations remain injectable for deterministic tests.
 public struct KeychainItemStore: Sendable {
   public enum KeychainError: LocalizedError, Sendable {
     case commandFailed(status: Int32)
@@ -13,7 +13,7 @@ public struct KeychainItemStore: Sendable {
 
     public var errorDescription: String? {
       switch self {
-      case let .commandFailed(status): "The security command exited \(status)."
+      case let .commandFailed(status): "The Keychain operation failed (\(status))."
       case .malformedPayload: "The keychain payload could not be encoded."
       }
     }
@@ -32,6 +32,18 @@ public struct KeychainItemStore: Sendable {
     readItem = read ?? { service in try Self.securityRead(account: account, service: service) }
     writeItem = write ?? { data, service in try Self.securityWrite(data, account: account, service: service) }
     deleteItem = delete ?? { service in try Self.securityDelete(account: account, service: service) }
+  }
+
+  /// A direct Security.framework backend for items owned by Quotari. Unlike
+  /// `security -i`, it does not impose a command-line parser limit on payloads.
+  public static func appOwned(account: String = NSUserName()) -> Self {
+    let keychain = SecurityFrameworkKeychainStore()
+    return Self(
+      account: account,
+      read: { service in try keychain.read(account: account, service: service) },
+      write: { data, service in try keychain.write(data, account: account, service: service) },
+      delete: { service in try keychain.delete(account: account, service: service) }
+    )
   }
 
   /// Returns the item bytes, `nil` when the item genuinely doesn't exist, and
@@ -95,6 +107,14 @@ public struct KeychainItemStore: Sendable {
     try securityDelete(account: account, service: service)
   }
 
+  public func write(_ data: Data, service: String) throws {
+    try writeItem(data, service)
+  }
+
+  public func delete(service: String) throws {
+    try deleteItem(service)
+  }
+
   /// The `acct` attribute of the item for `service`, read without printing
   /// the secret (`security find-generic-password` without `-g`/`-w`). Nil
   /// only when no item exists (exit 44); throws on a command failure or an
@@ -126,14 +146,6 @@ public struct KeychainItemStore: Sendable {
     // The item exists but its account attribute couldn't be parsed — fail
     // closed rather than fall back to a different account.
     throw KeychainError.malformedPayload
-  }
-
-  public func write(_ data: Data, service: String) throws {
-    try writeItem(data, service)
-  }
-
-  public func delete(service: String) throws {
-    try deleteItem(service)
   }
 
   private static func securityRead(account: String, service: String) throws -> Data? {
