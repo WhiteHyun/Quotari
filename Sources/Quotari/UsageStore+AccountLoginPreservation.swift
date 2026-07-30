@@ -31,7 +31,10 @@ extension UsageStore {
         source: source,
         previousClaudeLogin: previousClaudeLogin,
         registryBaseline: registryBaseline,
-        accountState: accountState
+        evidence: ClaudeLoginCredentialEvidence(
+          accountState: accountState,
+          requiresNewerGenerationEvidence: true
+        )
       )
     } else {
       nil
@@ -61,7 +64,12 @@ extension UsageStore {
         source: source,
         previousClaudeLogin: previousClaudeLogin,
         registryBaseline: registryBaseline,
-        accountState: accountState
+        evidence: ClaudeLoginCredentialEvidence(
+          accountState: accountState,
+          // Sampling after the pre-login boundary directly establishes ordering,
+          // even when Claude omits expiry dates while rotating its refresh token.
+          requiresNewerGenerationEvidence: false
+        )
       )
     } else {
       nil
@@ -80,7 +88,7 @@ extension UsageStore {
     source: ProviderCredentialSource,
     previousClaudeLogin: PreservedClaudeLogin?,
     registryBaseline: AccountLoginRegistryBaseline,
-    accountState: Data?
+    evidence: ClaudeLoginCredentialEvidence
   ) async throws -> CapturedAccount? {
     guard let minimized = ProviderCredentialMinimizer.minimize(provider: .claude, payload: payload) else {
       if ProviderCredentialMinimizer.hasAccessToken(provider: .claude, payload: payload) {
@@ -98,7 +106,7 @@ extension UsageStore {
     let verifiedProfile = profile.verified(
       for: ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
     )
-    let oauthAccount = currentClaudeOAuthAccount(for: profile, accountState: accountState)
+    let oauthAccount = currentClaudeOAuthAccount(for: profile, accountState: evidence.accountState)
     if let saved = try await uniquelyMatchingSavedClaudeAccount(
       for: profile,
       previousClaudeLogin: previousClaudeLogin,
@@ -109,7 +117,7 @@ extension UsageStore {
         payload: payload,
         profile: verifiedProfile,
         claudeOAuthAccount: oauthAccount,
-        requiresNewerGenerationEvidence: true
+        requiresNewerGenerationEvidence: evidence.requiresNewerGenerationEvidence
       )
       guard refreshed.payload == minimized else {
         throw AddedAccountImportError.preservationFailed
@@ -146,6 +154,11 @@ extension UsageStore {
     let candidate = accountState.flatMap { try? ClaudeCodeAccountState.oauthAccount(from: $0) } ?? nil
     return resolvedClaudeOAuthAccount(candidate: candidate, profile: profile)
   }
+}
+
+private struct ClaudeLoginCredentialEvidence {
+  let accountState: Data?
+  let requiresNewerGenerationEvidence: Bool
 }
 
 final class AccountLoginRegistryBaseline: @unchecked Sendable {

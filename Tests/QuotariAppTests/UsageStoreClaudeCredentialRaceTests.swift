@@ -5,6 +5,48 @@ import Testing
 
 @MainActor
 struct UsageStoreClaudeCredentialRaceTests {
+  @Test func observedRotationWithoutExpiryReplacesTheConsumedSavedGeneration() async throws {
+    let context = try makeClaudeLoginContext()
+    let originalPayload = try #require(context.liveCredential.value)
+    let source = ProviderCredentialSource.claudeKeychain(service: ClaudeCredentialsStore.keychainService)
+    let captured = try context.capture.captureRawPayload(
+      provider: .claude,
+      origin: source,
+      payload: originalPayload,
+      now: .distantPast
+    )
+    let saved = try #require(captured)
+    let store = context.makeStore(login: AccountLoginService())
+    let baseline = try #require(try await store.accountRegistryBaseline(for: .claude))
+    baseline.recordClaudeLogin(
+      keychainPayload: originalPayload,
+      accountState: nil,
+      accountID: saved.id
+    )
+    let previousLogin = PreservedClaudeLogin(
+      account: saved.providerAccount,
+      profile: ClaudeProfile(accountID: "account-current", email: "current@example.com")
+    )
+    let rotatedPayload = claudePayload(
+      accessToken: "rotated-current-access",
+      refreshToken: "rotated-current-refresh"
+    )
+    context.liveCredential.value = rotatedPayload
+
+    try await store.preserveCredentialDuringLogin(
+      provider: .claude,
+      source: source,
+      payload: rotatedPayload,
+      previousClaudeLogin: previousLogin,
+      registryBaseline: baseline
+    )
+
+    let refreshed = try #require(context.registry.account(id: saved.id))
+    let credentials = try ClaudeCredentialsStore.parse(refreshed.payload)
+    #expect(credentials.accessToken == "rotated-current-access")
+    #expect(credentials.refreshToken == "rotated-current-refresh")
+  }
+
   @Test func lastMinuteRotationWithoutFreshnessEvidenceBlocksLogin() async throws {
     let context = try makeClaudeLoginContext()
     let rotatedPayload = claudePayload(

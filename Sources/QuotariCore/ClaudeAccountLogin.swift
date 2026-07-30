@@ -66,7 +66,7 @@ enum LiveClaudeAccountLogin {
       beforeCredentialOverwrite: beforeCredentialOverwrite,
       allowingActiveSessions: activitySnapshot
     )
-    let status = try await runLoginCommandProtectingLoginWindow(
+    let payload = try await runLoginCommandProtectingLoginWindow(
       command: runtime.loginCommand(
         timeout: loginTimeout,
         output: onOutput,
@@ -81,16 +81,18 @@ enum LiveClaudeAccountLogin {
         activityInspectionInterval: activityInspectionInterval,
         preserveCredential: activitySnapshot?.isActive == true ? duringLoginCredentialChange : nil,
         activitySnapshot: activitySnapshot
-      )
+      ),
+      afterCommand: { status in
+        try validateLoginStatus(status)
+        return try await changedCredential(
+          after: renewableCredential(from: previousPayload),
+          keychainRead: keychainRead,
+          attempts: credentialReadAttempts,
+          retryDelay: retryDelay
+        )
+      }
     )
     try Task.checkCancellation()
-    try validateLoginStatus(status)
-    let payload = try await changedCredential(
-      after: renewableCredential(from: previousPayload),
-      keychainRead: keychainRead,
-      attempts: credentialReadAttempts,
-      retryDelay: retryDelay
-    )
     let finalObservation = runtime.observation.capture(matching: payload)
     runtime.observation.report(finalObservation)
     return accountLoginResult(

@@ -184,6 +184,7 @@ struct RotationLoginFixture {
   let directory: URL
   let started: URL
   let release: URL
+  let finished: URL
   let processID: URL
   let environment: [String: String]
 
@@ -193,6 +194,7 @@ struct RotationLoginFixture {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     started = directory.appendingPathComponent("started")
     release = directory.appendingPathComponent("release")
+    finished = directory.appendingPathComponent("finished")
     processID = directory.appendingPathComponent("pid")
     let executable = directory.appendingPathComponent("fake-claude")
     let script = """
@@ -200,6 +202,7 @@ struct RotationLoginFixture {
     echo "$$" > "$QUOTARI_TEST_PID"
     touch "$QUOTARI_TEST_STARTED"
     while [ ! -f "$QUOTARI_TEST_RELEASE" ]; do /bin/sleep 0.01; done
+    touch "$QUOTARI_TEST_FINISHED"
     """
     try Data(script.utf8).write(to: executable)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
@@ -208,6 +211,7 @@ struct RotationLoginFixture {
       "QUOTARI_CLAUDE_PATH": executable.path,
       "QUOTARI_TEST_PID": processID.path,
       "QUOTARI_TEST_RELEASE": release.path,
+      "QUOTARI_TEST_FINISHED": finished.path,
       "QUOTARI_TEST_STARTED": started.path,
     ]
   }
@@ -322,7 +326,7 @@ final class RotationPreservationGate: @unchecked Sendable {
   }
 }
 
-private final class RotationCounter: @unchecked Sendable {
+final class RotationCounter: @unchecked Sendable {
   private let lock = NSLock()
   private var storage = 0
 
@@ -336,7 +340,7 @@ private final class RotationCounter: @unchecked Sendable {
 }
 
 func waitForRotationCondition(_ condition: @escaping @Sendable () -> Bool) async throws {
-  for _ in 0 ..< 200 {
+  for _ in 0 ..< 600 {
     if condition() {
       return
     }

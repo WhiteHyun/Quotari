@@ -42,14 +42,15 @@ extension ClaudeLoginRuntime {
 
 extension LiveClaudeAccountLogin {
   private enum LoginWindowOutcome {
-    case command(Int32)
+    case command(Data)
     case preservationStopped
   }
 
   static func runLoginCommandProtectingLoginWindow(
     command: ClaudeLoginCommandContext,
-    protection: ClaudeLoginWindowProtection
-  ) async throws -> Int32 {
+    protection: ClaudeLoginWindowProtection,
+    afterCommand: @escaping @Sendable (Int32) async throws -> Data
+  ) async throws -> Data {
     let tracker = ClaudeCredentialGenerationTracker(initialPayload: protection.initialPayload)
     let preservation = ClaudeCredentialPreservationContext(
       keychainRead: protection.keychainRead,
@@ -61,13 +62,14 @@ extension LiveClaudeAccountLogin {
       tracker: tracker,
       loginProcess: ClaudeLoginProcessTracker()
     )
-    let commandResult: Result<Int32, Error>
+    let commandResult: Result<Data, Error>
     do {
-      let status = try await runLoginCommandWhilePreservingCredentials(
+      let payload = try await runLoginCommandWhilePreservingCredentials(
         command: command,
-        preservation: preservation
+        preservation: preservation,
+        afterCommand: afterCommand
       )
-      commandResult = .success(status)
+      commandResult = .success(payload)
     } catch {
       commandResult = .failure(error)
     }
@@ -88,28 +90,16 @@ extension LiveClaudeAccountLogin {
 
   private static func runLoginCommandWhilePreservingCredentials(
     command: ClaudeLoginCommandContext,
-    preservation: ClaudeCredentialPreservationContext
-  ) async throws -> Int32 {
+    preservation: ClaudeCredentialPreservationContext,
+    afterCommand: @escaping @Sendable (Int32) async throws -> Data
+  ) async throws -> Data {
     try await withThrowingTaskGroup(of: LoginWindowOutcome.self) { group in
       group.addTask {
-        var observers = command.observers
-        observers.processDidLaunch = { pid in
-          preservation.loginProcess.recordLaunch(pid: pid)
-          do {
-            try inspectLoginWindowActivity(preservation)
-          } catch {
-            preservation.tracker.record(error: error)
-          }
-        }
-        defer { preservation.loginProcess.recordCompletion() }
-        let status = try await runLoginCommandReportingCredential(
-          configuration: command.configuration,
-          executable: command.executable,
-          timeout: command.timeout,
-          observers: observers,
-          observation: command.observation
+        try await runLoginCommandAndObserveCredential(
+          command: command,
+          preservation: preservation,
+          afterCommand: afterCommand
         )
-        return .command(status)
       }
       group.addTask {
         await monitorLoginWindowActivity(preservation)
@@ -128,12 +118,44 @@ extension LiveClaudeAccountLogin {
       let first = try await group.next() ?? .preservationStopped
       group.cancelAll()
       switch first {
-      case let .command(status):
-        return status
+      case let .command(payload):
+        return payload
       case .preservationStopped:
         throw CancellationError()
       }
     }
+  }
+
+  private static func runLoginCommandAndObserveCredential(
+    command: ClaudeLoginCommandContext,
+    preservation: ClaudeCredentialPreservationContext,
+    afterCommand: @escaping @Sendable (Int32) async throws -> Data
+  ) async throws -> LoginWindowOutcome {
+    var observers = command.observers
+    observers.processDidLaunch = { pid in
+      preservation.loginProcess.recordLaunch(pid: pid)
+      do {
+        try inspectLoginWindowActivity(preservation)
+      } catch {
+        preservation.tracker.record(error: error)
+      }
+    }
+    let status: Int32
+    do {
+      status = try await runLoginCommandReportingCredential(
+        configuration: command.configuration,
+        executable: command.executable,
+        timeout: command.timeout,
+        observers: observers,
+        observation: command.observation
+      )
+    } catch {
+      preservation.loginProcess.recordCompletion()
+      throw error
+    }
+    preservation.loginProcess.recordCompletion()
+    let payload = try await afterCommand(status)
+    return .command(payload)
   }
 
   private static func monitorLoginWindowActivity(_ preservation: ClaudeCredentialPreservationContext) async {
@@ -210,7 +232,14 @@ extension LiveClaudeAccountLogin {
     guard let preserveCredential = preservation.preserveCredential,
           let generation = preservation.tracker.pendingGeneration
     else { return }
-    try await preserveCredential(generation.payload)
+    // A user cancellation must stop the browser command, but it cannot cancel
+    // saving a credential generation that was already observed. Detached work
+    // does not inherit the cancelled login task's status; awaiting it still
+    // keeps restoration ordered behind this durable save.
+    let preservationTask = Task.detached {
+      try await preserveCredential(generation.payload)
+    }
+    try await preservationTask.value
     preservation.tracker.record(preserved: generation)
   }
 
