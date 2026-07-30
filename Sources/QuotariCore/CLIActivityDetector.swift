@@ -7,15 +7,18 @@ public struct CLIActivityProcess: Hashable, Sendable {
   }
 
   public let displayName: String
+  let pid: Int32?
   let generation: Generation
 
-  init(displayName: String, generation: Generation) {
+  init(pid: Int32? = nil, displayName: String, generation: Generation) {
     self.displayName = displayName
+    self.pid = pid
     self.generation = generation
   }
 
   init(legacyDisplayName: String) {
     displayName = legacyDisplayName
+    pid = nil
     generation = .legacy(legacyDisplayName)
   }
 }
@@ -134,6 +137,7 @@ public struct CLIActivityDetector: Sendable {
       .filter { Self.matches(arguments: $0.arguments, expectedName: expectedName) }
       .map { process in
         CLIActivityProcess(
+          pid: process.pid,
           displayName: "\(expectedName) (PID \(process.pid))",
           generation: process.generation
         )

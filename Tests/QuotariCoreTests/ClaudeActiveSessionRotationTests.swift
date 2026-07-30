@@ -11,21 +11,21 @@ struct ClaudeActiveSessionRotationTests {
     let added = rotationCredential(accessToken: "added", refreshToken: "added-refresh")
     let keychain = RotationCredentialBox(original)
     let preserved = RotationCredentialRecorder()
-    let active = ["claude (PID 42)"]
+    let approved = rotationProcess(pid: 42, generation: 1)
 
     let login = Task {
       try await LiveClaudeAccountLogin.perform(
         environment: fixture.environment,
         home: fixture.directory,
         keychainRead: { _ in keychain.value },
-        activeCLIProcesses: { _ in active },
+        activeCLIProcessRecords: { _ in [approved] + fixture.loginProcessRecords },
         credentialReadAttempts: 1,
         retryDelay: .zero,
         loginTimeout: .seconds(2),
         credentialPreservationInterval: .milliseconds(5),
         beforeCredentialOverwrite: { preserved.append($0) },
         duringLoginCredentialChange: { preserved.append($0) },
-        allowingActiveSessions: CLIActivitySnapshot(provider: .claude, processes: active)
+        allowingActiveSessions: CLIActivitySnapshot(provider: .claude, processes: [approved])
       )
     }
     try await waitForRotationCondition {
@@ -44,12 +44,56 @@ struct ClaudeActiveSessionRotationTests {
     #expect(preserved.values.contains(rotated))
     #expect(preserved.values.contains(added))
   }
+
+  @Test func processLaunchedDuringBrowserLoginStopsTheLogin() async throws {
+    let fixture = try RotationLoginFixture()
+    defer { fixture.remove() }
+    let original = rotationCredential(accessToken: "original", refreshToken: "original-refresh")
+    let keychain = RotationCredentialBox(original)
+    let approved = rotationProcess(pid: 42, generation: 1)
+    let unapproved = rotationProcess(pid: 99, generation: 2)
+    let activity = RotationActivityBox([approved])
+
+    let login = Task {
+      try await LiveClaudeAccountLogin.perform(
+        environment: fixture.environment,
+        home: fixture.directory,
+        keychainRead: { _ in keychain.value },
+        activeCLIProcessRecords: { _ in activity.value + fixture.loginProcessRecords },
+        credentialReadAttempts: 1,
+        retryDelay: .zero,
+        loginTimeout: .seconds(2),
+        credentialPreservationInterval: .milliseconds(5),
+        duringLoginCredentialChange: { _ in },
+        allowingActiveSessions: CLIActivitySnapshot(
+          provider: .claude,
+          processes: [approved]
+        )
+      )
+    }
+    try await waitForRotationCondition {
+      FileManager.default.fileExists(atPath: fixture.started.path)
+    }
+    activity.value = [approved, unapproved]
+
+    do {
+      _ = try await login.value
+      Issue.record("A process launched during browser login should stop login")
+    } catch let error as AccountLoginError {
+      guard case let .cliStillRunning(.claude, processes) = error else {
+        Issue.record("Unexpected login error: \(error)")
+        return
+      }
+      #expect(processes == ["claude (PID 99)"])
+    }
+  }
 }
 
 private struct RotationLoginFixture {
   let directory: URL
   let started: URL
   let release: URL
+  let processID: URL
   let environment: [String: String]
 
   init() throws {
@@ -58,9 +102,11 @@ private struct RotationLoginFixture {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     started = directory.appendingPathComponent("started")
     release = directory.appendingPathComponent("release")
+    processID = directory.appendingPathComponent("pid")
     let executable = directory.appendingPathComponent("fake-claude")
     let script = """
     #!/bin/sh
+    echo "$$" > "$QUOTARI_TEST_PID"
     touch "$QUOTARI_TEST_STARTED"
     while [ ! -f "$QUOTARI_TEST_RELEASE" ]; do /bin/sleep 0.01; done
     """
@@ -69,6 +115,7 @@ private struct RotationLoginFixture {
     environment = [
       "PATH": "/usr/bin:/bin",
       "QUOTARI_CLAUDE_PATH": executable.path,
+      "QUOTARI_TEST_PID": processID.path,
       "QUOTARI_TEST_RELEASE": release.path,
       "QUOTARI_TEST_STARTED": started.path,
     ]
@@ -77,6 +124,13 @@ private struct RotationLoginFixture {
   func remove() {
     try? Data().write(to: release)
     try? FileManager.default.removeItem(at: directory)
+  }
+
+  var loginProcessRecords: [CLIActivityProcess] {
+    guard let text = try? String(contentsOf: processID, encoding: .utf8),
+          let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines))
+    else { return [] }
+    return [rotationProcess(pid: pid, generation: 3)]
   }
 }
 
@@ -108,6 +162,20 @@ private final class RotationCredentialRecorder: @unchecked Sendable {
   }
 }
 
+private final class RotationActivityBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage: [CLIActivityProcess]
+
+  init(_ value: [CLIActivityProcess]) {
+    storage = value
+  }
+
+  var value: [CLIActivityProcess] {
+    get { lock.withLock { storage } }
+    set { lock.withLock { storage = newValue } }
+  }
+}
+
 private func waitForRotationCondition(_ condition: @escaping @Sendable () -> Bool) async throws {
   for _ in 0 ..< 200 {
     if condition() {
@@ -123,5 +191,13 @@ private struct RotationTestTimeout: Error {}
 private func rotationCredential(accessToken: String, refreshToken: String) -> Data {
   Data(
     #"{"claudeAiOauth":{"accessToken":"\#(accessToken)","refreshToken":"\#(refreshToken)"}}"#.utf8
+  )
+}
+
+private func rotationProcess(pid: Int32, generation: UInt64) -> CLIActivityProcess {
+  CLIActivityProcess(
+    pid: pid,
+    displayName: "claude (PID \(pid))",
+    generation: .process(startTimeSeconds: generation, startTimeMicroseconds: 0)
   )
 }

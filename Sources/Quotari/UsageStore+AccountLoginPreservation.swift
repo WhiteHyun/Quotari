@@ -71,7 +71,6 @@ extension UsageStore {
     }
     registryBaseline.recordClaudeRotation(
       keychainPayload: payload,
-      accountState: accountState,
       accountID: boundaryAccount?.id
     )
   }
@@ -177,15 +176,16 @@ final class AccountLoginRegistryBaseline: @unchecked Sendable {
     }
   }
 
-  func recordClaudeRotation(keychainPayload: Data?, accountState: Data?, accountID: String?) {
+  func recordClaudeRotation(keychainPayload: Data?, accountID: String?) {
     lock.withLock {
       guard hasClaudeKeychainSnapshot,
             let claudeRestoreAccountID,
-            accountID == claudeRestoreAccountID
+            accountID == claudeRestoreAccountID,
+            let snapshot = claudeKeychainSnapshotStorage
       else { return }
       claudeKeychainSnapshotStorage = ClaudeKeychainLoginSnapshot(
         payload: keychainPayload,
-        accountState: accountState
+        accountState: snapshot.accountState
       )
     }
   }

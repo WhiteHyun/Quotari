@@ -10,8 +10,8 @@ struct AccountLoginRegistryBaselineTests {
     let browserLogin = Data("browser-login".utf8)
 
     baseline.recordClaudeLogin(keychainPayload: original, accountState: nil, accountID: "previous")
-    baseline.recordClaudeRotation(keychainPayload: rotated, accountState: nil, accountID: "previous")
-    baseline.recordClaudeRotation(keychainPayload: browserLogin, accountState: nil, accountID: "new")
+    baseline.recordClaudeRotation(keychainPayload: rotated, accountID: "previous")
+    baseline.recordClaudeRotation(keychainPayload: browserLogin, accountID: "new")
 
     #expect(try #require(baseline.claudeKeychainSnapshot).payload == rotated)
   }
@@ -22,10 +22,26 @@ struct AccountLoginRegistryBaselineTests {
     baseline.recordClaudeLogin(keychainPayload: nil, accountState: nil, accountID: nil)
     baseline.recordClaudeRotation(
       keychainPayload: Data("browser-login".utf8),
-      accountState: nil,
       accountID: "new"
     )
 
     #expect(try #require(baseline.claudeKeychainSnapshot).payload == nil)
+  }
+
+  @Test func rotatedCredentialRetainsItsOriginalAccountState() throws {
+    let baseline = AccountLoginRegistryBaseline([])
+    let originalState = Data("previous-account-state".utf8)
+    let rotated = Data("rotated".utf8)
+
+    baseline.recordClaudeLogin(
+      keychainPayload: Data("original".utf8),
+      accountState: originalState,
+      accountID: "previous"
+    )
+    baseline.recordClaudeRotation(keychainPayload: rotated, accountID: "previous")
+
+    let snapshot = try #require(baseline.claudeKeychainSnapshot)
+    #expect(snapshot.payload == rotated)
+    #expect(snapshot.accountState == originalState)
   }
 }

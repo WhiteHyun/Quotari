@@ -4,17 +4,20 @@ import Foundation
 struct AccountLoginCommandObservers: Sendable {
   var output: AccountLoginOutputHandler?
   var didLaunch: CredentialMutationHandler?
+  var processDidLaunch: (@Sendable (Int32) -> Void)?
   var input: AccountLoginInput?
   var completionOutput: String?
 
   init(
     output: AccountLoginOutputHandler? = nil,
     didLaunch: CredentialMutationHandler? = nil,
+    processDidLaunch: (@Sendable (Int32) -> Void)? = nil,
     input: AccountLoginInput? = nil,
     completionOutput: String? = nil
   ) {
     self.output = output
     self.didLaunch = didLaunch
+    self.processDidLaunch = processDidLaunch
     self.input = input
     self.completionOutput = completionOutput
   }

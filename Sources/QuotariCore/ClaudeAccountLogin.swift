@@ -58,33 +58,28 @@ enum LiveClaudeAccountLogin {
       keychainRead: keychainRead,
       observer: onCredentialObserved
     )
-    let activeCLIProcessRecords = resolvedProcessRecords(
-      legacy: activeCLIProcesses,
-      records: activeCLIProcessRecords
-    )
+    let activeCLIProcessRecords = resolvedProcessRecords(legacy: activeCLIProcesses, records: activeCLIProcessRecords)
     let previousPayload = try await credentialAtOverwriteBoundary(
       keychainRead: keychainRead,
       activeCLIProcessRecords: activeCLIProcessRecords,
       beforeCredentialOverwrite: beforeCredentialOverwrite,
       allowingActiveSessions: activitySnapshot
     )
-    let status = try await runLoginCommandPreservingCredentialChanges(
-      command: ClaudeLoginCommandContext(
-        configuration: runtime.configuration,
-        executable: runtime.executable,
+    let status = try await runLoginCommandProtectingLoginWindow(
+      command: runtime.loginCommand(
         timeout: loginTimeout,
-        observers: AccountLoginCommandObservers(
-          output: onOutput,
-          didLaunch: onLoginStarted,
-          input: input,
-          completionOutput: "Login successful"
-        ),
-        observation: runtime.observation
+        output: onOutput,
+        didLaunch: onLoginStarted,
+        input: input
       ),
-      keychainRead: keychainRead,
-      initialPayload: previousPayload,
-      preservationInterval: credentialPreservationInterval,
-      preserveCredential: activitySnapshot?.isActive == true ? duringLoginCredentialChange : nil
+      protection: ClaudeLoginWindowProtection(
+        keychainRead: keychainRead,
+        activeCLIProcessRecords: activeCLIProcessRecords,
+        initialPayload: previousPayload,
+        interval: credentialPreservationInterval,
+        preserveCredential: activitySnapshot?.isActive == true ? duringLoginCredentialChange : nil,
+        activitySnapshot: activitySnapshot
+      )
     )
     try Task.checkCancellation()
     try validateLoginStatus(status)
