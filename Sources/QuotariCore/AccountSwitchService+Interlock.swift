@@ -16,20 +16,20 @@ extension AccountSwitchService {
   }
 
   public func cliActivitySnapshot(for provider: UsageProvider) throws -> CLIActivitySnapshot {
-    try CLIActivitySnapshot(provider: provider, processes: activeCLIProcesses(provider))
+    try CLIActivitySnapshot(provider: provider, processes: activeCLIProcessRecords(provider))
   }
 
   func requireCLIInactive(_ provider: UsageProvider) throws {
-    let active: [String]
+    let active: [CLIActivityProcess]
     do {
-      active = try activeCLIProcesses(provider)
+      active = try activeCLIProcessRecords(provider)
     } catch {
       throw AccountSwitchError.cliActivityCheckFailed(underlying: error.localizedDescription)
     }
     let blocked = CLIActivityApprovalContext.snapshot?.unapprovedProcesses(
       for: provider,
       activeProcesses: active
-    ) ?? active
+    ) ?? active.map(\.displayName)
     guard blocked.isEmpty else {
       throw AccountSwitchError.cliStillRunning(processes: blocked)
     }

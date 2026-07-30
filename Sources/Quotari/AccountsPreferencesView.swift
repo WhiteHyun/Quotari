@@ -4,6 +4,7 @@ import SwiftUI
 struct AccountsPreferencesView: View {
   @Environment(UsageStore.self) var store
   @State var confirmation: AccountManagementConfirmation?
+  @State var cliActivityInspection = CLIActivityInspectionState()
 
   var body: some View {
     VStack(spacing: 16) {
@@ -124,7 +125,11 @@ private extension AccountsPreferencesView {
         }
         .frame(width: 150)
       }
-      .disabled(!store.addingAccountProviders.isEmpty || !canAddAccount)
+      .disabled(
+        cliActivityInspection.isRunning
+          || !store.addingAccountProviders.isEmpty
+          || !canAddAccount
+      )
       .help(store.addAccountUnavailableReason(for: descriptor.id) ?? accountLoginHelp(for: descriptor.id))
     }
   }
@@ -237,7 +242,11 @@ private extension AccountsPreferencesView {
       .buttonStyle(.borderless)
       .help(L10n.string("Remove saved account"))
     }
-    .disabled(store.isSwitching || !store.addingAccountProviders.isEmpty)
+    .disabled(
+      cliActivityInspection.isRunning
+        || store.isSwitching
+        || !store.addingAccountProviders.isEmpty
+    )
   }
 
   private var accountListFooter: some View {

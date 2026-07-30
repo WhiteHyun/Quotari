@@ -18,7 +18,9 @@ extension AccountsPreferencesView {
       store.startAddingAccount(for: provider)
       return
     }
+    guard cliActivityInspection.begin() else { return }
     Task {
+      defer { cliActivityInspection.finish() }
       do {
         let activitySnapshot = try await store.cliActivitySnapshot(for: provider)
         if activitySnapshot.isActive {
@@ -40,7 +42,9 @@ extension AccountsPreferencesView {
       confirmation = .switchCLI(account, activitySnapshot: nil)
       return
     }
+    guard cliActivityInspection.begin() else { return }
     Task {
+      defer { cliActivityInspection.finish() }
       do {
         let activitySnapshot = try await store.cliActivitySnapshot(for: account.provider)
         confirmation = .switchCLI(

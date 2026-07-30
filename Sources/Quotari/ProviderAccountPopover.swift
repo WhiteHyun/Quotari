@@ -11,6 +11,7 @@ struct ProviderAccountPopover: View {
   @State private var isReloadingAccounts = false
   @State var switchCoordinator = ProviderAccountPopoverSwitchCoordinator()
   @State var confirmation: ProviderAccountPopoverConfirmation?
+  @State var cliActivityInspection = CLIActivityInspectionState()
 
   private var accent: Color {
     Color(
@@ -79,7 +80,11 @@ struct ProviderAccountPopover: View {
       )
     }
     .buttonStyle(.plain)
-    .disabled(store.isSwitching || !store.addingAccountProviders.isEmpty)
+    .disabled(
+      cliActivityInspection.isRunning
+        || store.isSwitching
+        || !store.addingAccountProviders.isEmpty
+    )
     .accessibilityHint(action.accessibilityHint)
     .help(action.accessibilityHint)
     .contextMenu { accountMenu(account) }
@@ -96,7 +101,11 @@ struct ProviderAccountPopover: View {
       Button(L10n.string("Use in CLI (Switch)")) {
         requestSwitchingCLI(to: account)
       }
-      .disabled(store.isSwitching || !store.addingAccountProviders.isEmpty)
+      .disabled(
+        cliActivityInspection.isRunning
+          || store.isSwitching
+          || !store.addingAccountProviders.isEmpty
+      )
       Button(L10n.string("Remove Account"), role: .destructive) {
         Task { await store.removeCapturedAccount(account) }
       }
@@ -110,7 +119,7 @@ struct ProviderAccountPopover: View {
         title: canAddAccount ? accountLoginTitle : L10n.string("\(accountLoginTitle) (Unavailable)"),
         systemImage: "plus",
         busy: !store.addingAccountProviders.isEmpty,
-        disabled: !canAddAccount
+        disabled: cliActivityInspection.isRunning || !canAddAccount
       ) {
         requestAddingAccount()
       }

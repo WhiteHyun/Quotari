@@ -49,6 +49,16 @@ extension UsageStore {
           registryBaseline: registryBaseline
         )
       },
+      duringLoginCredentialChange: { [weak self] provider, source, payload in
+        guard let self else { throw CancellationError() }
+        try await preserveCredentialDuringLogin(
+          provider: provider,
+          source: source,
+          payload: payload,
+          previousClaudeLogin: previousClaudeLogin,
+          registryBaseline: registryBaseline
+        )
+      },
       onCredentialMutationPossible: {
         registryBaseline?.markCredentialMutationPossible()
       },

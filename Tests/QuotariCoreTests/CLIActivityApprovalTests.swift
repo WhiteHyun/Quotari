@@ -24,6 +24,22 @@ struct CLIActivitySnapshotTests {
       activeProcesses: ["codex (PID 42)"]
     ) == ["codex (PID 42)"])
   }
+
+  @Test func reusedPIDWithANewerProcessGenerationIsNotApproved() {
+    let displayName = "claude (PID 42)"
+    let approved = CLIActivityProcess(
+      displayName: displayName,
+      generation: .process(startTimeSeconds: 100, startTimeMicroseconds: 1)
+    )
+    let reused = CLIActivityProcess(
+      displayName: displayName,
+      generation: .process(startTimeSeconds: 200, startTimeMicroseconds: 2)
+    )
+    let snapshot = CLIActivitySnapshot(provider: .claude, processes: [approved])
+
+    #expect(snapshot.processes == [displayName])
+    #expect(snapshot.unapprovedProcesses(for: .claude, activeProcesses: [reused]) == [displayName])
+  }
 }
 
 struct AccountSwitchActiveSessionApprovalTests {

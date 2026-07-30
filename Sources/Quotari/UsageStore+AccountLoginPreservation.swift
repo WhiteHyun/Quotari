@@ -25,7 +25,7 @@ extension UsageStore {
   ) async throws {
     guard provider == .claude, let registryBaseline else { return }
     let accountState = try await currentClaudeAccountState()
-    if let payload {
+    let boundaryAccount: CapturedAccount? = if let payload {
       try await preserveClaudeCredentialAtLoginBoundary(
         payload,
         source: source,
@@ -33,11 +33,47 @@ extension UsageStore {
         registryBaseline: registryBaseline,
         accountState: accountState
       )
+    } else {
+      nil
     }
     guard try await currentClaudeAccountState() == accountState else {
       throw AccountLoginError.credentialChangedDuringPreparation(.claude)
     }
-    registryBaseline.recordClaudeLogin(keychainPayload: payload, accountState: accountState)
+    registryBaseline.recordClaudeLogin(
+      keychainPayload: payload,
+      accountState: accountState,
+      accountID: boundaryAccount?.id
+    )
+  }
+
+  func preserveCredentialDuringLogin(
+    provider: UsageProvider,
+    source: ProviderCredentialSource,
+    payload: Data?,
+    previousClaudeLogin: PreservedClaudeLogin?,
+    registryBaseline: AccountLoginRegistryBaseline?
+  ) async throws {
+    guard provider == .claude, let registryBaseline else { return }
+    let accountState = try await currentClaudeAccountState()
+    let boundaryAccount: CapturedAccount? = if let payload {
+      try await preserveClaudeCredentialAtLoginBoundary(
+        payload,
+        source: source,
+        previousClaudeLogin: previousClaudeLogin,
+        registryBaseline: registryBaseline,
+        accountState: accountState
+      )
+    } else {
+      nil
+    }
+    guard try await currentClaudeAccountState() == accountState else {
+      throw AccountLoginError.credentialChangedDuringPreparation(.claude)
+    }
+    registryBaseline.recordClaudeRotation(
+      keychainPayload: payload,
+      accountState: accountState,
+      accountID: boundaryAccount?.id
+    )
   }
 
   private func preserveClaudeCredentialAtLoginBoundary(
@@ -46,12 +82,12 @@ extension UsageStore {
     previousClaudeLogin: PreservedClaudeLogin?,
     registryBaseline: AccountLoginRegistryBaseline,
     accountState: Data?
-  ) async throws {
+  ) async throws -> CapturedAccount? {
     guard let minimized = ProviderCredentialMinimizer.minimize(provider: .claude, payload: payload) else {
       if ProviderCredentialMinimizer.hasAccessToken(provider: .claude, payload: payload) {
         throw AddedAccountImportError.preservationFailed
       }
-      return
+      return nil
     }
     guard let credentials = try? ClaudeCredentialsStore.parse(payload) else {
       throw AddedAccountImportError.preservationFailed
@@ -80,7 +116,7 @@ extension UsageStore {
         throw AddedAccountImportError.preservationFailed
       }
       registryBaseline.recordClaudeBoundaryAccount(refreshed)
-      return
+      return refreshed
     }
     let capture = accountCapture
     let captured = try await Task.detached {
@@ -94,6 +130,7 @@ extension UsageStore {
     }.value
     guard let captured else { throw AddedAccountImportError.preservationFailed }
     registryBaseline.recordClaudeBoundaryAccount(captured)
+    return captured
   }
 
   private func currentClaudeAccountState() async throws -> Data? {
@@ -116,6 +153,8 @@ final class AccountLoginRegistryBaseline: @unchecked Sendable {
   private let lock = NSLock()
   private var registeredAccounts: [String: ProviderAccount]
   private var claudeKeychainSnapshotStorage: ClaudeKeychainLoginSnapshot?
+  private var claudeRestoreAccountID: String?
+  private var hasClaudeKeychainSnapshot = false
   private var claudePostLoginSnapshotStorage: ClaudeKeychainLoginSnapshot?
   private var mutationPossible = false
 
@@ -127,8 +166,23 @@ final class AccountLoginRegistryBaseline: @unchecked Sendable {
     lock.withLock { Array(registeredAccounts.values) }
   }
 
-  func recordClaudeLogin(keychainPayload: Data?, accountState: Data?) {
+  func recordClaudeLogin(keychainPayload: Data?, accountState: Data?, accountID: String?) {
     lock.withLock {
+      hasClaudeKeychainSnapshot = true
+      claudeRestoreAccountID = accountID
+      claudeKeychainSnapshotStorage = ClaudeKeychainLoginSnapshot(
+        payload: keychainPayload,
+        accountState: accountState
+      )
+    }
+  }
+
+  func recordClaudeRotation(keychainPayload: Data?, accountState: Data?, accountID: String?) {
+    lock.withLock {
+      guard hasClaudeKeychainSnapshot,
+            let claudeRestoreAccountID,
+            accountID == claudeRestoreAccountID
+      else { return }
       claudeKeychainSnapshotStorage = ClaudeKeychainLoginSnapshot(
         payload: keychainPayload,
         accountState: accountState

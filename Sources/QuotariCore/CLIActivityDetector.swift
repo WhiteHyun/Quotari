@@ -1,5 +1,30 @@
-import Darwin
 import Foundation
+
+public struct CLIActivityProcess: Hashable, Sendable {
+  enum Generation: Hashable, Sendable {
+    case process(startTimeSeconds: UInt64, startTimeMicroseconds: UInt64)
+    case legacy(String)
+  }
+
+  public let displayName: String
+  let generation: Generation
+
+  init(displayName: String, generation: Generation) {
+    self.displayName = displayName
+    self.generation = generation
+  }
+
+  init(legacyDisplayName: String) {
+    displayName = legacyDisplayName
+    generation = .legacy(legacyDisplayName)
+  }
+}
+
+struct CLIActivityProcessRecord: Sendable {
+  let pid: Int32
+  let generation: CLIActivityProcess.Generation
+  let arguments: [String]
+}
 
 /// A point-in-time list of CLI processes shown to the user before a credential
 /// mutation. Passing this snapshot back to a mutation authorizes only these
@@ -8,10 +33,18 @@ import Foundation
 public struct CLIActivitySnapshot: Equatable, Sendable {
   public let provider: UsageProvider
   public let processes: [String]
+  private let approvedProcesses: Set<CLIActivityProcess>
 
   public init(provider: UsageProvider, processes: [String]) {
     self.provider = provider
     self.processes = Array(Set(processes)).sorted()
+    approvedProcesses = Set(processes.map(CLIActivityProcess.init(legacyDisplayName:)))
+  }
+
+  init(provider: UsageProvider, processes: [CLIActivityProcess]) {
+    self.provider = provider
+    self.processes = Array(Set(processes.map(\.displayName))).sorted()
+    approvedProcesses = Set(processes)
   }
 
   public var isActive: Bool {
@@ -20,11 +53,19 @@ public struct CLIActivitySnapshot: Equatable, Sendable {
 
   func unapprovedProcesses(
     for provider: UsageProvider,
-    activeProcesses: [String]
+    activeProcesses: [CLIActivityProcess]
   ) -> [String] {
-    guard self.provider == provider else { return activeProcesses }
-    let approved = Set(processes)
-    return activeProcesses.filter { !approved.contains($0) }
+    guard self.provider == provider else { return activeProcesses.map(\.displayName) }
+    return activeProcesses
+      .filter { !approvedProcesses.contains($0) }
+      .map(\.displayName)
+  }
+
+  func unapprovedProcesses(for provider: UsageProvider, activeProcesses: [String]) -> [String] {
+    unapprovedProcesses(
+      for: provider,
+      activeProcesses: activeProcesses.map(CLIActivityProcess.init(legacyDisplayName:))
+    )
   }
 }
 
@@ -38,6 +79,7 @@ public struct CLIActivityDetector: Sendable {
   enum DetectionError: LocalizedError {
     case commandFailed(status: Int32)
     case argumentReadFailed(pid: Int32, code: Int32)
+    case processInfoReadFailed(pid: Int32, code: Int32)
     case malformedOutput
 
     var errorDescription: String? {
@@ -46,33 +88,56 @@ public struct CLIActivityDetector: Sendable {
         "Inspecting running CLI processes failed (ps exited \(status))."
       case let .argumentReadFailed(pid, code):
         "Inspecting CLI process \(pid) failed (errno \(code))."
+      case let .processInfoReadFailed(pid, code):
+        "Inspecting CLI process generation \(pid) failed (errno \(code))."
       case .malformedOutput:
         "The running process list could not be decoded."
       }
     }
   }
 
-  private let processes: @Sendable () throws -> [(pid: Int32, arguments: [String])]
+  private let processes: @Sendable () throws -> [CLIActivityProcessRecord]
 
   public init() {
     processes = Self.loadProcesses
   }
 
   init(processes: @escaping @Sendable () throws -> [(pid: Int32, arguments: [String])]) {
-    self.processes = processes
+    self.processes = {
+      try processes().map { process in
+        CLIActivityProcessRecord(
+          pid: process.pid,
+          generation: .legacy("pid-\(process.pid)"),
+          arguments: process.arguments
+        )
+      }
+    }
+  }
+
+  init(processesWithGenerations: @escaping @Sendable () throws -> [CLIActivityProcessRecord]) {
+    processes = processesWithGenerations
   }
 
   /// Returns exact executable or interpreter-script name matches. Inspecting
   /// the command arguments is required for npm/shebang installations, whose
   /// executable image is an interpreter such as `node` or `bash`.
   public func activeProcesses(for provider: UsageProvider) throws -> [String] {
+    try activeProcessRecords(for: provider).map(\.displayName)
+  }
+
+  public func activeProcessRecords(for provider: UsageProvider) throws -> [CLIActivityProcess] {
     let expectedName = switch provider {
     case .claude: "claude"
     case .codex: "codex"
     }
     return try processes()
       .filter { Self.matches(arguments: $0.arguments, expectedName: expectedName) }
-      .map { "\(expectedName) (PID \($0.pid))" }
+      .map { process in
+        CLIActivityProcess(
+          displayName: "\(expectedName) (PID \(process.pid))",
+          generation: process.generation
+        )
+      }
   }
 
   private static func matches(arguments originalArguments: [String], expectedName: String) -> Bool {
@@ -199,89 +264,5 @@ public struct CLIActivityDetector: Sendable {
 
   private static func isAppBundlePath(_ path: String) -> Bool {
     path.range(of: ".app/Contents/", options: .caseInsensitive) != nil
-  }
-
-  private static func loadProcesses() throws -> [(pid: Int32, arguments: [String])] {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/bin/ps")
-    process.arguments = processArguments
-    let stdout = Pipe()
-    process.standardOutput = stdout
-    process.standardError = Pipe()
-    try process.run()
-    let output = stdout.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    guard process.terminationStatus == 0 else {
-      throw DetectionError.commandFailed(status: process.terminationStatus)
-    }
-    guard let text = String(data: output, encoding: .utf8) else {
-      throw DetectionError.malformedOutput
-    }
-    let pids = try text.split(separator: "\n").map { line -> Int32 in
-      guard let pid = Int32(line.trimmingCharacters(in: .whitespaces)) else {
-        throw DetectionError.malformedOutput
-      }
-      return pid
-    }
-    return try pids.compactMap { pid in
-      guard let arguments = try loadProcessArguments(pid: pid) else { return nil }
-      return (pid, arguments)
-    }
-  }
-
-  private static func loadProcessArguments(pid: Int32) throws -> [String]? {
-    var mib = [CTL_KERN, KERN_PROCARGS2, pid]
-    var size = 0
-    guard sysctl(&mib, u_int(mib.count), nil, &size, nil, 0) == 0 else {
-      if errno == ESRCH || errno == EINVAL {
-        return nil
-      }
-      throw DetectionError.argumentReadFailed(pid: pid, code: errno)
-    }
-    var bytes = [UInt8](repeating: 0, count: size)
-    let status = bytes.withUnsafeMutableBytes { buffer in
-      sysctl(&mib, u_int(mib.count), buffer.baseAddress, &size, nil, 0)
-    }
-    guard status == 0 else {
-      if errno == ESRCH || errno == EINVAL {
-        return nil
-      }
-      throw DetectionError.argumentReadFailed(pid: pid, code: errno)
-    }
-    return try decodeProcessArguments(Array(bytes.prefix(size)))
-  }
-
-  static func decodeProcessArguments(_ bytes: [UInt8]) throws -> [String] {
-    guard bytes.count >= MemoryLayout<Int32>.size else {
-      throw DetectionError.malformedOutput
-    }
-    var argumentCount: Int32 = 0
-    withUnsafeMutableBytes(of: &argumentCount) { destination in
-      destination.copyBytes(from: bytes.prefix(MemoryLayout<Int32>.size))
-    }
-    guard argumentCount >= 0 else { throw DetectionError.malformedOutput }
-    var index = MemoryLayout<Int32>.size
-    while index < bytes.count, bytes[index] != 0 {
-      index += 1
-    }
-    guard index < bytes.count else { throw DetectionError.malformedOutput }
-    while index < bytes.count, bytes[index] == 0 {
-      index += 1
-    }
-
-    var arguments: [String] = []
-    for _ in 0 ..< Int(argumentCount) {
-      let start = index
-      while index < bytes.count, bytes[index] != 0 {
-        index += 1
-      }
-      guard index < bytes.count else { throw DetectionError.malformedOutput }
-      guard let argument = String(bytes: bytes[start ..< index], encoding: .utf8) else {
-        throw DetectionError.malformedOutput
-      }
-      arguments.append(argument)
-      index += 1
-    }
-    return arguments
   }
 }

@@ -38,7 +38,7 @@ public struct AccountSwitchService: Sendable {
   let codexKeychainRead: @Sendable (String, String) throws -> Data?
   let codexKeychainWrite: @Sendable (Data, String, String) throws -> Void
   let codexKeychainDelete: @Sendable (String, String) throws -> Void
-  let activeCLIProcesses: @Sendable (UsageProvider) throws -> [String]
+  let activeCLIProcessRecords: @Sendable (UsageProvider) throws -> [CLIActivityProcess]
   let credentialFileRead: @Sendable (URL) throws -> Data?
   let secureFileWriter: SecureCredentialFileWriter
 
@@ -53,7 +53,8 @@ public struct AccountSwitchService: Sendable {
     codexKeychainRead: (@Sendable (String, String) throws -> Data?)? = nil,
     codexKeychainWrite: (@Sendable (Data, String, String) throws -> Void)? = nil,
     codexKeychainDelete: (@Sendable (String, String) throws -> Void)? = nil,
-    activeCLIProcesses: @escaping @Sendable (UsageProvider) throws -> [String] = { _ in [] },
+    activeCLIProcesses: (@Sendable (UsageProvider) throws -> [String])? = nil,
+    activeCLIProcessRecords: @escaping @Sendable (UsageProvider) throws -> [CLIActivityProcess] = { _ in [] },
     fileRead: (@Sendable (URL) throws -> Data?)? = nil,
     setOwnerOnlyPermissions: (@Sendable (URL) throws -> Void)? = nil
   ) {
@@ -88,7 +89,13 @@ public struct AccountSwitchService: Sendable {
     self.codexKeychainDelete = codexKeychainDelete ?? { service, account in
       try KeychainItemStore(account: account).delete(service: service)
     }
-    self.activeCLIProcesses = activeCLIProcesses
+    if let activeCLIProcesses {
+      self.activeCLIProcessRecords = { provider in
+        try activeCLIProcesses(provider).map(CLIActivityProcess.init(legacyDisplayName:))
+      }
+    } else {
+      self.activeCLIProcessRecords = activeCLIProcessRecords
+    }
     credentialFileRead = fileRead ?? { url in
       guard FileManager.default.fileExists(atPath: url.path) else { return nil }
       return try Data(contentsOf: url)

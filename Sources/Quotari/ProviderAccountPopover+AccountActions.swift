@@ -17,7 +17,9 @@ extension ProviderAccountPopover {
       startSwitchingCLI(to: account)
       return
     }
+    guard cliActivityInspection.begin() else { return }
     Task {
+      defer { cliActivityInspection.finish() }
       do {
         let activitySnapshot = try await store.cliActivitySnapshot(for: account.provider)
         if activitySnapshot.isActive {
@@ -56,7 +58,9 @@ extension ProviderAccountPopover {
       store.startAddingAccount(for: descriptor.id)
       return
     }
+    guard cliActivityInspection.begin() else { return }
     Task {
+      defer { cliActivityInspection.finish() }
       do {
         let activitySnapshot = try await store.cliActivitySnapshot(for: descriptor.id)
         if activitySnapshot.isActive {

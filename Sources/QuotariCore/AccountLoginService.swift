@@ -44,6 +44,7 @@ struct AccountLoginRequest: Sendable {
   let onOutput: AccountLoginOutputHandler?
   let input: AccountLoginInput?
   let preserveCredential: CredentialPreservationHandler?
+  let preserveCredentialDuringLogin: CredentialPreservationHandler?
   let credentialMutation: CredentialMutationHandler?
   let credentialObservation: CredentialObservationHandler?
   let activitySnapshot: CLIActivitySnapshot?
@@ -202,6 +203,7 @@ public struct AccountLoginService: Sendable {
     onOutput: AccountLoginOutputHandler? = nil,
     input: AccountLoginInput? = nil,
     beforeCredentialOverwrite: CredentialPreservationHandler? = nil,
+    duringLoginCredentialChange: CredentialPreservationHandler? = nil,
     onCredentialMutationPossible: CredentialMutationHandler? = nil,
     onCredentialObserved: CredentialObservationHandler? = nil,
     allowingActiveSessions activitySnapshot: CLIActivitySnapshot? = nil
@@ -214,6 +216,7 @@ public struct AccountLoginService: Sendable {
       onOutput: onOutput,
       input: input,
       preserveCredential: beforeCredentialOverwrite,
+      preserveCredentialDuringLogin: duringLoginCredentialChange,
       credentialMutation: onCredentialMutationPossible,
       credentialObservation: onCredentialObserved,
       activitySnapshot: activitySnapshot

@@ -208,7 +208,7 @@ final class UsageStore {
     self.accountLogin = accountLogin
     self.automaticallyCapturesDiscoveredAccounts = automaticallyCapturesDiscoveredAccounts
     self.accountSwitch = accountSwitch ?? AccountSwitchService(
-      activeCLIProcesses: CLIActivityDetector().activeProcesses
+      activeCLIProcessRecords: CLIActivityDetector().activeProcessRecords
     )
     self.profileFetcher = profileFetcher
     self.profileStore = profileStore

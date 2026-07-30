@@ -1,6 +1,6 @@
 import Foundation
 
-struct ClaudeLoginObservationContext {
+struct ClaudeLoginObservationContext: @unchecked Sendable {
   let environment: [String: String]
   let home: URL
   let fileManager: FileManager

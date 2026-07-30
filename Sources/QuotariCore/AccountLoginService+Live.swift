@@ -12,6 +12,13 @@ extension AccountLoginService {
             payload
           )
         },
+        duringLoginCredentialChange: { payload in
+          try await request.preserveCredentialDuringLogin?(
+            .claude,
+            .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+            payload
+          )
+        },
         onLoginStarted: request.credentialMutation,
         onCredentialObserved: request.credentialObservation,
         onOutput: request.onOutput,
