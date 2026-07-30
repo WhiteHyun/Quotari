@@ -23,6 +23,7 @@ struct ClaudeActiveSessionRotationTests {
         retryDelay: .zero,
         loginTimeout: .seconds(2),
         credentialPreservationInterval: .milliseconds(5),
+        activityInspectionInterval: .milliseconds(20),
         beforeCredentialOverwrite: { preserved.append($0) },
         duringLoginCredentialChange: { preserved.append($0) },
         allowingActiveSessions: CLIActivitySnapshot(provider: .claude, processes: [approved])
@@ -45,6 +46,95 @@ struct ClaudeActiveSessionRotationTests {
     #expect(preserved.values.contains(added))
   }
 
+  @Test func samplesLaterRotationsWhileAnEarlierGenerationIsBeingPreserved() async throws {
+    let fixture = try RotationLoginFixture()
+    defer { fixture.remove() }
+    let original = rotationCredential(accessToken: "original", refreshToken: "original-refresh")
+    let firstRotation = rotationCredential(accessToken: "first", refreshToken: "first-refresh")
+    let laterRotation = rotationCredential(accessToken: "later", refreshToken: "later-refresh")
+    let added = rotationCredential(accessToken: "added", refreshToken: "added-refresh")
+    let keychain = RotationCredentialBox(original)
+    let preserved = RotationCredentialRecorder()
+    let gate = RotationPreservationGate(blocking: firstRotation)
+    defer { gate.release() }
+    let approved = rotationProcess(pid: 42, generation: 1)
+
+    let login = Task {
+      try await LiveClaudeAccountLogin.perform(
+        environment: fixture.environment,
+        home: fixture.directory,
+        keychainRead: { _ in keychain.value },
+        activeCLIProcessRecords: { _ in [approved] + fixture.loginProcessRecords },
+        credentialReadAttempts: 1,
+        retryDelay: .zero,
+        loginTimeout: .seconds(2),
+        credentialPreservationInterval: .milliseconds(5),
+        activityInspectionInterval: .milliseconds(20),
+        beforeCredentialOverwrite: { preserved.append($0) },
+        duringLoginCredentialChange: {
+          preserved.append($0)
+          await gate.pauseIfNeeded($0)
+        },
+        allowingActiveSessions: CLIActivitySnapshot(provider: .claude, processes: [approved])
+      )
+    }
+    try await waitForRotationCondition { FileManager.default.fileExists(atPath: fixture.started.path) }
+
+    keychain.value = firstRotation
+    try await waitForRotationCondition { gate.isWaiting }
+    keychain.value = laterRotation
+    try await waitForRotationCondition { keychain.readValues.contains(laterRotation) }
+    keychain.value = added
+    try await waitForRotationCondition { keychain.readValues.contains(added) }
+    gate.release()
+    try await waitForRotationCondition { preserved.values.contains(laterRotation) }
+    try Data().write(to: fixture.release)
+
+    let result = try await login.value
+    #expect(result.payload == added)
+    #expect(preserved.values.contains(laterRotation))
+  }
+
+  @Test func credentialSamplingDoesNotRunAFullProcessScanAtTheSameCadence() async throws {
+    let fixture = try RotationLoginFixture()
+    defer { fixture.remove() }
+    let original = rotationCredential(accessToken: "original", refreshToken: "original-refresh")
+    let added = rotationCredential(accessToken: "added", refreshToken: "added-refresh")
+    let keychain = RotationCredentialBox(original)
+    let processInspections = RotationCounter()
+    let approved = rotationProcess(pid: 42, generation: 1)
+
+    let login = Task {
+      try await LiveClaudeAccountLogin.perform(
+        environment: fixture.environment,
+        home: fixture.directory,
+        keychainRead: { _ in keychain.value },
+        activeCLIProcessRecords: { _ in
+          processInspections.increment()
+          return [approved] + fixture.loginProcessRecords
+        },
+        credentialReadAttempts: 1,
+        retryDelay: .zero,
+        loginTimeout: .seconds(2),
+        credentialPreservationInterval: .milliseconds(5),
+        activityInspectionInterval: .seconds(1),
+        duringLoginCredentialChange: { _ in },
+        allowingActiveSessions: CLIActivitySnapshot(provider: .claude, processes: [approved])
+      )
+    }
+    try await waitForRotationCondition { FileManager.default.fileExists(atPath: fixture.started.path) }
+    try await waitForRotationCondition { keychain.readCount >= 8 }
+
+    #expect(processInspections.value < keychain.readCount)
+    keychain.value = added
+    try await waitForRotationCondition { keychain.readValues.contains(added) }
+    try Data().write(to: fixture.release)
+
+    let result = try await login.value
+    #expect(result.payload == added)
+    #expect(processInspections.value <= 6)
+  }
+
   @Test func processLaunchedDuringBrowserLoginStopsTheLogin() async throws {
     let fixture = try RotationLoginFixture()
     defer { fixture.remove() }
@@ -64,6 +154,7 @@ struct ClaudeActiveSessionRotationTests {
         retryDelay: .zero,
         loginTimeout: .seconds(2),
         credentialPreservationInterval: .milliseconds(5),
+        activityInspectionInterval: .milliseconds(5),
         duringLoginCredentialChange: { _ in },
         allowingActiveSessions: CLIActivitySnapshot(
           provider: .claude,
@@ -137,14 +228,28 @@ private struct RotationLoginFixture {
 private final class RotationCredentialBox: @unchecked Sendable {
   private let lock = NSLock()
   private var storage: Data
+  private var reads: [Data] = []
 
   init(_ value: Data) {
     storage = value
   }
 
   var value: Data {
-    get { lock.withLock { storage } }
+    get {
+      lock.withLock {
+        reads.append(storage)
+        return storage
+      }
+    }
     set { lock.withLock { storage = newValue } }
+  }
+
+  var readValues: [Data] {
+    lock.withLock { reads }
+  }
+
+  var readCount: Int {
+    lock.withLock { reads.count }
   }
 }
 
@@ -173,6 +278,60 @@ private final class RotationActivityBox: @unchecked Sendable {
   var value: [CLIActivityProcess] {
     get { lock.withLock { storage } }
     set { lock.withLock { storage = newValue } }
+  }
+}
+
+private final class RotationPreservationGate: @unchecked Sendable {
+  private let lock = NSLock()
+  private let blockedPayload: Data
+  private var continuation: CheckedContinuation<Void, Never>?
+  private var waiting = false
+  private var released = false
+
+  init(blocking payload: Data) {
+    blockedPayload = payload
+  }
+
+  var isWaiting: Bool {
+    lock.withLock { waiting }
+  }
+
+  func pauseIfNeeded(_ payload: Data?) async {
+    guard payload == blockedPayload else { return }
+    await withCheckedContinuation { continuation in
+      let shouldResume = lock.withLock {
+        waiting = true
+        guard !released else { return true }
+        self.continuation = continuation
+        return false
+      }
+      if shouldResume {
+        continuation.resume()
+      }
+    }
+  }
+
+  func release() {
+    let continuation = lock.withLock {
+      released = true
+      let continuation = self.continuation
+      self.continuation = nil
+      return continuation
+    }
+    continuation?.resume()
+  }
+}
+
+private final class RotationCounter: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage = 0
+
+  var value: Int {
+    lock.withLock { storage }
+  }
+
+  func increment() {
+    lock.withLock { storage += 1 }
   }
 }
 

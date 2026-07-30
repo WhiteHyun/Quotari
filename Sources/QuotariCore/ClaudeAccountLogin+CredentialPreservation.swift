@@ -12,7 +12,8 @@ struct ClaudeLoginWindowProtection: Sendable {
   let keychainRead: @Sendable (String) throws -> Data?
   let activeCLIProcessRecords: @Sendable (UsageProvider) throws -> [CLIActivityProcess]
   let initialPayload: Data?
-  let interval: Duration
+  let credentialSamplingInterval: Duration
+  let activityInspectionInterval: Duration
   let preserveCredential: (@Sendable (Data?) async throws -> Void)?
   let activitySnapshot: CLIActivitySnapshot?
 }
@@ -54,7 +55,8 @@ extension LiveClaudeAccountLogin {
       keychainRead: protection.keychainRead,
       activeCLIProcessRecords: protection.activeCLIProcessRecords,
       activitySnapshot: protection.activitySnapshot,
-      interval: protection.interval,
+      credentialSamplingInterval: protection.credentialSamplingInterval,
+      activityInspectionInterval: protection.activityInspectionInterval,
       preserveCredential: protection.preserveCredential,
       tracker: tracker,
       loginProcess: ClaudeLoginProcessTracker()
@@ -69,8 +71,11 @@ extension LiveClaudeAccountLogin {
     } catch {
       commandResult = .failure(error)
     }
-    try inspectLoginWindowActivity(preservation)
-    try await preserveCurrentCredentialGeneration(preservation)
+    let sampledCredential = try sampleCurrentCredentialGeneration(preservation)
+    if !sampledCredential {
+      try inspectLoginWindowActivity(preservation)
+    }
+    try await preservePendingCredentialGenerations(preservation)
     return try commandResult.get()
   }
 
@@ -100,8 +105,18 @@ extension LiveClaudeAccountLogin {
         return .command(status)
       }
       group.addTask {
-        await monitorCredentialGenerations(preservation)
+        await monitorLoginWindowActivity(preservation)
         return .preservationStopped
+      }
+      if preservation.preserveCredential != nil {
+        group.addTask {
+          await sampleCredentialGenerations(preservation)
+          return .preservationStopped
+        }
+        group.addTask {
+          await preserveCredentialGenerations(preservation)
+          return .preservationStopped
+        }
       }
       let first = try await group.next() ?? .preservationStopped
       group.cancelAll()
@@ -114,13 +129,12 @@ extension LiveClaudeAccountLogin {
     }
   }
 
-  private static func monitorCredentialGenerations(_ preservation: ClaudeCredentialPreservationContext) async {
+  private static func monitorLoginWindowActivity(_ preservation: ClaudeCredentialPreservationContext) async {
     while !Task.isCancelled {
       do {
-        try await Task.sleep(for: preservation.interval)
+        try await Task.sleep(for: preservation.activityInspectionInterval)
         try Task.checkCancellation()
         try inspectLoginWindowActivity(preservation)
-        try await preserveCurrentCredentialGeneration(preservation)
       } catch is CancellationError {
         return
       } catch {
@@ -130,17 +144,70 @@ extension LiveClaudeAccountLogin {
     }
   }
 
-  private static func preserveCurrentCredentialGeneration(
+  private static func sampleCredentialGenerations(_ preservation: ClaudeCredentialPreservationContext) async {
+    while !Task.isCancelled {
+      do {
+        try await Task.sleep(for: preservation.credentialSamplingInterval)
+        try Task.checkCancellation()
+        _ = try sampleCurrentCredentialGeneration(preservation)
+      } catch is CancellationError {
+        return
+      } catch {
+        preservation.tracker.record(error: error)
+        return
+      }
+    }
+  }
+
+  private static func preserveCredentialGenerations(_ preservation: ClaudeCredentialPreservationContext) async {
+    while !Task.isCancelled {
+      do {
+        if preservation.tracker.pendingGeneration == nil {
+          try await Task.sleep(for: preservation.credentialSamplingInterval)
+        } else {
+          try await preserveNextCredentialGeneration(preservation)
+        }
+      } catch is CancellationError {
+        return
+      } catch {
+        preservation.tracker.record(error: error)
+        return
+      }
+    }
+  }
+
+  private static func sampleCurrentCredentialGeneration(
+    _ preservation: ClaudeCredentialPreservationContext
+  ) throws -> Bool {
+    if let error = preservation.tracker.error {
+      throw error
+    }
+    guard preservation.preserveCredential != nil else { return false }
+    let current = try readClaudeKeychain(preservation.keychainRead)
+    guard preservation.tracker.isNew(sampledPayload: current) else { return false }
+    try inspectLoginWindowActivity(preservation)
+    return preservation.tracker.record(sampledPayload: current)
+  }
+
+  private static func preservePendingCredentialGenerations(
+    _ preservation: ClaudeCredentialPreservationContext
+  ) async throws {
+    while preservation.tracker.pendingGeneration != nil {
+      try await preserveNextCredentialGeneration(preservation)
+    }
+  }
+
+  private static func preserveNextCredentialGeneration(
     _ preservation: ClaudeCredentialPreservationContext
   ) async throws {
     if let error = preservation.tracker.error {
       throw error
     }
-    guard let preserveCredential = preservation.preserveCredential else { return }
-    let current = try readClaudeKeychain(preservation.keychainRead)
-    guard current != preservation.tracker.payload else { return }
-    try await preserveCredential(current)
-    preservation.tracker.record(payload: current)
+    guard let preserveCredential = preservation.preserveCredential,
+          let generation = preservation.tracker.pendingGeneration
+    else { return }
+    try await preserveCredential(generation.payload)
+    preservation.tracker.record(preserved: generation)
   }
 
   private static func inspectLoginWindowActivity(
@@ -170,7 +237,8 @@ private struct ClaudeCredentialPreservationContext: Sendable {
   let keychainRead: @Sendable (String) throws -> Data?
   let activeCLIProcessRecords: @Sendable (UsageProvider) throws -> [CLIActivityProcess]
   let activitySnapshot: CLIActivitySnapshot?
-  let interval: Duration
+  let credentialSamplingInterval: Duration
+  let activityInspectionInterval: Duration
   let preserveCredential: (@Sendable (Data?) async throws -> Void)?
   let tracker: ClaudeCredentialGenerationTracker
   let loginProcess: ClaudeLoginProcessTracker
@@ -205,28 +273,53 @@ private final class ClaudeLoginProcessTracker: @unchecked Sendable {
   }
 }
 
+private struct ClaudeCredentialGeneration: Equatable, Sendable {
+  let payload: Data?
+}
+
 private final class ClaudeCredentialGenerationTracker: @unchecked Sendable {
   private let lock = NSLock()
-  private var payloadStorage: Data?
+  private var sampledPayload: Data?
+  private var pendingGenerations: [ClaudeCredentialGeneration] = []
   private var errorStorage: Error?
 
   init(initialPayload: Data?) {
-    payloadStorage = initialPayload
+    sampledPayload = initialPayload
   }
 
-  var payload: Data? {
-    lock.withLock { payloadStorage }
+  var pendingGeneration: ClaudeCredentialGeneration? {
+    lock.withLock { pendingGenerations.first }
   }
 
   var error: Error? {
     lock.withLock { errorStorage }
   }
 
-  func record(payload: Data?) {
-    lock.withLock { payloadStorage = payload }
+  func record(sampledPayload: Data?) -> Bool {
+    lock.withLock {
+      guard sampledPayload != self.sampledPayload else { return false }
+      self.sampledPayload = sampledPayload
+      pendingGenerations.append(ClaudeCredentialGeneration(payload: sampledPayload))
+      return true
+    }
+  }
+
+  func isNew(sampledPayload: Data?) -> Bool {
+    lock.withLock { sampledPayload != self.sampledPayload }
+  }
+
+  func record(preserved generation: ClaudeCredentialGeneration) {
+    lock.withLock {
+      guard pendingGenerations.first == generation else { return }
+      pendingGenerations.removeFirst()
+    }
   }
 
   func record(error: Error) {
-    lock.withLock { errorStorage = error }
+    lock.withLock {
+      if errorStorage == nil {
+        errorStorage = error
+      }
+    }
   }
 }

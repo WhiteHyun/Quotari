@@ -43,6 +43,7 @@ enum LiveClaudeAccountLogin {
     retryDelay: Duration = .milliseconds(250),
     loginTimeout: Duration = .seconds(600),
     credentialPreservationInterval: Duration = .milliseconds(100),
+    activityInspectionInterval: Duration = .seconds(1),
     beforeCredentialOverwrite: (@Sendable (Data?) async throws -> Void)? = nil,
     duringLoginCredentialChange: (@Sendable (Data?) async throws -> Void)? = nil,
     onLoginStarted: CredentialMutationHandler? = nil,
@@ -76,7 +77,8 @@ enum LiveClaudeAccountLogin {
         keychainRead: keychainRead,
         activeCLIProcessRecords: activeCLIProcessRecords,
         initialPayload: previousPayload,
-        interval: credentialPreservationInterval,
+        credentialSamplingInterval: credentialPreservationInterval,
+        activityInspectionInterval: activityInspectionInterval,
         preserveCredential: activitySnapshot?.isActive == true ? duringLoginCredentialChange : nil,
         activitySnapshot: activitySnapshot
       )
