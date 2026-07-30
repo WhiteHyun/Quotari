@@ -21,10 +21,10 @@ import Foundation
 ///
 /// Production callers pair repeated generation reads with an active-process
 /// check. The CLI remains a separate process and these stores do not offer an
-/// interprocess CAS. A user-confirmed operation may authorize the exact process
-/// snapshot they reviewed, while a newly launched process still stops the
-/// mutation. Post-write verification preserves any newer generation it
-/// observes. If only Claude's lower-precedence file changes, Quotari rolls back
+/// interprocess CAS, so account switching requires every provider session to
+/// be inactive for the whole synchronous mutation. Post-write verification
+/// preserves any newer generation it observes. If only Claude's
+/// lower-precedence file changes, Quotari rolls back
 /// its matching keychain write so a retry can back up both physical stores
 /// safely.
 public struct AccountSwitchService: Sendable {

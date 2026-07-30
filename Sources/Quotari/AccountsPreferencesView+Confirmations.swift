@@ -6,8 +6,8 @@ extension AccountsPreferencesView {
     switch confirmation {
     case let .addClaudeAccount(activitySnapshot):
       addClaudeAccountAlert(activitySnapshot)
-    case let .switchCLI(account, activitySnapshot):
-      switchCLIAlert(account, activitySnapshot: activitySnapshot)
+    case let .switchCLI(account):
+      switchCLIAlert(account)
     case let .remove(account):
       removeAccountAlert(account)
     }
@@ -39,7 +39,7 @@ extension AccountsPreferencesView {
 
   func switchButtonTapped(_ account: ProviderAccount) {
     guard account.provider == .claude else {
-      confirmation = .switchCLI(account, activitySnapshot: nil)
+      confirmation = .switchCLI(account)
       return
     }
     guard cliActivityInspection.begin() else { return }
@@ -47,10 +47,13 @@ extension AccountsPreferencesView {
       defer { cliActivityInspection.finish() }
       do {
         let activitySnapshot = try await store.cliActivitySnapshot(for: account.provider)
-        confirmation = .switchCLI(
-          account,
-          activitySnapshot: activitySnapshot.isActive ? activitySnapshot : nil
-        )
+        if activitySnapshot.isActive {
+          store.captureErrors[account.provider] = AccountSwitchError.cliStillRunning(
+            processes: activitySnapshot.processes
+          ).localizedDescription
+        } else {
+          confirmation = .switchCLI(account)
+        }
       } catch {
         store.captureErrors[account.provider] = AccountSwitchError.cliActivityCheckFailed(
           underlying: error.localizedDescription
@@ -73,26 +76,13 @@ extension AccountsPreferencesView {
     )
   }
 
-  private func switchCLIAlert(
-    _ account: ProviderAccount,
-    activitySnapshot: CLIActivitySnapshot?
-  ) -> Alert {
-    let keepsActiveSessions = activitySnapshot?.isActive == true
-    return Alert(
-      title: Text(
-        keepsActiveSessions
-          ? L10n.string("Keep running Claude Code sessions?")
-          : L10n.string("Switch CLI account?")
-      ),
-      message: Text(switchConfirmationMessage(for: account, activitySnapshot: activitySnapshot)),
-      primaryButton: .default(
-        Text(keepsActiveSessions ? L10n.string("Continue Switch") : L10n.string("Switch Account"))
-      ) {
+  private func switchCLIAlert(_ account: ProviderAccount) -> Alert {
+    Alert(
+      title: Text(L10n.string("Switch CLI account?")),
+      message: Text(switchConfirmationMessage(for: account)),
+      primaryButton: .default(Text(L10n.string("Switch Account"))) {
         Task {
-          await store.switchCLIAccount(
-            to: account,
-            allowingActiveSessions: activitySnapshot
-          )
+          await store.switchCLIAccount(to: account)
         }
       },
       secondaryButton: .cancel()
@@ -114,13 +104,7 @@ extension AccountsPreferencesView {
     )
   }
 
-  private func switchConfirmationMessage(
-    for account: ProviderAccount,
-    activitySnapshot: CLIActivitySnapshot?
-  ) -> String {
-    if let activitySnapshot, activitySnapshot.isActive {
-      return CLIActivityWarningPresentation.message(for: activitySnapshot)
-    }
+  private func switchConfirmationMessage(for account: ProviderAccount) -> String {
     let key = account.provider == .claude
       ? "Quotari will preserve the current login, then put %@ into the shared CLI slot."
       : "Quit active Claude Code or Codex sessions first. Quotari will preserve the current login, "
@@ -134,13 +118,13 @@ extension AccountsPreferencesView {
 
 enum AccountManagementConfirmation: Identifiable {
   case addClaudeAccount(CLIActivitySnapshot)
-  case switchCLI(ProviderAccount, activitySnapshot: CLIActivitySnapshot?)
+  case switchCLI(ProviderAccount)
   case remove(ProviderAccount)
 
   var id: String {
     switch self {
     case .addClaudeAccount: "add-claude-account"
-    case let .switchCLI(account, _): "switch-\(account.id)"
+    case let .switchCLI(account): "switch-\(account.id)"
     case let .remove(account): "remove-\(account.id)"
     }
   }

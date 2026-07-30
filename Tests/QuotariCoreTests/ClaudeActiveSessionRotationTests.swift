@@ -180,7 +180,7 @@ struct ClaudeActiveSessionRotationTests {
   }
 }
 
-private struct RotationLoginFixture {
+struct RotationLoginFixture {
   let directory: URL
   let started: URL
   let release: URL
@@ -225,7 +225,7 @@ private struct RotationLoginFixture {
   }
 }
 
-private final class RotationCredentialBox: @unchecked Sendable {
+final class RotationCredentialBox: @unchecked Sendable {
   private let lock = NSLock()
   private var storage: Data
   private var reads: [Data] = []
@@ -253,7 +253,7 @@ private final class RotationCredentialBox: @unchecked Sendable {
   }
 }
 
-private final class RotationCredentialRecorder: @unchecked Sendable {
+final class RotationCredentialRecorder: @unchecked Sendable {
   private let lock = NSLock()
   private var storage: [Data] = []
 
@@ -267,7 +267,7 @@ private final class RotationCredentialRecorder: @unchecked Sendable {
   }
 }
 
-private final class RotationActivityBox: @unchecked Sendable {
+final class RotationActivityBox: @unchecked Sendable {
   private let lock = NSLock()
   private var storage: [CLIActivityProcess]
 
@@ -281,7 +281,7 @@ private final class RotationActivityBox: @unchecked Sendable {
   }
 }
 
-private final class RotationPreservationGate: @unchecked Sendable {
+final class RotationPreservationGate: @unchecked Sendable {
   private let lock = NSLock()
   private let blockedPayload: Data
   private var continuation: CheckedContinuation<Void, Never>?
@@ -335,7 +335,7 @@ private final class RotationCounter: @unchecked Sendable {
   }
 }
 
-private func waitForRotationCondition(_ condition: @escaping @Sendable () -> Bool) async throws {
+func waitForRotationCondition(_ condition: @escaping @Sendable () -> Bool) async throws {
   for _ in 0 ..< 200 {
     if condition() {
       return
@@ -347,13 +347,13 @@ private func waitForRotationCondition(_ condition: @escaping @Sendable () -> Boo
 
 private struct RotationTestTimeout: Error {}
 
-private func rotationCredential(accessToken: String, refreshToken: String) -> Data {
+func rotationCredential(accessToken: String, refreshToken: String) -> Data {
   Data(
     #"{"claudeAiOauth":{"accessToken":"\#(accessToken)","refreshToken":"\#(refreshToken)"}}"#.utf8
   )
 }
 
-private func rotationProcess(pid: Int32, generation: UInt64) -> CLIActivityProcess {
+func rotationProcess(pid: Int32, generation: UInt64) -> CLIActivityProcess {
   CLIActivityProcess(
     pid: pid,
     displayName: "claude (PID \(pid))",

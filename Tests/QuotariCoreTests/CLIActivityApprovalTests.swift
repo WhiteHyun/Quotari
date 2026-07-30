@@ -43,7 +43,7 @@ struct CLIActivitySnapshotTests {
 }
 
 struct AccountSwitchActiveSessionApprovalTests {
-  @Test func userApprovedClaudeProcessCanRemainActiveDuringTheSwitch() throws {
+  @Test func activeClaudeProcessCannotOutliveTheSwitch() throws {
     let registry = makeSwitchRegistry()
     let saved = try savedClaudeAccount(registry: registry)
     let home = try switchTemporaryHome()
@@ -58,16 +58,22 @@ struct AccountSwitchActiveSessionApprovalTests {
       activeProcesses: active
     )
 
-    try service.switchCLI(
-      toRegistryAccount: saved.id,
-      now: .distantPast,
-      allowingActiveSessions: CLIActivitySnapshot(provider: .claude, processes: active)
-    )
+    var thrown: AccountSwitchError?
+    do {
+      try service.switchCLI(toRegistryAccount: saved.id, now: .distantPast)
+    } catch let error as AccountSwitchError {
+      thrown = error
+    }
 
-    #expect(try ClaudeCredentialsStore.parse(#require(keychain.value)).accessToken == "saved-tok")
+    guard case let .cliStillRunning(processes) = thrown else {
+      Issue.record("expected .cliStillRunning, got \(String(describing: thrown))")
+      return
+    }
+    #expect(processes == active)
+    #expect(keychain.value == live)
   }
 
-  @Test func processLaunchedAfterConfirmationStillStopsTheSwitch() throws {
+  @Test func allActiveProcessesAreReportedWhenSwitchingIsBlocked() throws {
     let registry = makeSwitchRegistry()
     let saved = try savedClaudeAccount(registry: registry)
     let home = try switchTemporaryHome()
@@ -83,14 +89,7 @@ struct AccountSwitchActiveSessionApprovalTests {
 
     var thrown: AccountSwitchError?
     do {
-      try service.switchCLI(
-        toRegistryAccount: saved.id,
-        now: .distantPast,
-        allowingActiveSessions: CLIActivitySnapshot(
-          provider: .claude,
-          processes: ["claude (PID 42)"]
-        )
-      )
+      try service.switchCLI(toRegistryAccount: saved.id, now: .distantPast)
     } catch let error as AccountSwitchError {
       thrown = error
     }
@@ -99,7 +98,7 @@ struct AccountSwitchActiveSessionApprovalTests {
       Issue.record("expected .cliStillRunning, got \(String(describing: thrown))")
       return
     }
-    #expect(processes == ["claude (PID 99)"])
+    #expect(processes == ["claude (PID 42)", "claude (PID 99)"])
     #expect(keychain.value == original)
   }
 }

@@ -71,6 +71,13 @@ extension LiveClaudeAccountLogin {
     } catch {
       commandResult = .failure(error)
     }
+    // An activity failure stops new sampling, but generations already
+    // observed before that failure are still durable user credentials. Drain
+    // those generations before surfacing the original protection error.
+    if let protectionError = tracker.error {
+      try await preservePendingCredentialGenerations(preservation)
+      throw protectionError
+    }
     let sampledCredential = try sampleCurrentCredentialGeneration(preservation)
     if !sampledCredential {
       try inspectLoginWindowActivity(preservation)
@@ -200,9 +207,6 @@ extension LiveClaudeAccountLogin {
   private static func preserveNextCredentialGeneration(
     _ preservation: ClaudeCredentialPreservationContext
   ) async throws {
-    if let error = preservation.tracker.error {
-      throw error
-    }
     guard let preserveCredential = preservation.preserveCredential,
           let generation = preservation.tracker.pendingGeneration
     else { return }

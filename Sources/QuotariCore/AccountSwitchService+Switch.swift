@@ -12,28 +12,29 @@ public extension AccountSwitchService {
     now: Date,
     knownLiveTarget: KnownLiveClaudeTarget? = nil,
     targetClaudeProfile: ClaudeProfile? = nil,
-    verifiedLiveClaudeIdentity: VerifiedLiveClaudeIdentity? = nil,
-    allowingActiveSessions activitySnapshot: CLIActivitySnapshot? = nil
+    verifiedLiveClaudeIdentity: VerifiedLiveClaudeIdentity? = nil
   ) throws -> ProviderCredentialSource {
-    try CLIActivityApprovalContext.$snapshot.withValue(activitySnapshot) {
-      let provider = capturedAccounts.account(id: id)?.provider
-      if let provider {
-        try requireCLIInactive(provider)
-      }
-      switch provider {
-      case .claude:
-        return try switchClaude(
-          registryID: id,
-          now: now,
-          knownLiveTarget: knownLiveTarget,
-          targetProfile: targetClaudeProfile,
-          verifiedLiveIdentity: verifiedLiveClaudeIdentity
-        )
-      case .codex:
-        return try switchCodex(registryID: id, now: now)
-      case nil:
-        throw AccountSwitchError.accountNotFound
-      }
+    let provider = capturedAccounts.account(id: id)?.provider
+    if let provider {
+      // A long-lived CLI can rotate the shared credential again after this
+      // synchronous operation returns. Unlike the bounded login window, an
+      // account switch has no safe lifetime monitor, so it never authorizes
+      // active sessions to outlive the write.
+      try requireCLIInactive(provider)
+    }
+    switch provider {
+    case .claude:
+      return try switchClaude(
+        registryID: id,
+        now: now,
+        knownLiveTarget: knownLiveTarget,
+        targetProfile: targetClaudeProfile,
+        verifiedLiveIdentity: verifiedLiveClaudeIdentity
+      )
+    case .codex:
+      return try switchCodex(registryID: id, now: now)
+    case nil:
+      throw AccountSwitchError.accountNotFound
     }
   }
 }
