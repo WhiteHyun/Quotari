@@ -11,7 +11,8 @@ enum LiveClaudeAccountLogin {
     onLoginStarted: CredentialMutationHandler? = nil,
     onCredentialObserved: CredentialObservationHandler? = nil,
     onOutput: AccountLoginOutputHandler? = nil,
-    input: AccountLoginInput? = nil
+    input: AccountLoginInput? = nil,
+    allowingActiveSessions activitySnapshot: CLIActivitySnapshot? = nil
   ) async throws -> AccountLoginResult {
     let fileManager = FileManager.default
     return try await perform(
@@ -23,7 +24,8 @@ enum LiveClaudeAccountLogin {
       onLoginStarted: onLoginStarted,
       onCredentialObserved: onCredentialObserved,
       onOutput: onOutput,
-      input: input
+      input: input,
+      allowingActiveSessions: activitySnapshot
     )
   }
 
@@ -41,7 +43,8 @@ enum LiveClaudeAccountLogin {
     onLoginStarted: CredentialMutationHandler? = nil,
     onCredentialObserved: CredentialObservationHandler? = nil,
     onOutput: AccountLoginOutputHandler? = nil,
-    input: AccountLoginInput? = nil
+    input: AccountLoginInput? = nil,
+    allowingActiveSessions activitySnapshot: CLIActivitySnapshot? = nil
   ) async throws -> AccountLoginResult {
     let configuration = configuration(home: home)
     guard let executable = IsolatedAccountLogin.executableURL(
@@ -62,7 +65,8 @@ enum LiveClaudeAccountLogin {
     let previousPayload = try await credentialAtOverwriteBoundary(
       keychainRead: keychainRead,
       activeCLIProcesses: activeCLIProcesses,
-      beforeCredentialOverwrite: beforeCredentialOverwrite
+      beforeCredentialOverwrite: beforeCredentialOverwrite,
+      allowingActiveSessions: activitySnapshot
     )
     let previousCredential = renewableCredential(from: previousPayload)
     let status = try await runLoginCommandReportingCredential(
@@ -157,7 +161,8 @@ enum LiveClaudeAccountLogin {
   }
 
   private static func requireClaudeCLIInactive(
-    _ activeCLIProcesses: @Sendable (UsageProvider) throws -> [String]
+    _ activeCLIProcesses: @Sendable (UsageProvider) throws -> [String],
+    allowingActiveSessions activitySnapshot: CLIActivitySnapshot?
   ) throws {
     let active: [String]
     do {
@@ -165,22 +170,33 @@ enum LiveClaudeAccountLogin {
     } catch {
       throw AccountLoginError.cliActivityCheckFailed(.claude, underlying: error.localizedDescription)
     }
-    guard active.isEmpty else {
-      throw AccountLoginError.cliStillRunning(.claude, processes: active)
+    let blocked = activitySnapshot?.unapprovedProcesses(
+      for: .claude,
+      activeProcesses: active
+    ) ?? active
+    guard blocked.isEmpty else {
+      throw AccountLoginError.cliStillRunning(.claude, processes: blocked)
     }
   }
 
   private static func credentialAtOverwriteBoundary(
     keychainRead: @escaping @Sendable (String) throws -> Data?,
     activeCLIProcesses: @escaping @Sendable (UsageProvider) throws -> [String],
-    beforeCredentialOverwrite: (@Sendable (Data?) async throws -> Void)?
+    beforeCredentialOverwrite: (@Sendable (Data?) async throws -> Void)?,
+    allowingActiveSessions activitySnapshot: CLIActivitySnapshot?
   ) async throws -> Data? {
-    try requireClaudeCLIInactive(activeCLIProcesses)
+    try requireClaudeCLIInactive(
+      activeCLIProcesses,
+      allowingActiveSessions: activitySnapshot
+    )
     var observed = try readClaudeKeychain(keychainRead)
     for _ in 0 ..< 3 {
       try await beforeCredentialOverwrite?(observed)
       try Task.checkCancellation()
-      try requireClaudeCLIInactive(activeCLIProcesses)
+      try requireClaudeCLIInactive(
+        activeCLIProcesses,
+        allowingActiveSessions: activitySnapshot
+      )
       let current = try readClaudeKeychain(keychainRead)
       if current == observed {
         return current

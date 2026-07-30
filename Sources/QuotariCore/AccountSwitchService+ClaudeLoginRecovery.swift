@@ -41,20 +41,28 @@ extension AccountSwitchService {
 
   /// Restores only the Keychain slot for callers that intentionally do not
   /// own Claude's account-state file.
-  public func restoreClaudeLoginKeychain(to previous: Data?) throws {
-    try restoreClaudeLoginKeychain(to: previous, expectation: .preserveInstalledCredential)
+  public func restoreClaudeLoginKeychain(
+    to previous: Data?,
+    allowingActiveSessions activitySnapshot: CLIActivitySnapshot? = nil
+  ) throws {
+    try CLIActivityApprovalContext.$snapshot.withValue(activitySnapshot) {
+      try restoreClaudeLoginKeychain(to: previous, expectation: .preserveInstalledCredential)
+    }
   }
 
   /// Restores only when the Keychain still contains the exact generation
   /// observed when Quotari's login process ended.
   public func restoreClaudeLoginKeychain(
     to previous: Data?,
-    replacing observedPostLogin: Data?
+    replacing observedPostLogin: Data?,
+    allowingActiveSessions activitySnapshot: CLIActivitySnapshot? = nil
   ) throws {
-    try restoreClaudeLoginKeychain(
-      to: previous,
-      expectation: .replaceObservedCredential(observedPostLogin)
-    )
+    try CLIActivityApprovalContext.$snapshot.withValue(activitySnapshot) {
+      try restoreClaudeLoginKeychain(
+        to: previous,
+        expectation: .replaceObservedCredential(observedPostLogin)
+      )
+    }
   }
 
   private func restoreClaudeLoginKeychain(
@@ -86,14 +94,17 @@ extension AccountSwitchService {
   /// write fails, the Keychain returns to the post-login value.
   public func restoreClaudeLogin(
     keychain previousKeychain: Data?,
-    accountState previousAccountState: Data?
+    accountState previousAccountState: Data?,
+    allowingActiveSessions activitySnapshot: CLIActivitySnapshot? = nil
   ) throws {
-    try restoreClaudeLogin(
-      keychain: previousKeychain,
-      accountState: previousAccountState,
-      credentialExpectation: .preserveInstalledCredential,
-      accountStateExpectation: .preserveInstalledState
-    )
+    try CLIActivityApprovalContext.$snapshot.withValue(activitySnapshot) {
+      try restoreClaudeLogin(
+        keychain: previousKeychain,
+        accountState: previousAccountState,
+        credentialExpectation: .preserveInstalledCredential,
+        accountStateExpectation: .preserveInstalledState
+      )
+    }
   }
 
   /// Restores both shared Claude slots only while the Keychain and account
@@ -103,14 +114,17 @@ extension AccountSwitchService {
     keychain previousKeychain: Data?,
     replacing observedPostLogin: Data?,
     accountState previousAccountState: Data?,
-    replacingAccountState observedPostLoginAccountState: Data?
+    replacingAccountState observedPostLoginAccountState: Data?,
+    allowingActiveSessions activitySnapshot: CLIActivitySnapshot? = nil
   ) throws {
-    try restoreClaudeLogin(
-      keychain: previousKeychain,
-      accountState: previousAccountState,
-      credentialExpectation: .replaceObservedCredential(observedPostLogin),
-      accountStateExpectation: .replaceObservedState(observedPostLoginAccountState)
-    )
+    try CLIActivityApprovalContext.$snapshot.withValue(activitySnapshot) {
+      try restoreClaudeLogin(
+        keychain: previousKeychain,
+        accountState: previousAccountState,
+        credentialExpectation: .replaceObservedCredential(observedPostLogin),
+        accountStateExpectation: .replaceObservedState(observedPostLoginAccountState)
+      )
+    }
   }
 
   private func restoreClaudeLogin(

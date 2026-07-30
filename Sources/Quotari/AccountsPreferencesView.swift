@@ -2,8 +2,8 @@ import QuotariCore
 import SwiftUI
 
 struct AccountsPreferencesView: View {
-  @Environment(UsageStore.self) private var store
-  @State private var confirmation: AccountManagementConfirmation?
+  @Environment(UsageStore.self) var store
+  @State var confirmation: AccountManagementConfirmation?
 
   var body: some View {
     VStack(spacing: 16) {
@@ -51,40 +51,6 @@ struct AccountsPreferencesView: View {
           .tint(Theme.brandAccent)
         }
       }
-    }
-  }
-
-  private func confirmationAlert(for confirmation: AccountManagementConfirmation) -> Alert {
-    switch confirmation {
-    case let .switchCLI(account):
-      Alert(
-        title: Text(L10n.string("Switch CLI account?")),
-        message: Text(
-          L10n.string(
-            """
-            Quit active Claude Code or Codex sessions first. Quotari will preserve the current login, then put \
-            \(store.accountLabel(for: account)) into the shared CLI slot.
-            """
-          )
-        ),
-        primaryButton: .default(Text(L10n.string("Switch Account"))) {
-          Task { await store.switchCLIAccount(to: account) }
-        },
-        secondaryButton: .cancel()
-      )
-    case let .remove(account):
-      Alert(
-        title: Text(L10n.string("Remove saved account?")),
-        message: Text(
-          L10n.string(
-            "This removes \(store.accountLabel(for: account)) from Quotari. The provider account remains intact."
-          )
-        ),
-        primaryButton: .destructive(Text(L10n.string("Remove"))) {
-          Task { await store.removeCapturedAccount(account) }
-        },
-        secondaryButton: .cancel()
-      )
     }
   }
 }
@@ -146,7 +112,7 @@ private extension AccountsPreferencesView {
         )
       )
       Button {
-        store.startAddingAccount(for: descriptor.id)
+        accountLoginButtonTapped(for: descriptor.id)
       } label: {
         Group {
           if store.addingAccountProviders.contains(descriptor.id) {
@@ -260,7 +226,7 @@ private extension AccountsPreferencesView {
   private func savedAccountActions(_ account: ProviderAccount) -> some View {
     Group {
       Button(L10n.string("Switch")) {
-        confirmation = .switchCLI(account)
+        switchButtonTapped(account)
       }
       .controlSize(.small)
       Button {
@@ -332,17 +298,5 @@ private extension AccountsPreferencesView {
     provider == .claude
       ? L10n.string("Preserve the current Claude account, then sign in with a new one in the browser")
       : L10n.string("Add another managed account")
-  }
-}
-
-private enum AccountManagementConfirmation: Identifiable {
-  case switchCLI(ProviderAccount)
-  case remove(ProviderAccount)
-
-  var id: String {
-    switch self {
-    case let .switchCLI(account): "switch-\(account.id)"
-    case let .remove(account): "remove-\(account.id)"
-    }
   }
 }

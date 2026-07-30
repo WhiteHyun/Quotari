@@ -46,40 +46,11 @@ enum AccountLoginPhase: Equatable {
 }
 
 extension UsageStore {
-  func startAddingAccount(for provider: UsageProvider) {
-    guard accountLoginTasks[provider] == nil else { return }
-    accountLoginTasks[provider] = Task { [weak self] in
-      guard let self else { return }
-      await addAccount(for: provider)
-      accountLoginTasks[provider] = nil
-    }
-  }
-
-  func cancelAccountLogin(for provider: UsageProvider) {
-    accountLoginTasks[provider]?.cancel()
-  }
-
-  func canAddAccount(for provider: UsageProvider) -> Bool {
-    accountLogin.supports(provider: provider)
-  }
-
-  func addAccountUnavailableReason(for provider: UsageProvider) -> String? {
-    accountLogin.unavailableReason(provider: provider)
-  }
-
-  func addAccount(for provider: UsageProvider) async {
-    guard addingAccountProviders.isEmpty else {
-      accountLoginErrors[provider] = L10n.string(
-        "Finish the account login already in progress before starting another one."
-      )
-      return
-    }
-    guard !isSwitching else {
-      accountLoginErrors[provider] = L10n.string(
-        "Finish the account switch already in progress before starting a new login."
-      )
-      return
-    }
+  func addAccount(
+    for provider: UsageProvider,
+    allowingActiveSessions activitySnapshot: CLIActivitySnapshot? = nil
+  ) async {
+    guard canBeginAccountLogin(for: provider) else { return }
 
     addingAccountProviders.insert(provider)
     accountLoginPhases[provider] = .preservingCurrentAccount
@@ -119,7 +90,8 @@ extension UsageStore {
       for: provider,
       previousClaudeLogin: previousClaudeLogin,
       registryBaseline: registryBaseline,
-      ownsCredentialGate: &ownsCredentialGate
+      ownsCredentialGate: &ownsCredentialGate,
+      allowingActiveSessions: activitySnapshot
     )
   }
 
@@ -127,13 +99,15 @@ extension UsageStore {
     for provider: UsageProvider,
     previousClaudeLogin: PreservedClaudeLogin?,
     registryBaseline: AccountLoginRegistryBaseline?,
-    ownsCredentialGate: inout Bool
+    ownsCredentialGate: inout Bool,
+    allowingActiveSessions activitySnapshot: CLIActivitySnapshot?
   ) async {
     do {
       let result = try await performAccountLogin(
         for: provider,
         previousClaudeLogin: previousClaudeLogin,
-        registryBaseline: registryBaseline
+        registryBaseline: registryBaseline,
+        allowingActiveSessions: activitySnapshot
       )
       accountLoginPhases[provider] = .savingAccount
       let captured = try await importAccountLoginResult(
@@ -149,7 +123,8 @@ extension UsageStore {
     } catch is CancellationError {
       let restorationError = await restoreClaudeAccountIfNeeded(
         preservingDashboardSelection: persistableSelections()[provider],
-        registryBaseline: registryBaseline
+        registryBaseline: registryBaseline,
+        allowingActiveSessions: activitySnapshot
       )
       accountLoginErrors[provider] = combinedLoginError(
         L10n.string("Account login was cancelled."),
@@ -158,7 +133,8 @@ extension UsageStore {
     } catch {
       let restorationError = await restoreClaudeAccountIfNeeded(
         preservingDashboardSelection: persistableSelections()[provider],
-        registryBaseline: registryBaseline
+        registryBaseline: registryBaseline,
+        allowingActiveSessions: activitySnapshot
       )
       accountLoginErrors[provider] = combinedLoginError(
         error.localizedDescription,

@@ -25,7 +25,8 @@ extension UsageStore {
   func performAccountLogin(
     for provider: UsageProvider,
     previousClaudeLogin: PreservedClaudeLogin?,
-    registryBaseline: AccountLoginRegistryBaseline?
+    registryBaseline: AccountLoginRegistryBaseline?,
+    allowingActiveSessions activitySnapshot: CLIActivitySnapshot?
   ) async throws -> AccountLoginResult {
     accountLoginPhases[provider] = .waitingForBrowser
     let input = AccountLoginInput()
@@ -56,7 +57,8 @@ extension UsageStore {
           keychainPayload: observation.keychainPayload,
           accountState: observation.accountState
         )
-      }
+      },
+      allowingActiveSessions: activitySnapshot
     )
     if let observation = result.claudeLoginObservation {
       registryBaseline?.recordClaudePostLogin(

@@ -1,6 +1,37 @@
 import Darwin
 import Foundation
 
+/// A point-in-time list of CLI processes shown to the user before a credential
+/// mutation. Passing this snapshot back to a mutation authorizes only these
+/// exact processes for that one operation; a process launched afterwards still
+/// fails the interlock.
+public struct CLIActivitySnapshot: Equatable, Sendable {
+  public let provider: UsageProvider
+  public let processes: [String]
+
+  public init(provider: UsageProvider, processes: [String]) {
+    self.provider = provider
+    self.processes = Array(Set(processes)).sorted()
+  }
+
+  public var isActive: Bool {
+    !processes.isEmpty
+  }
+
+  func unapprovedProcesses(
+    for provider: UsageProvider,
+    activeProcesses: [String]
+  ) -> [String] {
+    guard self.provider == provider else { return activeProcesses }
+    let approved = Set(processes)
+    return activeProcesses.filter { !approved.contains($0) }
+  }
+}
+
+enum CLIActivityApprovalContext {
+  @TaskLocal static var snapshot: CLIActivitySnapshot?
+}
+
 public struct CLIActivityDetector: Sendable {
   static let processArguments = ["-x", "-o", "pid="]
 

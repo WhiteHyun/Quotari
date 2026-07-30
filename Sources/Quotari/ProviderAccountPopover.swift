@@ -2,14 +2,15 @@ import QuotariCore
 import SwiftUI
 
 struct ProviderAccountPopover: View {
-  @Environment(UsageStore.self) private var store
-  @Environment(\.dismiss) private var dismiss
+  @Environment(UsageStore.self) var store
+  @Environment(\.dismiss) var dismiss
 
   let descriptor: ProviderDescriptor
   var showSettings: () -> Void = {}
 
   @State private var isReloadingAccounts = false
-  @State private var switchCoordinator = ProviderAccountPopoverSwitchCoordinator()
+  @State var switchCoordinator = ProviderAccountPopoverSwitchCoordinator()
+  @State var confirmation: ProviderAccountPopoverConfirmation?
 
   private var accent: Color {
     Color(
@@ -46,6 +47,7 @@ struct ProviderAccountPopover: View {
     .task {
       await store.refreshAccountUsage(for: descriptor.id)
     }
+    .alert(item: $confirmation) { confirmationAlert(for: $0) }
   }
 
   private var header: some View {
@@ -83,28 +85,6 @@ struct ProviderAccountPopover: View {
     .contextMenu { accountMenu(account) }
   }
 
-  private func perform(_ action: ProviderAccountPopoverAction, for account: ProviderAccount) {
-    switch action {
-    case .selectDashboard:
-      store.selectAccount(account, for: descriptor.id)
-      dismiss()
-    case .switchCLI:
-      startSwitchingCLI(to: account)
-    }
-  }
-
-  private func startSwitchingCLI(to account: ProviderAccount) {
-    Task {
-      let shouldDismiss = await switchCoordinator.switchCLI(to: account) {
-        await store.switchCLIAccount(to: account)
-        return store.captureErrors[account.provider] == nil
-      }
-      if shouldDismiss {
-        dismiss()
-      }
-    }
-  }
-
   @ViewBuilder
   private func accountMenu(_ account: ProviderAccount) -> some View {
     if store.capturedEquivalents.keys.contains(account.id) {
@@ -114,7 +94,7 @@ struct ProviderAccountPopover: View {
     }
     if account.credentialSource.isCaptured {
       Button(L10n.string("Use in CLI (Switch)")) {
-        startSwitchingCLI(to: account)
+        requestSwitchingCLI(to: account)
       }
       .disabled(store.isSwitching || !store.addingAccountProviders.isEmpty)
       Button(L10n.string("Remove Account"), role: .destructive) {
@@ -132,7 +112,7 @@ struct ProviderAccountPopover: View {
         busy: !store.addingAccountProviders.isEmpty,
         disabled: !canAddAccount
       ) {
-        store.startAddingAccount(for: descriptor.id)
+        requestAddingAccount()
       }
       .help(store.addAccountUnavailableReason(for: descriptor.id) ?? accountLoginHelp)
       PopoverActionButton(
