@@ -46,6 +46,7 @@ extension IsolatedAccountLogin {
             // executable that exits inside `Process.run()` cannot publish its
             // status first.
             observers.didLaunch?()
+            observers.processDidLaunch?(process.processIdentifier)
             completion.didPublishLaunch()
             try? outputPipe?.fileHandleForWriting.close()
           } catch {

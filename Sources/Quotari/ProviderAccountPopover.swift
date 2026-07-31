@@ -2,14 +2,16 @@ import QuotariCore
 import SwiftUI
 
 struct ProviderAccountPopover: View {
-  @Environment(UsageStore.self) private var store
-  @Environment(\.dismiss) private var dismiss
+  @Environment(UsageStore.self) var store
+  @Environment(\.dismiss) var dismiss
 
   let descriptor: ProviderDescriptor
   var showSettings: () -> Void = {}
 
   @State private var isReloadingAccounts = false
-  @State private var switchCoordinator = ProviderAccountPopoverSwitchCoordinator()
+  @State var switchCoordinator = ProviderAccountPopoverSwitchCoordinator()
+  @State var confirmation: ProviderAccountPopoverConfirmation?
+  @State var cliActivityInspection = CLIActivityInspectionState()
 
   private var accent: Color {
     Color(
@@ -46,6 +48,7 @@ struct ProviderAccountPopover: View {
     .task {
       await store.refreshAccountUsage(for: descriptor.id)
     }
+    .alert(item: $confirmation) { confirmationAlert(for: $0) }
   }
 
   private var header: some View {
@@ -77,32 +80,14 @@ struct ProviderAccountPopover: View {
       )
     }
     .buttonStyle(.plain)
-    .disabled(store.isSwitching || !store.addingAccountProviders.isEmpty)
+    .disabled(
+      cliActivityInspection.isRunning
+        || store.isSwitching
+        || !store.addingAccountProviders.isEmpty
+    )
     .accessibilityHint(action.accessibilityHint)
     .help(action.accessibilityHint)
     .contextMenu { accountMenu(account) }
-  }
-
-  private func perform(_ action: ProviderAccountPopoverAction, for account: ProviderAccount) {
-    switch action {
-    case .selectDashboard:
-      store.selectAccount(account, for: descriptor.id)
-      dismiss()
-    case .switchCLI:
-      startSwitchingCLI(to: account)
-    }
-  }
-
-  private func startSwitchingCLI(to account: ProviderAccount) {
-    Task {
-      let shouldDismiss = await switchCoordinator.switchCLI(to: account) {
-        await store.switchCLIAccount(to: account)
-        return store.captureErrors[account.provider] == nil
-      }
-      if shouldDismiss {
-        dismiss()
-      }
-    }
   }
 
   @ViewBuilder
@@ -114,9 +99,13 @@ struct ProviderAccountPopover: View {
     }
     if account.credentialSource.isCaptured {
       Button(L10n.string("Use in CLI (Switch)")) {
-        startSwitchingCLI(to: account)
+        requestSwitchingCLI(to: account)
       }
-      .disabled(store.isSwitching || !store.addingAccountProviders.isEmpty)
+      .disabled(
+        cliActivityInspection.isRunning
+          || store.isSwitching
+          || !store.addingAccountProviders.isEmpty
+      )
       Button(L10n.string("Remove Account"), role: .destructive) {
         Task { await store.removeCapturedAccount(account) }
       }
@@ -130,9 +119,9 @@ struct ProviderAccountPopover: View {
         title: canAddAccount ? accountLoginTitle : L10n.string("\(accountLoginTitle) (Unavailable)"),
         systemImage: "plus",
         busy: !store.addingAccountProviders.isEmpty,
-        disabled: !canAddAccount
+        disabled: cliActivityInspection.isRunning || !canAddAccount
       ) {
-        store.startAddingAccount(for: descriptor.id)
+        requestAddingAccount()
       }
       .help(store.addAccountUnavailableReason(for: descriptor.id) ?? accountLoginHelp)
       PopoverActionButton(

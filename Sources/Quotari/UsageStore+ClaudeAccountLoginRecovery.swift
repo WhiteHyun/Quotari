@@ -4,7 +4,8 @@ import QuotariCore
 extension UsageStore {
   func restoreClaudeAccountIfNeeded(
     preservingDashboardSelection dashboardSelection: ProviderAccount?,
-    registryBaseline: AccountLoginRegistryBaseline?
+    registryBaseline: AccountLoginRegistryBaseline?,
+    allowingActiveSessions activitySnapshot: CLIActivitySnapshot?
   ) async -> String? {
     guard let registryBaseline,
           registryBaseline.isCredentialMutationPossible,
@@ -22,14 +23,16 @@ extension UsageStore {
     return await restoreExactClaudeLoginState(
       keychainSnapshot,
       postLoginSnapshot: postLoginSnapshot,
-      dashboardSelection: dashboardSelection
+      dashboardSelection: dashboardSelection,
+      allowingActiveSessions: activitySnapshot
     )
   }
 
   private func restoreExactClaudeLoginState(
     _ keychainSnapshot: ClaudeKeychainLoginSnapshot,
     postLoginSnapshot: ClaudeKeychainLoginSnapshot,
-    dashboardSelection: ProviderAccount?
+    dashboardSelection: ProviderAccount?,
+    allowingActiveSessions activitySnapshot: CLIActivitySnapshot?
   ) async -> String? {
     accountLoginPhases[.claude] = .restoringPreviousAccount
     let switcher = accountSwitch
@@ -39,7 +42,8 @@ extension UsageStore {
           keychain: keychainSnapshot.payload,
           replacing: postLoginSnapshot.payload,
           accountState: keychainSnapshot.accountState,
-          replacingAccountState: postLoginSnapshot.accountState
+          replacingAccountState: postLoginSnapshot.accountState,
+          allowingActiveSessions: activitySnapshot
         )
       }.value
     } catch {

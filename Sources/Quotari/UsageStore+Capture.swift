@@ -9,6 +9,13 @@ extension UsageStore {
       "This account is still present in a CLI credential slot. Switch to another account or sign out before removing it."
     )
 
+  func cliActivitySnapshot(for provider: UsageProvider) async throws -> CLIActivitySnapshot {
+    let switcher = accountSwitch
+    return try await Task.detached {
+      try switcher.cliActivitySnapshot(for: provider)
+    }.value
+  }
+
   func removeCapturedAccount(_ account: ProviderAccount) async {
     guard case let .quotariRegistry(id) = account.credentialSource else { return }
     // Removal is a policy decision about the live CLI state, not the last

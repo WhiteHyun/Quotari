@@ -25,7 +25,8 @@ extension UsageStore {
   func performAccountLogin(
     for provider: UsageProvider,
     previousClaudeLogin: PreservedClaudeLogin?,
-    registryBaseline: AccountLoginRegistryBaseline?
+    registryBaseline: AccountLoginRegistryBaseline?,
+    allowingActiveSessions activitySnapshot: CLIActivitySnapshot?
   ) async throws -> AccountLoginResult {
     accountLoginPhases[provider] = .waitingForBrowser
     let input = AccountLoginInput()
@@ -48,6 +49,16 @@ extension UsageStore {
           registryBaseline: registryBaseline
         )
       },
+      duringLoginCredentialChange: { [weak self] provider, source, payload in
+        guard let self else { throw CancellationError() }
+        try await preserveCredentialDuringLogin(
+          provider: provider,
+          source: source,
+          payload: payload,
+          previousClaudeLogin: previousClaudeLogin,
+          registryBaseline: registryBaseline
+        )
+      },
       onCredentialMutationPossible: {
         registryBaseline?.markCredentialMutationPossible()
       },
@@ -56,7 +67,8 @@ extension UsageStore {
           keychainPayload: observation.keychainPayload,
           accountState: observation.accountState
         )
-      }
+      },
+      allowingActiveSessions: activitySnapshot
     )
     if let observation = result.claudeLoginObservation {
       registryBaseline?.recordClaudePostLogin(

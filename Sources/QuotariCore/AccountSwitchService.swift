@@ -21,10 +21,12 @@ import Foundation
 ///
 /// Production callers pair repeated generation reads with an active-process
 /// check. The CLI remains a separate process and these stores do not offer an
-/// interprocess CAS, so users must still stop active sessions. Post-write
-/// verification preserves any newer generation it observes. If only Claude's
-/// lower-precedence file changes, Quotari rolls back its matching keychain
-/// write so a retry can back up both physical stores safely.
+/// interprocess CAS, so account switching requires every provider session to
+/// be inactive for the whole synchronous mutation. Post-write verification
+/// preserves any newer generation it observes. If only Claude's
+/// lower-precedence file changes, Quotari rolls back
+/// its matching keychain write so a retry can back up both physical stores
+/// safely.
 public struct AccountSwitchService: Sendable {
   let capturedAccounts: CapturedAccountStore
   let capture: AccountCaptureService
@@ -36,7 +38,7 @@ public struct AccountSwitchService: Sendable {
   let codexKeychainRead: @Sendable (String, String) throws -> Data?
   let codexKeychainWrite: @Sendable (Data, String, String) throws -> Void
   let codexKeychainDelete: @Sendable (String, String) throws -> Void
-  let activeCLIProcesses: @Sendable (UsageProvider) throws -> [String]
+  let activeCLIProcessRecords: @Sendable (UsageProvider) throws -> [CLIActivityProcess]
   let credentialFileRead: @Sendable (URL) throws -> Data?
   let secureFileWriter: SecureCredentialFileWriter
 
@@ -51,7 +53,8 @@ public struct AccountSwitchService: Sendable {
     codexKeychainRead: (@Sendable (String, String) throws -> Data?)? = nil,
     codexKeychainWrite: (@Sendable (Data, String, String) throws -> Void)? = nil,
     codexKeychainDelete: (@Sendable (String, String) throws -> Void)? = nil,
-    activeCLIProcesses: @escaping @Sendable (UsageProvider) throws -> [String] = { _ in [] },
+    activeCLIProcesses: (@Sendable (UsageProvider) throws -> [String])? = nil,
+    activeCLIProcessRecords: @escaping @Sendable (UsageProvider) throws -> [CLIActivityProcess] = { _ in [] },
     fileRead: (@Sendable (URL) throws -> Data?)? = nil,
     setOwnerOnlyPermissions: (@Sendable (URL) throws -> Void)? = nil
   ) {
@@ -86,7 +89,13 @@ public struct AccountSwitchService: Sendable {
     self.codexKeychainDelete = codexKeychainDelete ?? { service, account in
       try KeychainItemStore(account: account).delete(service: service)
     }
-    self.activeCLIProcesses = activeCLIProcesses
+    if let activeCLIProcesses {
+      self.activeCLIProcessRecords = { provider in
+        try activeCLIProcesses(provider).map(CLIActivityProcess.init(legacyDisplayName:))
+      }
+    } else {
+      self.activeCLIProcessRecords = activeCLIProcessRecords
+    }
     credentialFileRead = fileRead ?? { url in
       guard FileManager.default.fileExists(atPath: url.path) else { return nil }
       return try Data(contentsOf: url)
@@ -100,45 +109,10 @@ public struct AccountSwitchService: Sendable {
   }
 }
 
-public extension AccountSwitchService {
-  /// Performs the switch and returns the credential source it wrote — the
-  /// live slot the CLI now reads (Claude keychain, or Codex's resolved file or
-  /// keychain backend). The caller selects the discovered live row with exactly
-  /// this source, so usage/refresh follow the store that was switched rather
-  /// than a duplicate slot or the registry copy.
-  @discardableResult
-  func switchCLI(
-    toRegistryAccount id: String,
-    now: Date,
-    knownLiveTarget: KnownLiveClaudeTarget? = nil,
-    targetClaudeProfile: ClaudeProfile? = nil,
-    verifiedLiveClaudeIdentity: VerifiedLiveClaudeIdentity? = nil
-  ) throws -> ProviderCredentialSource {
-    let provider = capturedAccounts.account(id: id)?.provider
-    if let provider {
-      try requireCLIInactive(provider)
-    }
-    switch provider {
-    case .claude:
-      return try switchClaude(
-        registryID: id,
-        now: now,
-        knownLiveTarget: knownLiveTarget,
-        targetProfile: targetClaudeProfile,
-        verifiedLiveIdentity: verifiedLiveClaudeIdentity
-      )
-    case .codex:
-      return try switchCodex(registryID: id, now: now)
-    case nil:
-      throw AccountSwitchError.accountNotFound
-    }
-  }
-}
-
-private extension AccountSwitchService {
+extension AccountSwitchService {
   // MARK: - Claude (keychain + optional credentials file, both overwritten)
 
-  private func switchClaude(
+  func switchClaude(
     registryID: String,
     now: Date,
     knownLiveTarget: KnownLiveClaudeTarget?,

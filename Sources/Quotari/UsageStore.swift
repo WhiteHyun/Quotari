@@ -60,8 +60,8 @@ final class UsageStore {
   /// True while an account switch is writing a credential slot. Refreshes are
   /// suppressed for the window so none rotates/persists a slot the switch is
   /// mid-way through reading and overwriting. This coordinates Quotari's own
-  /// work only; the switch service separately checks for active CLI processes
-  /// and the user must still avoid launching one during the switch.
+  /// work only; the switch service separately requires active CLI processes
+  /// to exit before the mutation.
   /// Set by the switch flow (in a sibling extension), so not `private(set)`.
   var isSwitching = false
   var addingAccountProviders = Set<UsageProvider>()
@@ -207,7 +207,7 @@ final class UsageStore {
     self.accountLogin = accountLogin
     self.automaticallyCapturesDiscoveredAccounts = automaticallyCapturesDiscoveredAccounts
     self.accountSwitch = accountSwitch ?? AccountSwitchService(
-      activeCLIProcesses: CLIActivityDetector().activeProcesses
+      activeCLIProcessRecords: CLIActivityDetector().activeProcessRecords
     )
     self.profileFetcher = profileFetcher
     self.profileStore = profileStore

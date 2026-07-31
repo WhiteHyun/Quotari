@@ -38,6 +38,18 @@ public typealias CredentialPreservationHandler = @Sendable (
 ) async throws -> Void
 public typealias CredentialMutationHandler = @Sendable () -> Void
 public typealias CredentialObservationHandler = @Sendable (ClaudeLoginCredentialObservation) -> Void
+
+struct AccountLoginRequest: Sendable {
+  let provider: UsageProvider
+  let onOutput: AccountLoginOutputHandler?
+  let input: AccountLoginInput?
+  let preserveCredential: CredentialPreservationHandler?
+  let preserveCredentialDuringLogin: CredentialPreservationHandler?
+  let credentialMutation: CredentialMutationHandler?
+  let credentialObservation: CredentialObservationHandler?
+  let activitySnapshot: CLIActivitySnapshot?
+}
+
 public enum AccountLoginError: LocalizedError, Sendable {
   case isolatedLoginUnavailable(UsageProvider)
   case executableNotFound(UsageProvider)
@@ -89,45 +101,19 @@ public enum AccountLoginError: LocalizedError, Sendable {
 /// credential store fail closed. Only the successful temporary credential
 /// bytes leave this service, and cleanup must succeed before they are returned.
 public struct AccountLoginService: Sendable {
-  private let operation: @Sendable (
-    UsageProvider,
-    AccountLoginOutputHandler?,
-    AccountLoginInput?,
-    CredentialPreservationHandler?,
-    CredentialMutationHandler?,
-    CredentialObservationHandler?
-  ) async throws -> AccountLoginResult
+  private let operation: @Sendable (AccountLoginRequest) async throws -> AccountLoginResult
   private let supportedProviders: Set<UsageProvider>
 
   public init() {
     supportedProviders = Set(UsageProvider.allCases)
-    operation = { provider, onOutput, input, preserveCredential, credentialMutation, credentialObservation in
-      switch provider {
-      case .claude:
-        try await LiveClaudeAccountLogin.perform(
-          beforeCredentialOverwrite: { payload in
-            try await preserveCredential?(
-              .claude,
-              .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
-              payload
-            )
-          },
-          onLoginStarted: credentialMutation,
-          onCredentialObserved: credentialObservation,
-          onOutput: onOutput,
-          input: input
-        )
-      case .codex:
-        try await IsolatedAccountLogin.perform(provider: provider, onOutput: onOutput, input: input)
-      }
-    }
+    operation = Self.performLiveLogin
   }
 
   public init(
     operation: @escaping @Sendable (UsageProvider) async throws -> AccountLoginResult
   ) {
     supportedProviders = Set(UsageProvider.allCases)
-    self.operation = { provider, _, _, _, _, _ in try await operation(provider) }
+    self.operation = { request in try await operation(request.provider) }
   }
 
   public init(
@@ -137,8 +123,8 @@ public struct AccountLoginService: Sendable {
     ) async throws -> AccountLoginResult
   ) {
     supportedProviders = Set(UsageProvider.allCases)
-    operation = { provider, onOutput, _, _, _, _ in
-      try await streamingOperation(provider, onOutput)
+    operation = { request in
+      try await streamingOperation(request.provider, request.onOutput)
     }
   }
 
@@ -151,8 +137,13 @@ public struct AccountLoginService: Sendable {
     ) async throws -> AccountLoginResult
   ) {
     supportedProviders = Set(UsageProvider.allCases)
-    operation = { provider, onOutput, _, preserveCredential, credentialMutation, _ in
-      try await managedOperation(provider, onOutput, preserveCredential, credentialMutation)
+    operation = { request in
+      try await managedOperation(
+        request.provider,
+        request.onOutput,
+        request.preserveCredential,
+        request.credentialMutation
+      )
     }
   }
 
@@ -166,13 +157,13 @@ public struct AccountLoginService: Sendable {
     ) async throws -> AccountLoginResult
   ) {
     supportedProviders = Set(UsageProvider.allCases)
-    operation = { provider, onOutput, _, preserveCredential, credentialMutation, credentialObservation in
+    operation = { request in
       try await observedManagedOperation(
-        provider,
-        onOutput,
-        preserveCredential,
-        credentialMutation,
-        credentialObservation
+        request.provider,
+        request.onOutput,
+        request.preserveCredential,
+        request.credentialMutation,
+        request.credentialObservation
       )
     }
   }
@@ -187,8 +178,14 @@ public struct AccountLoginService: Sendable {
     ) async throws -> AccountLoginResult
   ) {
     supportedProviders = Set(UsageProvider.allCases)
-    operation = { provider, onOutput, input, preserveCredential, credentialMutation, _ in
-      try await interactiveOperation(provider, onOutput, input, preserveCredential, credentialMutation)
+    operation = { request in
+      try await interactiveOperation(
+        request.provider,
+        request.onOutput,
+        request.input,
+        request.preserveCredential,
+        request.credentialMutation
+      )
     }
   }
 
@@ -206,20 +203,24 @@ public struct AccountLoginService: Sendable {
     onOutput: AccountLoginOutputHandler? = nil,
     input: AccountLoginInput? = nil,
     beforeCredentialOverwrite: CredentialPreservationHandler? = nil,
+    duringLoginCredentialChange: CredentialPreservationHandler? = nil,
     onCredentialMutationPossible: CredentialMutationHandler? = nil,
-    onCredentialObserved: CredentialObservationHandler? = nil
+    onCredentialObserved: CredentialObservationHandler? = nil,
+    allowingActiveSessions activitySnapshot: CLIActivitySnapshot? = nil
   ) async throws -> AccountLoginResult {
     guard supports(provider: provider) else {
       throw AccountLoginError.isolatedLoginUnavailable(provider)
     }
-    return try await operation(
-      provider,
-      onOutput,
-      input,
-      beforeCredentialOverwrite,
-      onCredentialMutationPossible,
-      onCredentialObserved
-    )
+    return try await operation(AccountLoginRequest(
+      provider: provider,
+      onOutput: onOutput,
+      input: input,
+      preserveCredential: beforeCredentialOverwrite,
+      preserveCredentialDuringLogin: duringLoginCredentialChange,
+      credentialMutation: onCredentialMutationPossible,
+      credentialObservation: onCredentialObserved,
+      activitySnapshot: activitySnapshot
+    ))
   }
 }
 
