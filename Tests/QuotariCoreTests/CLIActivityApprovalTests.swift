@@ -135,6 +135,60 @@ struct AccountSwitchActiveSessionApprovalTests {
     #expect(!cli.isStopped)
   }
 
+  @Test func reusedApprovedPIDIsNeverSignaled() throws {
+    let registry = makeSwitchRegistry()
+    let saved = try savedClaudeAccount(registry: registry)
+    let home = try switchTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let original = approvalClaudeCredential(accessToken: "live", refreshToken: "live-ref")
+    let keychain = KeychainSlot(original)
+    let cli = try ApprovalCLIProcess()
+    defer { cli.stop() }
+    let approved = cli.activityProcess
+    guard case let .process(seconds, microseconds) = approved.generation else {
+      Issue.record("Expected a kernel process generation")
+      return
+    }
+    let reused = CLIActivityProcess(
+      pid: approved.pid,
+      displayName: approved.displayName,
+      generation: .process(
+        startTimeSeconds: seconds &+ 1,
+        startTimeMicroseconds: microseconds
+      )
+    )
+    let service = AccountSwitchService(
+      capturedAccounts: registry,
+      capture: AccountCaptureService(
+        capturedAccounts: registry,
+        claudeKeychainRead: { _ in keychain.value }
+      ),
+      environment: [:],
+      home: home,
+      keychainRead: { _ in keychain.value },
+      keychainWrite: { data, _ in keychain.value = data },
+      activeCLIProcessRecords: { _ in [reused] }
+    )
+
+    var thrown: AccountSwitchError?
+    do {
+      try service.switchCLI(
+        toRegistryAccount: saved.id,
+        now: .distantPast,
+        allowingActiveSessions: CLIActivitySnapshot(provider: .claude, processes: [reused])
+      )
+    } catch let error as AccountSwitchError {
+      thrown = error
+    }
+
+    guard case .concurrentCredentialChange = thrown else {
+      Issue.record("expected .concurrentCredentialChange, got \(String(describing: thrown))")
+      return
+    }
+    #expect(keychain.value == original)
+    #expect(!cli.isStopped)
+  }
+
   @Test func activeClaudeProcessCannotOutliveTheSwitch() throws {
     let registry = makeSwitchRegistry()
     let saved = try savedClaudeAccount(registry: registry)
@@ -367,16 +421,21 @@ private final class ApprovalFlag: @unchecked Sendable {
 
 private final class ApprovalCLIProcess: @unchecked Sendable {
   private let process: Process
+  let activityProcess: CLIActivityProcess
 
   init() throws {
-    process = Process()
+    let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/sleep")
     process.arguments = ["30"]
     try process.run()
-  }
-
-  var activityProcess: CLIActivityProcess {
-    rotationProcess(pid: process.processIdentifier, generation: 1)
+    self.process = process
+    do {
+      activityProcess = try Self.activityProcess(pid: process.processIdentifier)
+    } catch {
+      _ = Darwin.kill(process.processIdentifier, SIGKILL)
+      process.waitUntilExit()
+      throw error
+    }
   }
 
   var isStopped: Bool {
@@ -396,5 +455,27 @@ private final class ApprovalCLIProcess: @unchecked Sendable {
     _ = Darwin.kill(process.processIdentifier, SIGCONT)
     _ = Darwin.kill(process.processIdentifier, SIGKILL)
     process.waitUntilExit()
+  }
+
+  private static func activityProcess(pid: Int32) throws -> CLIActivityProcess {
+    var info = proc_bsdinfo()
+    let expectedSize = Int32(MemoryLayout<proc_bsdinfo>.stride)
+    errno = 0
+    let readSize = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, expectedSize)
+    guard readSize == expectedSize else {
+      throw NSError(
+        domain: "ApprovalCLIProcess",
+        code: Int(errno),
+        userInfo: [NSLocalizedDescriptionKey: "Could not inspect test process \(pid)."]
+      )
+    }
+    return CLIActivityProcess(
+      pid: pid,
+      displayName: "claude (PID \(pid))",
+      generation: .process(
+        startTimeSeconds: info.pbi_start_tvsec,
+        startTimeMicroseconds: info.pbi_start_tvusec
+      )
+    )
   }
 }

@@ -6,6 +6,13 @@ extension AccountSwitchService {
     case running
     case stopped
     case exited
+    case replaced
+  }
+
+  private enum CLIProcessSignalResult {
+    case sent
+    case exited
+    case replaced
   }
 
   func withSuspendedApprovedCLIProcesses<Result>(
@@ -25,12 +32,27 @@ extension AccountSwitchService {
       )
     }
 
-    var suspended: [CLIActivityProcess] = []
+    var signaledForSuspension: [CLIActivityProcess] = []
     do {
-      for process in approved where try Self.processState(process) == .running {
-        if try Self.sendSignal(SIGSTOP, to: process),
-           try Self.waitUntilStopped(process) {
-          suspended.append(process)
+      for process in approved {
+        switch try Self.processState(process) {
+        case .running:
+          switch try Self.sendSignal(SIGSTOP, to: process) {
+          case .sent:
+            // SIGSTOP may still take effect after polling fails. Record our
+            // ownership before waiting so every signaled process receives a
+            // matching SIGCONT during error cleanup.
+            signaledForSuspension.append(process)
+            _ = try Self.waitUntilStopped(process)
+          case .exited:
+            continue
+          case .replaced:
+            throw AccountSwitchError.concurrentCredentialChange
+          }
+        case .stopped, .exited:
+          continue
+        case .replaced:
+          throw AccountSwitchError.concurrentCredentialChange
         }
       }
       let current = try checkedActiveCLIProcesses(provider)
@@ -39,7 +61,7 @@ extension AccountSwitchService {
     } catch {
       let suspensionError = error
       do {
-        try Self.resumeCLIProcesses(suspended)
+        try Self.resumeCLIProcesses(signaledForSuspension)
       } catch {
         throw AccountSwitchError.partialSwitch(
           underlying: "Claude session suspension failed and a paused session could not be resumed: "
@@ -56,7 +78,7 @@ extension AccountSwitchService {
       result = .failure(error)
     }
     do {
-      try Self.resumeCLIProcesses(suspended)
+      try Self.resumeCLIProcesses(signaledForSuspension)
     } catch {
       throw AccountSwitchError.partialSwitch(
         underlying: "The account switch finished, but a paused Claude session could not be resumed: "
@@ -73,6 +95,8 @@ extension AccountSwitchService {
         return true
       case .exited:
         return false
+      case .replaced:
+        throw AccountSwitchError.concurrentCredentialChange
       case .running:
         usleep(1000)
       }
@@ -84,27 +108,40 @@ extension AccountSwitchService {
 
   private static func resumeCLIProcesses(_ processes: [CLIActivityProcess]) throws {
     for process in processes.reversed() {
-      guard try processState(process) == .stopped else { continue }
+      // SIGCONT is harmless if our process has not stopped yet, and it clears
+      // a late-arriving SIGSTOP after polling failed. The signal helper checks
+      // the process generation again and skips a reused PID.
       _ = try sendSignal(SIGCONT, to: process)
     }
   }
 
-  private static func sendSignal(_ signal: Int32, to process: CLIActivityProcess) throws -> Bool {
+  private static func sendSignal(
+    _ signal: Int32,
+    to process: CLIActivityProcess
+  ) throws -> CLIProcessSignalResult {
     guard let pid = process.pid else {
       throw AccountSwitchError.cliActivityCheckFailed(
         underlying: "An approved CLI process had no stable process identifier."
       )
     }
+    switch try processState(process) {
+    case .running, .stopped:
+      break
+    case .exited:
+      return .exited
+    case .replaced:
+      return .replaced
+    }
     errno = 0
     guard Darwin.kill(pid, signal) == 0 else {
       if errno == ESRCH {
-        return false
+        return .exited
       }
       throw AccountSwitchError.cliActivityCheckFailed(
         underlying: "Signaling CLI process \(pid) failed (errno \(errno))."
       )
     }
-    return true
+    return .sent
   }
 
   private static func processState(_ process: CLIActivityProcess) throws -> CLIProcessState {
@@ -121,6 +158,11 @@ extension AccountSwitchService {
         underlying: "Inspecting CLI process \(pid) suspension failed (errno \(errno))."
       )
     }
+    let generation = CLIActivityProcess.Generation.process(
+      startTimeSeconds: info.pbi_start_tvsec,
+      startTimeMicroseconds: info.pbi_start_tvusec
+    )
+    guard generation == process.generation else { return .replaced }
     return info.pbi_status == SSTOP ? .stopped : .running
   }
 }
