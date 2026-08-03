@@ -21,9 +21,10 @@ import Foundation
 ///
 /// Production callers pair repeated generation reads with an active-process
 /// check. The CLI remains a separate process and these stores do not offer an
-/// interprocess CAS, so account switching requires every provider session to
-/// be inactive for the whole synchronous mutation. Post-write verification
-/// preserves any newer generation it observes. If only Claude's
+/// interprocess CAS, so approved Claude sessions are briefly suspended for the
+/// whole synchronous mutation; unapproved provider sessions still stop the
+/// switch. Post-write verification preserves any newer generation it
+/// observes. If only Claude's
 /// lower-precedence file changes, Quotari rolls back
 /// its matching keychain write so a retry can back up both physical stores
 /// safely.

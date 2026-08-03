@@ -79,9 +79,15 @@ extension ProviderAccountPopover {
 
   func confirmationAlert(for confirmation: ProviderAccountPopoverConfirmation) -> Alert {
     let activitySnapshot = confirmation.activitySnapshot
+    let message = switch confirmation {
+    case .addClaudeAccount:
+      CLIActivityWarningPresentation.message(for: activitySnapshot)
+    case .switchCLI:
+      CLIActivityWarningPresentation.switchMessage(for: activitySnapshot)
+    }
     return Alert(
       title: Text(L10n.string(key: confirmation.title)),
-      message: Text(CLIActivityWarningPresentation.message(for: activitySnapshot)),
+      message: Text(message),
       primaryButton: .default(Text(L10n.string(key: confirmation.confirmButtonTitle))) {
         performConfirmedOperation(confirmation)
       },

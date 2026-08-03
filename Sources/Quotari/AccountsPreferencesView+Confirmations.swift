@@ -81,7 +81,7 @@ extension AccountsPreferencesView {
     let message = if let activitySnapshot {
       switchConfirmationMessage(for: account)
         + "\n\n"
-        + CLIActivityWarningPresentation.message(for: activitySnapshot)
+        + CLIActivityWarningPresentation.switchMessage(for: activitySnapshot)
     } else {
       switchConfirmationMessage(for: account)
     }

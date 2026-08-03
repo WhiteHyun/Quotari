@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 @testable import QuotariCore
 import Testing
@@ -50,22 +51,36 @@ struct AccountSwitchActiveSessionApprovalTests {
     defer { try? FileManager.default.removeItem(at: home) }
     let live = approvalClaudeCredential(accessToken: "live", refreshToken: "live-ref")
     let keychain = KeychainSlot(live)
-    let active = ["claude (PID 42)"]
-    let service = approvalSwitchService(
-      registry: registry,
+    let cli = try ApprovalCLIProcess()
+    defer { cli.stop() }
+    let approved = cli.activityProcess
+    let stoppedDuringWrite = ApprovalFlag()
+    let service = AccountSwitchService(
+      capturedAccounts: registry,
+      capture: AccountCaptureService(
+        capturedAccounts: registry,
+        claudeKeychainRead: { _ in keychain.value }
+      ),
+      environment: [:],
       home: home,
-      keychain: keychain,
-      activeProcesses: active
+      keychainRead: { _ in keychain.value },
+      keychainWrite: { data, _ in
+        stoppedDuringWrite.value = cli.isStopped
+        keychain.value = data
+      },
+      activeCLIProcessRecords: { _ in [approved] }
     )
 
     let source = try service.switchCLI(
       toRegistryAccount: saved.id,
       now: .distantPast,
-      allowingActiveSessions: CLIActivitySnapshot(provider: .claude, processes: active)
+      allowingActiveSessions: CLIActivitySnapshot(provider: .claude, processes: [approved])
     )
 
     #expect(source == .claudeKeychain(service: ClaudeCredentialsStore.keychainService))
     #expect(try ClaudeCredentialsStore.parse(#require(keychain.value)).accessToken == "saved-tok")
+    #expect(stoppedDuringWrite.value)
+    #expect(!cli.isStopped)
   }
 
   @Test func unapprovedClaudeProcessAppearingAfterConfirmationStopsSwitch() throws {
@@ -75,9 +90,14 @@ struct AccountSwitchActiveSessionApprovalTests {
     defer { try? FileManager.default.removeItem(at: home) }
     let original = approvalClaudeCredential(accessToken: "live", refreshToken: "live-ref")
     let keychain = KeychainSlot(original)
-    let activity = ApprovalActivitySequence([
-      ["claude (PID 42)"],
-      ["claude (PID 42)", "claude (PID 99)"],
+    let cli = try ApprovalCLIProcess()
+    defer { cli.stop() }
+    let approved = cli.activityProcess
+    let unapproved = rotationProcess(pid: 99, generation: 2)
+    let activity = ApprovalProcessActivitySequence([
+      [approved],
+      [approved],
+      [approved, unapproved],
     ])
     let service = AccountSwitchService(
       capturedAccounts: registry,
@@ -89,7 +109,7 @@ struct AccountSwitchActiveSessionApprovalTests {
       home: home,
       keychainRead: { _ in keychain.value },
       keychainWrite: { data, _ in keychain.value = data },
-      activeCLIProcesses: { _ in activity.next() }
+      activeCLIProcessRecords: { _ in activity.next() }
     )
 
     var thrown: AccountSwitchError?
@@ -99,7 +119,7 @@ struct AccountSwitchActiveSessionApprovalTests {
         now: .distantPast,
         allowingActiveSessions: CLIActivitySnapshot(
           provider: .claude,
-          processes: ["claude (PID 42)"]
+          processes: [approved]
         )
       )
     } catch let error as AccountSwitchError {
@@ -110,8 +130,9 @@ struct AccountSwitchActiveSessionApprovalTests {
       Issue.record("expected .cliStillRunning, got \(String(describing: thrown))")
       return
     }
-    #expect(processes == ["claude (PID 99)"])
+    #expect(processes == [unapproved.displayName])
     #expect(keychain.value == original)
+    #expect(!cli.isStopped)
   }
 
   @Test func activeClaudeProcessCannotOutliveTheSwitch() throws {
@@ -315,5 +336,65 @@ private final class ApprovalActivitySequence: @unchecked Sendable {
       guard values.count > 1 else { return values.first ?? [] }
       return values.removeFirst()
     }
+  }
+}
+
+private final class ApprovalProcessActivitySequence: @unchecked Sendable {
+  private let lock = NSLock()
+  private var values: [[CLIActivityProcess]]
+
+  init(_ values: [[CLIActivityProcess]]) {
+    self.values = values
+  }
+
+  func next() -> [CLIActivityProcess] {
+    lock.withLock {
+      guard values.count > 1 else { return values.first ?? [] }
+      return values.removeFirst()
+    }
+  }
+}
+
+private final class ApprovalFlag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage = false
+
+  var value: Bool {
+    get { lock.withLock { storage } }
+    set { lock.withLock { storage = newValue } }
+  }
+}
+
+private final class ApprovalCLIProcess: @unchecked Sendable {
+  private let process: Process
+
+  init() throws {
+    process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    process.arguments = ["30"]
+    try process.run()
+  }
+
+  var activityProcess: CLIActivityProcess {
+    rotationProcess(pid: process.processIdentifier, generation: 1)
+  }
+
+  var isStopped: Bool {
+    var info = proc_bsdinfo()
+    let expectedSize = Int32(MemoryLayout<proc_bsdinfo>.stride)
+    let readSize = proc_pidinfo(
+      process.processIdentifier,
+      PROC_PIDTBSDINFO,
+      0,
+      &info,
+      expectedSize
+    )
+    return readSize == expectedSize && info.pbi_status == SSTOP
+  }
+
+  func stop() {
+    _ = Darwin.kill(process.processIdentifier, SIGCONT)
+    _ = Darwin.kill(process.processIdentifier, SIGKILL)
+    process.waitUntilExit()
   }
 }

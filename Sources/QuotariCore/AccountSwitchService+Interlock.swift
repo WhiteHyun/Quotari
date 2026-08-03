@@ -20,12 +20,7 @@ extension AccountSwitchService {
   }
 
   func requireCLIInactive(_ provider: UsageProvider) throws {
-    let active: [CLIActivityProcess]
-    do {
-      active = try activeCLIProcessRecords(provider)
-    } catch {
-      throw AccountSwitchError.cliActivityCheckFailed(underlying: error.localizedDescription)
-    }
+    let active = try checkedActiveCLIProcesses(provider)
     let blocked = CLIActivityApprovalContext.snapshot?.unapprovedProcesses(
       for: provider,
       activeProcesses: active
@@ -33,6 +28,16 @@ extension AccountSwitchService {
     guard blocked.isEmpty else {
       throw AccountSwitchError.cliStillRunning(processes: blocked)
     }
+  }
+
+  func checkedActiveCLIProcesses(_ provider: UsageProvider) throws -> [CLIActivityProcess] {
+    let active: [CLIActivityProcess]
+    do {
+      active = try activeCLIProcessRecords(provider)
+    } catch {
+      throw AccountSwitchError.cliActivityCheckFailed(underlying: error.localizedDescription)
+    }
+    return active
   }
 
   func installClaudeCredentials(_ installation: ClaudeCredentialInstallation) throws {

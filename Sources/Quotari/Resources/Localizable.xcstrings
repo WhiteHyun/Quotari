@@ -196,6 +196,7 @@
     "Retry" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"다시 시도"}}}},
     "Runs out in %@" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"%@ 후 소진 예상"}}}},
     "Running Claude Code sessions: %@. If you continue, those sessions may use the new account on later requests. Quotari will leave them open." : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"실행 중인 Claude Code 세션: %@. 계속하면 해당 세션이 이후 요청부터 새 계정을 사용할 수 있습니다. Quotari는 세션을 종료하지 않습니다."}}}},
+    "Running Claude Code sessions: %@. Quotari will briefly pause them while switching credentials, then resume them. They may use the new account on later requests." : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"실행 중인 Claude Code 세션: %@. Quotari가 자격 증명을 전환하는 동안 세션을 잠시 일시 정지했다가 재개합니다. 해당 세션은 이후 요청부터 새 계정을 사용할 수 있습니다."}}}},
     "Saved" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"저장됨"}}}},
     "Saved account — local Claude cost estimate unavailable" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"저장된 계정 — 로컬 Claude 비용 추정 불가"}}}},
     "Saved account — local Codex cost estimate unavailable" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"저장된 계정 — 로컬 Codex 비용 추정 불가"}}}},

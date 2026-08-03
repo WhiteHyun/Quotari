@@ -64,6 +64,14 @@ public struct CLIActivitySnapshot: Equatable, Sendable {
       .map(\.displayName)
   }
 
+  func approvedProcesses(
+    for provider: UsageProvider,
+    activeProcesses: [CLIActivityProcess]
+  ) -> [CLIActivityProcess] {
+    guard self.provider == provider else { return [] }
+    return activeProcesses.filter(approvedProcesses.contains)
+  }
+
   func unapprovedProcesses(for provider: UsageProvider, activeProcesses: [String]) -> [String] {
     unapprovedProcesses(
       for: provider,
