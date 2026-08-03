@@ -77,7 +77,7 @@ enum CLIActivityApprovalContext {
 }
 
 public struct CLIActivityDetector: Sendable {
-  static let processArguments = ["-x", "-o", "pid="]
+  static let processArguments = ["-ww", "-x", "-o", "pid=,command="]
 
   enum DetectionError: LocalizedError {
     case commandFailed(status: Int32)
@@ -266,7 +266,7 @@ public struct CLIActivityDetector: Sendable {
     "zsh": ["-c"],
   ]
 
-  private static func isAppBundlePath(_ path: String) -> Bool {
+  static func isAppBundlePath(_ path: String) -> Bool {
     path.range(of: ".app/Contents/", options: .caseInsensitive) != nil
   }
 }

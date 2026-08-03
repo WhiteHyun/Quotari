@@ -58,7 +58,24 @@ struct CLIActivityDetectorTests {
   }
 
   @Test func processListingIsLimitedToTheCurrentUser() {
-    #expect(CLIActivityDetector.processArguments == ["-x", "-o", "pid="])
+    #expect(CLIActivityDetector.processArguments == ["-ww", "-x", "-o", "pid=,command="])
+  }
+
+  @Test func processListingPrefiltersUnrelatedAndAppBundleProcesses() throws {
+    let output = """
+     1146 /usr/bin/login -flp user /bin/zsh
+     1305 /Applications/ChatGPT.app/Contents/Resources/codex app-server
+     5976 claude
+     6001 /opt/homebrew/bin/node /Users/test/.npm/bin/codex --quiet
+     6002 /usr/bin/rg claude
+     6003 /Users/Jane Doe/bin/codex --quiet
+     6004 /opt/homebrew/bin/node codex --quiet
+     6005 /bin/bash claude --continue
+     6006 /opt/homebrew/bin/node --require /Applications/Foo.app/Contents/preload.js /Users/test/.npm/bin/codex
+     6007 /Applications/Foo.app/Contents/Resources/node /Users/test/.npm/bin/codex
+    """
+
+    #expect(try CLIActivityDetector.candidateProcessIDs(from: output) == [5976, 6001, 6003, 6004, 6005, 6006, 6007])
   }
 
   @Test func decodesKernelArgumentsWithoutLosingWhitespaceBoundaries() throws {
