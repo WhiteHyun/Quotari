@@ -18,13 +18,48 @@ extension CLIActivityDetector {
     guard let text = String(data: output, encoding: .utf8) else {
       throw DetectionError.malformedOutput
     }
-    let pids = try text.split(separator: "\n").map { line -> Int32 in
-      guard let pid = Int32(line.trimmingCharacters(in: .whitespaces)) else {
+    let pids = try candidateProcessIDs(from: text)
+    return try pids.compactMap(processRecord)
+  }
+
+  /// `proc_pidinfo` can deny access to unrelated same-user processes (for
+  /// example, the login shell host). Use `ps` only as a conservative prefilter
+  /// so those processes cannot make the entire CLI safety check fail. Every
+  /// plausible Claude or Codex process is still validated through the kernel
+  /// APIs below before it can be approved for a credential mutation.
+  static func candidateProcessIDs(from output: String) throws -> [Int32] {
+    try output.split(separator: "\n").compactMap { line in
+      let fields = line.split(
+        maxSplits: 1,
+        omittingEmptySubsequences: true,
+        whereSeparator: \Character.isWhitespace
+      )
+      guard let pidField = fields.first, let pid = Int32(pidField) else {
         throw DetectionError.malformedOutput
       }
+      guard fields.count == 2, mayContainCLI(String(fields[1])) else { return nil }
       return pid
     }
-    return try pids.compactMap(processRecord)
+  }
+
+  private static func mayContainCLI(_ command: String) -> Bool {
+    let fields = command.split(whereSeparator: \Character.isWhitespace)
+    guard let executable = fields.first else { return false }
+    if isCLITarget(String(executable)) {
+      return true
+    }
+    let interpreter = URL(fileURLWithPath: String(executable)).lastPathComponent.lowercased()
+    let interpreters = [
+      "bash", "dash", "fish", "node", "nodejs", "python", "python3", "ruby", "sh", "zsh",
+    ]
+    guard interpreters.contains(interpreter) else { return false }
+    return fields.dropFirst().contains { isCLITarget(String($0)) }
+  }
+
+  private static func isCLITarget(_ path: String) -> Bool {
+    guard !isAppBundlePath(path) else { return false }
+    let name = URL(fileURLWithPath: path).lastPathComponent
+    return name == "claude" || name == "codex"
   }
 
   private static func processRecord(pid: Int32) throws -> CLIActivityProcessRecord? {
