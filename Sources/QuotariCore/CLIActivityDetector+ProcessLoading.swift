@@ -44,16 +44,14 @@ extension CLIActivityDetector {
 
   private static func mayContainCLI(_ command: String) -> Bool {
     let fields = command.split(whereSeparator: \Character.isWhitespace)
-    guard let executable = fields.first else { return false }
-    if isCLITarget(String(executable)) {
-      return true
+    var commandPrefix = ""
+    for field in fields {
+      commandPrefix += commandPrefix.isEmpty ? String(field) : " \(field)"
+      if isCLITarget(commandPrefix) {
+        return true
+      }
     }
-    let interpreter = URL(fileURLWithPath: String(executable)).lastPathComponent.lowercased()
-    let interpreters = [
-      "bash", "dash", "fish", "node", "nodejs", "python", "python3", "ruby", "sh", "zsh",
-    ]
-    guard interpreters.contains(interpreter) else { return false }
-    return fields.dropFirst().contains { isCLITarget(String($0)) }
+    return false
   }
 
   private static func isCLITarget(_ path: String) -> Bool {

@@ -68,9 +68,10 @@ struct CLIActivityDetectorTests {
      5976 claude
      6001 /opt/homebrew/bin/node /Users/test/.npm/bin/codex --quiet
      6002 /usr/bin/rg claude
+     6003 /Users/Jane Doe/bin/codex --quiet
     """
 
-    #expect(try CLIActivityDetector.candidateProcessIDs(from: output) == [5976, 6001])
+    #expect(try CLIActivityDetector.candidateProcessIDs(from: output) == [5976, 6001, 6003])
   }
 
   @Test func decodesKernelArgumentsWithoutLosingWhitespaceBoundaries() throws {
