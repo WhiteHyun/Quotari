@@ -6,6 +6,7 @@ public enum AccountSwitchError: LocalizedError, Sendable {
   case cliActivityCheckFailed(underlying: String)
   case cliStillRunning(processes: [String])
   case concurrentCredentialChange
+  case cliSessionResumeFailed(underlying: String)
   case slotReadFailed(underlying: String)
   case backupFailed(underlying: String)
   case writeFailed(underlying: String)
@@ -27,6 +28,8 @@ public enum AccountSwitchError: LocalizedError, Sendable {
       "Quit every active CLI session before switching (\(processes.joined(separator: ", ")))."
     case .concurrentCredentialChange:
       "The CLI login changed during the switch. Quotari stopped before overwriting the newer credentials."
+    case let .cliSessionResumeFailed(underlying):
+      "Quotari couldn't resume every paused Claude session: \(underlying)"
     case let .slotReadFailed(underlying):
       "Couldn't read the CLI's current login before switching: \(underlying)"
     case let .backupFailed(underlying):

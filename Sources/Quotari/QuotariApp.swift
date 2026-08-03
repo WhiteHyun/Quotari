@@ -8,6 +8,9 @@ import SwiftUI
 @main
 private enum QuotariEntrypoint {
   static func main() {
+    if let status = CLIProcessResumeWatchdog.runIfRequested() {
+      Darwin.exit(status)
+    }
     if CommandLine.arguments.contains("--verify-packaged-resources") {
       guard IconRenderer.packagedResourcesAreReady else {
         let message = "Packaged SwiftPM resources failed validation.\n"

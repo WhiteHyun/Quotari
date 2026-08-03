@@ -5,6 +5,151 @@ import Foundation
 import Testing
 
 extension AccountSwitchActiveSessionApprovalTests {
+  @Test func codexApprovalSnapshotCannotBypassTheInterlock() throws {
+    let registry = makeSwitchRegistry()
+    let saved = try savedCodexAccount(registry: registry)
+    let home = try switchTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let authURL = home.appendingPathComponent(".codex/auth.json")
+    try FileManager.default.createDirectory(
+      at: authURL.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    let live = Data(
+      #"{"tokens":{"access_token":"live","account_id":"acct-live","refresh_token":"live-ref"}}"#.utf8
+    )
+    try live.write(to: authURL)
+    try FileManager.default.setAttributes(
+      [.posixPermissions: 0o600],
+      ofItemAtPath: authURL.path
+    )
+    let active = CLIActivityProcess(
+      pid: 42,
+      displayName: "codex (PID 42)",
+      generation: .process(startTimeSeconds: 100, startTimeMicroseconds: 1)
+    )
+    let service = AccountSwitchService(
+      capturedAccounts: registry,
+      environment: [:],
+      home: home,
+      activeCLIProcessRecords: { _ in [active] },
+      processResumeLease: { _ in
+        Issue.record("Codex must not enter the Claude suspension path")
+        return CLIProcessResumeLease(suspend: {}, resume: {})
+      }
+    )
+
+    var thrown: AccountSwitchError?
+    do {
+      _ = try service.switchCLI(
+        toRegistryAccount: saved.id,
+        now: .distantPast,
+        allowingActiveSessions: CLIActivitySnapshot(provider: .codex, processes: [active])
+      )
+    } catch let error as AccountSwitchError {
+      thrown = error
+    }
+
+    guard case let .cliStillRunning(processes) = thrown else {
+      Issue.record("expected .cliStillRunning, got \(String(describing: thrown))")
+      return
+    }
+    expectNoDifference(processes, [active.displayName])
+    try expectNoDifference(Data(contentsOf: authURL), live)
+  }
+
+  @Test func completedSwitchReturnsASeparateResumeWarning() throws {
+    let registry = makeSwitchRegistry()
+    let saved = try savedClaudeAccount(registry: registry)
+    let home = try switchTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let live = Data(#"{"claudeAiOauth":{"accessToken":"live","refreshToken":"live-ref"}}"#.utf8)
+    let keychain = KeychainSlot(live)
+    let active = CLIActivityProcess(
+      pid: 42,
+      displayName: "claude (PID 42)",
+      generation: .process(startTimeSeconds: 100, startTimeMicroseconds: 1)
+    )
+    let service = AccountSwitchService(
+      capturedAccounts: registry,
+      capture: AccountCaptureService(
+        capturedAccounts: registry,
+        claudeKeychainRead: { _ in keychain.value }
+      ),
+      environment: [:],
+      home: home,
+      keychainRead: { _ in keychain.value },
+      keychainWrite: { data, _ in keychain.value = data },
+      activeCLIProcessRecords: { _ in [active] },
+      processResumeLease: { _ in
+        CLIProcessResumeLease(
+          suspend: {},
+          resume: {
+            throw NSError(
+              domain: "CLIProcessResumeTest",
+              code: 1,
+              userInfo: [NSLocalizedDescriptionKey: "resume failed"]
+            )
+          }
+        )
+      }
+    )
+
+    let result = try service.switchCLI(
+      toRegistryAccount: saved.id,
+      now: .distantPast,
+      allowingActiveSessions: CLIActivitySnapshot(provider: .claude, processes: [active])
+    )
+
+    expectNoDifference(
+      result.credentialSource,
+      .claudeKeychain(service: ClaudeCredentialsStore.keychainService)
+    )
+    expectNoDifference(
+      result.warning?.message,
+      "The CLI account switched, but Quotari couldn't resume every paused Claude session: resume failed"
+    )
+    #expect(try ClaudeCredentialsStore.parse(#require(keychain.value)).accessToken == "saved-tok")
+  }
+
+  @Test func watchdogResumesItsSessionsWhenTheOwnerPipeCloses() async throws {
+    let cli = try ApprovalCLIProcess()
+    defer { cli.stop() }
+    let approved = cli.activityProcess
+    guard let pid = approved.pid,
+          case let .process(seconds, microseconds) = approved.generation
+    else {
+      Issue.record("Expected a stable kernel process identity")
+      return
+    }
+    let input = Pipe()
+    let output = Pipe()
+    let watchdog = Task.detached {
+      CLIProcessResumeWatchdog.runIfRequested(
+        arguments: [
+          "Quotari",
+          CLIProcessResumeWatchdog.argument,
+          "\(pid):\(seconds):\(microseconds)",
+        ],
+        input: input.fileHandleForReading,
+        output: output.fileHandleForWriting
+      )
+    }
+
+    expectNoDifference(output.fileHandleForReading.readData(ofLength: 1), Data([UInt8(ascii: "R")]))
+    try input.fileHandleForWriting.write(contentsOf: Data([UInt8(ascii: "S")]))
+    expectNoDifference(output.fileHandleForReading.readData(ofLength: 1), Data([UInt8(ascii: "S")]))
+    #expect(cli.isStopped)
+
+    // Closing the only owner-side writer is the same EOF the watchdog sees
+    // when the UI process crashes or is force-quit.
+    try input.fileHandleForWriting.close()
+    let status = await watchdog.value
+    expectNoDifference(status, EXIT_SUCCESS)
+    expectNoDifference(output.fileHandleForReading.readData(ofLength: 1), Data([UInt8(ascii: "R")]))
+    #expect(!cli.isStopped)
+  }
+
   @Test func reusedApprovedPIDIsNeverSignaled() throws {
     let registry = makeSwitchRegistry()
     let saved = try savedClaudeAccount(registry: registry)
@@ -37,7 +182,8 @@ extension AccountSwitchActiveSessionApprovalTests {
       home: home,
       keychainRead: { _ in keychain.value },
       keychainWrite: { data, _ in keychain.value = data },
-      activeCLIProcessRecords: { _ in [reused] }
+      activeCLIProcessRecords: { _ in [reused] },
+      processResumeLease: CLIProcessResumeWatchdog.inProcessLease
     )
 
     var thrown: AccountSwitchError?
@@ -71,7 +217,7 @@ extension AccountSwitchActiveSessionApprovalTests {
     var failureDescription: String?
 
     do {
-      try AccountSwitchService.resumeCLIProcesses(processes) { process in
+      try CLIProcessResumeWatchdog.resumeProcesses(processes) { process in
         let pid = try #require(process.pid)
         attempted.append(pid)
         guard pid == 2 else {

@@ -40,6 +40,7 @@ public struct AccountSwitchService: Sendable {
   let codexKeychainWrite: @Sendable (Data, String, String) throws -> Void
   let codexKeychainDelete: @Sendable (String, String) throws -> Void
   let activeCLIProcessRecords: @Sendable (UsageProvider) throws -> [CLIActivityProcess]
+  let processResumeLease: @Sendable ([CLIActivityProcess]) throws -> CLIProcessResumeLease
   let credentialFileRead: @Sendable (URL) throws -> Data?
   let secureFileWriter: SecureCredentialFileWriter
 
@@ -56,6 +57,9 @@ public struct AccountSwitchService: Sendable {
     codexKeychainDelete: (@Sendable (String, String) throws -> Void)? = nil,
     activeCLIProcesses: (@Sendable (UsageProvider) throws -> [String])? = nil,
     activeCLIProcessRecords: @escaping @Sendable (UsageProvider) throws -> [CLIActivityProcess] = { _ in [] },
+    processResumeLease: @escaping @Sendable ([CLIActivityProcess]) throws -> CLIProcessResumeLease = {
+      try CLIProcessResumeWatchdog.liveLease(for: $0)
+    },
     fileRead: (@Sendable (URL) throws -> Data?)? = nil,
     setOwnerOnlyPermissions: (@Sendable (URL) throws -> Void)? = nil
   ) {
@@ -97,6 +101,7 @@ public struct AccountSwitchService: Sendable {
     } else {
       self.activeCLIProcessRecords = activeCLIProcessRecords
     }
+    self.processResumeLease = processResumeLease
     credentialFileRead = fileRead ?? { url in
       guard FileManager.default.fileExists(atPath: url.path) else { return nil }
       return try Data(contentsOf: url)

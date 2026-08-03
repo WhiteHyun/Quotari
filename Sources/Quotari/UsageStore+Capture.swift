@@ -153,7 +153,7 @@ extension UsageStore {
       // suppresses Quotari refreshes for the window. The switch service also
       // checks separate CLI processes; the confirmation explains its residual
       // non-cooperative launch window.
-      let writtenSource = try await Task.detached {
+      let switchResult = try await Task.detached {
         try switcher.switchCLI(
           toRegistryAccount: id,
           now: now,
@@ -163,21 +163,39 @@ extension UsageStore {
           allowingActiveSessions: activitySnapshot
         )
       }.value
-      await reloadAccountsDuringSwitch()
-      guard selectSwitchedInAccount(saved: account, writtenSource: writtenSource, provider: provider) else {
-        // The write succeeded but discovery didn't surface the switched-in
-        // login (transient read miss); don't claim success on a stale
-        // selection — surface it so the user can retry.
-        captureErrors[provider] = L10n.string(
-          "Switched the CLI login, but Quotari couldn't confirm it yet. Reload accounts."
-        )
-        return
-      }
-      captureErrors[provider] = nil
+      guard await finishSuccessfulCLISwitch(
+        saved: account,
+        result: switchResult,
+        provider: provider
+      ) else { return }
       shouldRefresh = true
     } catch {
       captureErrors[provider] = error.localizedDescription
     }
+  }
+
+  private func finishSuccessfulCLISwitch(
+    saved account: ProviderAccount,
+    result: AccountSwitchResult,
+    provider: UsageProvider
+  ) async -> Bool {
+    await reloadAccountsDuringSwitch()
+    guard selectSwitchedInAccount(
+      saved: account,
+      writtenSource: result.credentialSource,
+      provider: provider
+    ) else {
+      // The write succeeded but discovery didn't surface the switched-in
+      // login (transient read miss); don't claim success on a stale selection.
+      captureErrors[provider] = L10n.string(
+        "Switched the CLI login, but Quotari couldn't confirm it yet. Reload accounts."
+      )
+      return false
+    }
+    // A resume warning does not hide a completed credential switch. Reflect
+    // the live account first, then report session recovery separately.
+    captureErrors[provider] = result.warning?.message
+    return true
   }
 
   /// Claude's refresh token rotates, so its credential fingerprint cannot by

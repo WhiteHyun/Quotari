@@ -68,7 +68,8 @@ struct AccountSwitchActiveSessionApprovalTests {
         stoppedDuringWrite.value = cli.isStopped
         keychain.value = data
       },
-      activeCLIProcessRecords: { _ in [approved] }
+      activeCLIProcessRecords: { _ in [approved] },
+      processResumeLease: CLIProcessResumeWatchdog.inProcessLease
     )
 
     let source = try service.switchCLI(
@@ -77,7 +78,7 @@ struct AccountSwitchActiveSessionApprovalTests {
       allowingActiveSessions: CLIActivitySnapshot(provider: .claude, processes: [approved])
     )
 
-    #expect(source == .claudeKeychain(service: ClaudeCredentialsStore.keychainService))
+    #expect(source.credentialSource == .claudeKeychain(service: ClaudeCredentialsStore.keychainService))
     #expect(try ClaudeCredentialsStore.parse(#require(keychain.value)).accessToken == "saved-tok")
     #expect(stoppedDuringWrite.value)
     #expect(!cli.isStopped)
@@ -109,7 +110,8 @@ struct AccountSwitchActiveSessionApprovalTests {
       home: home,
       keychainRead: { _ in keychain.value },
       keychainWrite: { data, _ in keychain.value = data },
-      activeCLIProcessRecords: { _ in activity.next() }
+      activeCLIProcessRecords: { _ in activity.next() },
+      processResumeLease: CLIProcessResumeWatchdog.inProcessLease
     )
 
     var thrown: AccountSwitchError?
