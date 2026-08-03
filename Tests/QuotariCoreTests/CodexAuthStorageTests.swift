@@ -148,7 +148,7 @@ struct CodexAuthStorageTests {
       now: Date(timeIntervalSince1970: 200)
     )
 
-    #expect(written == storage.keychainSource)
+    #expect(written.credentialSource == storage.keychainSource)
     #expect(try CodexCredentialsStore.parse(#require(slot.value)).accountID == "acct-saved")
     #expect(registry.load().contains { $0.id == "codex:acct-live" })
     #expect(!FileManager.default.fileExists(atPath: storage.authFileURL.path))
@@ -198,7 +198,7 @@ extension CodexAuthStorageTests {
       now: Date(timeIntervalSince1970: 200)
     )
 
-    #expect(written == .codexAuthFile(path: storage.authFileURL.path))
+    #expect(written.credentialSource == .codexAuthFile(path: storage.authFileURL.path))
     #expect(try CodexCredentialsStore.load(url: storage.authFileURL).accountID == "acct-saved")
     #expect(slot.value == nil)
     #expect(slot.writeCount == 0)
@@ -224,7 +224,7 @@ extension CodexAuthStorageTests {
       now: Date(timeIntervalSince1970: 200)
     )
 
-    #expect(written == .codexAuthFile(path: storage.authFileURL.path))
+    #expect(written.credentialSource == .codexAuthFile(path: storage.authFileURL.path))
     #expect(try CodexCredentialsStore.load(url: storage.authFileURL).accountID == "acct-saved")
     #expect(slot.value == nil)
     #expect(slot.writeCount == 0)
@@ -352,7 +352,7 @@ extension CodexAuthStorageTests {
       now: Date(timeIntervalSince1970: 200)
     )
 
-    #expect(written == storage.keychainSource)
+    #expect(written.credentialSource == storage.keychainSource)
     #expect(try CodexCredentialsStore.parse(#require(slot.value)).accountID == "acct-saved")
     let ids = Set(registry.load().map(\.id))
     #expect(ids.contains("codex:acct-file"))

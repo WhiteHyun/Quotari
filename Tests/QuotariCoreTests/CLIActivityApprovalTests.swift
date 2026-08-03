@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 @testable import QuotariCore
 import Testing
@@ -43,6 +44,99 @@ struct CLIActivitySnapshotTests {
 }
 
 struct AccountSwitchActiveSessionApprovalTests {
+  @Test func userApprovedClaudeProcessCanRemainActiveDuringSwitch() throws {
+    let registry = makeSwitchRegistry()
+    let saved = try savedClaudeAccount(registry: registry)
+    let home = try switchTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let live = approvalClaudeCredential(accessToken: "live", refreshToken: "live-ref")
+    let keychain = KeychainSlot(live)
+    let cli = try ApprovalCLIProcess()
+    defer { cli.stop() }
+    let approved = cli.activityProcess
+    let stoppedDuringWrite = ApprovalFlag()
+    let service = AccountSwitchService(
+      capturedAccounts: registry,
+      capture: AccountCaptureService(
+        capturedAccounts: registry,
+        claudeKeychainRead: { _ in keychain.value }
+      ),
+      environment: [:],
+      home: home,
+      keychainRead: { _ in keychain.value },
+      keychainWrite: { data, _ in
+        stoppedDuringWrite.value = cli.isStopped
+        keychain.value = data
+      },
+      activeCLIProcessRecords: { _ in [approved] },
+      processResumeLease: CLIProcessResumeWatchdog.inProcessLease
+    )
+
+    let source = try service.switchCLI(
+      toRegistryAccount: saved.id,
+      now: .distantPast,
+      allowingActiveSessions: CLIActivitySnapshot(provider: .claude, processes: [approved])
+    )
+
+    #expect(source.credentialSource == .claudeKeychain(service: ClaudeCredentialsStore.keychainService))
+    #expect(try ClaudeCredentialsStore.parse(#require(keychain.value)).accessToken == "saved-tok")
+    #expect(stoppedDuringWrite.value)
+    #expect(!cli.isStopped)
+  }
+
+  @Test func unapprovedClaudeProcessAppearingAfterConfirmationStopsSwitch() throws {
+    let registry = makeSwitchRegistry()
+    let saved = try savedClaudeAccount(registry: registry)
+    let home = try switchTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let original = approvalClaudeCredential(accessToken: "live", refreshToken: "live-ref")
+    let keychain = KeychainSlot(original)
+    let cli = try ApprovalCLIProcess()
+    defer { cli.stop() }
+    let approved = cli.activityProcess
+    let unapproved = rotationProcess(pid: 99, generation: 2)
+    let activity = ApprovalProcessActivitySequence([
+      [approved],
+      [approved],
+      [approved, unapproved],
+    ])
+    let service = AccountSwitchService(
+      capturedAccounts: registry,
+      capture: AccountCaptureService(
+        capturedAccounts: registry,
+        claudeKeychainRead: { _ in keychain.value }
+      ),
+      environment: [:],
+      home: home,
+      keychainRead: { _ in keychain.value },
+      keychainWrite: { data, _ in keychain.value = data },
+      activeCLIProcessRecords: { _ in activity.next() },
+      processResumeLease: CLIProcessResumeWatchdog.inProcessLease
+    )
+
+    var thrown: AccountSwitchError?
+    do {
+      try service.switchCLI(
+        toRegistryAccount: saved.id,
+        now: .distantPast,
+        allowingActiveSessions: CLIActivitySnapshot(
+          provider: .claude,
+          processes: [approved]
+        )
+      )
+    } catch let error as AccountSwitchError {
+      thrown = error
+    }
+
+    guard case let .cliStillRunning(processes) = thrown else {
+      Issue.record("expected .cliStillRunning, got \(String(describing: thrown))")
+      return
+    }
+    #expect(processes == [unapproved.displayName])
+    #expect(keychain.value == original)
+    #expect(!cli.isStopped)
+  }
+
   @Test func activeClaudeProcessCannotOutliveTheSwitch() throws {
     let registry = makeSwitchRegistry()
     let saved = try savedClaudeAccount(registry: registry)
@@ -244,5 +338,31 @@ private final class ApprovalActivitySequence: @unchecked Sendable {
       guard values.count > 1 else { return values.first ?? [] }
       return values.removeFirst()
     }
+  }
+}
+
+private final class ApprovalProcessActivitySequence: @unchecked Sendable {
+  private let lock = NSLock()
+  private var values: [[CLIActivityProcess]]
+
+  init(_ values: [[CLIActivityProcess]]) {
+    self.values = values
+  }
+
+  func next() -> [CLIActivityProcess] {
+    lock.withLock {
+      guard values.count > 1 else { return values.first ?? [] }
+      return values.removeFirst()
+    }
+  }
+}
+
+private final class ApprovalFlag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage = false
+
+  var value: Bool {
+    get { lock.withLock { storage } }
+    set { lock.withLock { storage = newValue } }
   }
 }

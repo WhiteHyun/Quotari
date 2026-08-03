@@ -10,4 +10,13 @@ enum CLIActivityWarningPresentation {
       activitySnapshot.processes.joined(separator: ", ")
     )
   }
+
+  static func switchMessage(for activitySnapshot: CLIActivitySnapshot) -> String {
+    let key = "Running Claude Code sessions: %@. Quotari will briefly pause them while switching credentials, "
+      + "then resume them. They may use the new account on later requests."
+    return String.localizedStringWithFormat(
+      L10n.string(key: key),
+      activitySnapshot.processes.joined(separator: ", ")
+    )
+  }
 }

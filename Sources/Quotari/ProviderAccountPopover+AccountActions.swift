@@ -23,9 +23,7 @@ extension ProviderAccountPopover {
       do {
         let activitySnapshot = try await store.cliActivitySnapshot(for: account.provider)
         if activitySnapshot.isActive {
-          store.captureErrors[account.provider] = AccountSwitchError.cliStillRunning(
-            processes: activitySnapshot.processes
-          ).localizedDescription
+          confirmation = .switchCLI(account, activitySnapshot)
         } else {
           startSwitchingCLI(to: account)
         }
@@ -37,10 +35,16 @@ extension ProviderAccountPopover {
     }
   }
 
-  func startSwitchingCLI(to account: ProviderAccount) {
+  func startSwitchingCLI(
+    to account: ProviderAccount,
+    allowingActiveSessions activitySnapshot: CLIActivitySnapshot? = nil
+  ) {
     Task {
       let shouldDismiss = await switchCoordinator.switchCLI(to: account) {
-        await store.switchCLIAccount(to: account)
+        await store.switchCLIAccount(
+          to: account,
+          allowingActiveSessions: activitySnapshot
+        )
         return store.captureErrors[account.provider] == nil
       }
       if shouldDismiss {
@@ -75,10 +79,16 @@ extension ProviderAccountPopover {
 
   func confirmationAlert(for confirmation: ProviderAccountPopoverConfirmation) -> Alert {
     let activitySnapshot = confirmation.activitySnapshot
+    let message = switch confirmation {
+    case .addClaudeAccount:
+      CLIActivityWarningPresentation.message(for: activitySnapshot)
+    case .switchCLI:
+      CLIActivityWarningPresentation.switchMessage(for: activitySnapshot)
+    }
     return Alert(
-      title: Text(L10n.string("Keep running Claude Code sessions?")),
-      message: Text(CLIActivityWarningPresentation.message(for: activitySnapshot)),
-      primaryButton: .default(Text(L10n.string("Continue Login"))) {
+      title: Text(L10n.string(key: confirmation.title)),
+      message: Text(message),
+      primaryButton: .default(Text(L10n.string(key: confirmation.confirmButtonTitle))) {
         performConfirmedOperation(confirmation)
       },
       secondaryButton: .cancel()
@@ -92,20 +102,42 @@ extension ProviderAccountPopover {
         for: .claude,
         allowingActiveSessions: activitySnapshot
       )
+    case let .switchCLI(account, activitySnapshot):
+      startSwitchingCLI(to: account, allowingActiveSessions: activitySnapshot)
     }
   }
 }
 
 enum ProviderAccountPopoverConfirmation: Identifiable {
   case addClaudeAccount(CLIActivitySnapshot)
+  case switchCLI(ProviderAccount, CLIActivitySnapshot)
 
   var id: String {
-    "add-claude-account"
+    switch self {
+    case .addClaudeAccount: "add-claude-account"
+    case let .switchCLI(account, _): "switch-\(account.id)"
+    }
+  }
+
+  var title: String {
+    switch self {
+    case .addClaudeAccount: "Keep running Claude Code sessions?"
+    case .switchCLI: "Switch CLI account?"
+    }
+  }
+
+  var confirmButtonTitle: String {
+    switch self {
+    case .addClaudeAccount: "Continue Login"
+    case .switchCLI: "Switch Account"
+    }
   }
 
   var activitySnapshot: CLIActivitySnapshot {
     switch self {
     case let .addClaudeAccount(activitySnapshot):
+      activitySnapshot
+    case let .switchCLI(_, activitySnapshot):
       activitySnapshot
     }
   }
