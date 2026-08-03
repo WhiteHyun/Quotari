@@ -62,7 +62,6 @@ extension CLIActivityDetector {
   }
 
   private static func isSupportedInterpreter(_ path: String) -> Bool {
-    guard !isAppBundlePath(path) else { return false }
     let name = URL(fileURLWithPath: path).lastPathComponent.lowercased()
     return ["bash", "dash", "fish", "node", "nodejs", "python", "python3", "ruby", "sh", "zsh"]
       .contains(name)
