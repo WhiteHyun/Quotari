@@ -1,3 +1,4 @@
+import CustomDump
 import Darwin
 import Foundation
 @testable import QuotariCore
@@ -56,6 +57,42 @@ extension AccountSwitchActiveSessionApprovalTests {
     }
     #expect(keychain.value == original)
     #expect(!cli.isStopped)
+  }
+
+  @Test func resumeFailuresDoNotSkipOtherSuspendedProcesses() {
+    let processes = [1, 2, 3].map {
+      CLIActivityProcess(
+        pid: Int32($0),
+        displayName: "claude (PID \($0))",
+        generation: .process(startTimeSeconds: UInt64($0), startTimeMicroseconds: 0)
+      )
+    }
+    var attempted: [Int32] = []
+    var failureDescription: String?
+
+    do {
+      try AccountSwitchService.resumeCLIProcesses(processes) { process in
+        let pid = try #require(process.pid)
+        attempted.append(pid)
+        guard pid == 2 else {
+          throw NSError(
+            domain: "CLIProcessResumeTest",
+            code: Int(pid),
+            userInfo: [NSLocalizedDescriptionKey: "resume failure \(pid)"]
+          )
+        }
+      }
+      Issue.record("Expected aggregated resume failures")
+    } catch {
+      failureDescription = error.localizedDescription
+    }
+
+    expectNoDifference(attempted, [3, 2, 1])
+    expectNoDifference(
+      failureDescription,
+      "Resuming 2 Claude session(s) failed: "
+        + "PID 3: resume failure 3; PID 1: resume failure 1"
+    )
   }
 }
 

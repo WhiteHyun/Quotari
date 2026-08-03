@@ -15,6 +15,15 @@ extension AccountSwitchService {
     case replaced
   }
 
+  private struct CLIProcessResumeError: LocalizedError {
+    let failures: [String]
+
+    var errorDescription: String? {
+      "Resuming \(failures.count) Claude session(s) failed: "
+        + failures.joined(separator: "; ")
+    }
+  }
+
   func withSuspendedApprovedCLIProcesses<Result>(
     _ snapshot: CLIActivitySnapshot,
     provider: UsageProvider,
@@ -128,12 +137,27 @@ extension AccountSwitchService {
   }
 
   private static func resumeCLIProcesses(_ processes: [CLIActivityProcess]) throws {
+    try resumeCLIProcesses(processes) { process in
+      _ = try sendSignal(SIGCONT, to: process)
+    }
+  }
+
+  static func resumeCLIProcesses(
+    _ processes: [CLIActivityProcess],
+    using resume: (CLIActivityProcess) throws -> Void
+  ) throws {
+    var failures: [String] = []
     for process in processes.reversed() {
       // SIGCONT is harmless if our process has not stopped yet, and it clears
       // a late-arriving SIGSTOP after polling failed. The signal helper checks
       // the process generation again and skips a reused PID.
-      _ = try sendSignal(SIGCONT, to: process)
+      do {
+        try resume(process)
+      } catch {
+        failures.append("PID \(process.pid ?? 0): \(error.localizedDescription)")
+      }
     }
+    guard failures.isEmpty else { throw CLIProcessResumeError(failures: failures) }
   }
 
   private static func sendSignal(
