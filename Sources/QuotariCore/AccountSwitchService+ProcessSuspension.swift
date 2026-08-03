@@ -32,29 +32,8 @@ extension AccountSwitchService {
       )
     }
 
-    var signaledForSuspension: [CLIActivityProcess] = []
+    let signaledForSuspension = try suspendApprovedCLIProcesses(approved)
     do {
-      for process in approved {
-        switch try Self.processState(process) {
-        case .running:
-          switch try Self.sendSignal(SIGSTOP, to: process) {
-          case .sent:
-            // SIGSTOP may still take effect after polling fails. Record our
-            // ownership before waiting so every signaled process receives a
-            // matching SIGCONT during error cleanup.
-            signaledForSuspension.append(process)
-            _ = try Self.waitUntilStopped(process)
-          case .exited:
-            continue
-          case .replaced:
-            throw AccountSwitchError.concurrentCredentialChange
-          }
-        case .stopped, .exited:
-          continue
-        case .replaced:
-          throw AccountSwitchError.concurrentCredentialChange
-        }
-      }
       let current = try checkedActiveCLIProcesses(provider)
       let changed = snapshot.unapprovedProcesses(for: provider, activeProcesses: current)
       guard changed.isEmpty else { throw AccountSwitchError.concurrentCredentialChange }
@@ -86,6 +65,48 @@ extension AccountSwitchService {
       )
     }
     return try result.get()
+  }
+
+  private func suspendApprovedCLIProcesses(
+    _ processes: [CLIActivityProcess]
+  ) throws -> [CLIActivityProcess] {
+    var signaled: [CLIActivityProcess] = []
+    do {
+      for process in processes {
+        switch try Self.processState(process) {
+        case .running:
+          break
+        case .stopped, .exited:
+          continue
+        case .replaced:
+          throw AccountSwitchError.concurrentCredentialChange
+        }
+        switch try Self.sendSignal(SIGSTOP, to: process) {
+        case .sent:
+          // SIGSTOP may still take effect after polling fails. Record our
+          // ownership before waiting so every signaled process receives a
+          // matching SIGCONT during error cleanup.
+          signaled.append(process)
+          _ = try Self.waitUntilStopped(process)
+        case .exited:
+          continue
+        case .replaced:
+          throw AccountSwitchError.concurrentCredentialChange
+        }
+      }
+      return signaled
+    } catch {
+      let suspensionError = error
+      do {
+        try Self.resumeCLIProcesses(signaled)
+      } catch {
+        throw AccountSwitchError.partialSwitch(
+          underlying: "Claude session suspension failed and a paused session could not be resumed: "
+            + error.localizedDescription
+        )
+      }
+      throw suspensionError
+    }
   }
 
   private static func waitUntilStopped(_ process: CLIActivityProcess) throws -> Bool {
