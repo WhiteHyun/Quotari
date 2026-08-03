@@ -104,7 +104,10 @@ extension UsageStore {
   /// captured first), then discovery re-runs — the
   /// switched-in account becomes the live login with the saved row hidden —
   /// and the selection lands on it, anchored to the saved account.
-  func switchCLIAccount(to account: ProviderAccount) async {
+  func switchCLIAccount(
+    to account: ProviderAccount,
+    allowingActiveSessions activitySnapshot: CLIActivitySnapshot? = nil
+  ) async {
     guard case let .quotariRegistry(id) = account.credentialSource else { return }
     let provider = account.provider
     guard !isSwitching else {
@@ -156,7 +159,8 @@ extension UsageStore {
           now: now,
           knownLiveTarget: knownLiveTarget,
           targetClaudeProfile: targetClaudeProfile,
-          verifiedLiveClaudeIdentity: verifiedLiveIdentity
+          verifiedLiveClaudeIdentity: verifiedLiveIdentity,
+          allowingActiveSessions: activitySnapshot
         )
       }.value
       await reloadAccountsDuringSwitch()

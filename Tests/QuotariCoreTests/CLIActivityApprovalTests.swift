@@ -43,6 +43,77 @@ struct CLIActivitySnapshotTests {
 }
 
 struct AccountSwitchActiveSessionApprovalTests {
+  @Test func userApprovedClaudeProcessCanRemainActiveDuringSwitch() throws {
+    let registry = makeSwitchRegistry()
+    let saved = try savedClaudeAccount(registry: registry)
+    let home = try switchTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let live = approvalClaudeCredential(accessToken: "live", refreshToken: "live-ref")
+    let keychain = KeychainSlot(live)
+    let active = ["claude (PID 42)"]
+    let service = approvalSwitchService(
+      registry: registry,
+      home: home,
+      keychain: keychain,
+      activeProcesses: active
+    )
+
+    let source = try service.switchCLI(
+      toRegistryAccount: saved.id,
+      now: .distantPast,
+      allowingActiveSessions: CLIActivitySnapshot(provider: .claude, processes: active)
+    )
+
+    #expect(source == .claudeKeychain(service: ClaudeCredentialsStore.keychainService))
+    #expect(try ClaudeCredentialsStore.parse(#require(keychain.value)).accessToken == "saved-tok")
+  }
+
+  @Test func unapprovedClaudeProcessAppearingAfterConfirmationStopsSwitch() throws {
+    let registry = makeSwitchRegistry()
+    let saved = try savedClaudeAccount(registry: registry)
+    let home = try switchTemporaryHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let original = approvalClaudeCredential(accessToken: "live", refreshToken: "live-ref")
+    let keychain = KeychainSlot(original)
+    let activity = ApprovalActivitySequence([
+      ["claude (PID 42)"],
+      ["claude (PID 42)", "claude (PID 99)"],
+    ])
+    let service = AccountSwitchService(
+      capturedAccounts: registry,
+      capture: AccountCaptureService(
+        capturedAccounts: registry,
+        claudeKeychainRead: { _ in keychain.value }
+      ),
+      environment: [:],
+      home: home,
+      keychainRead: { _ in keychain.value },
+      keychainWrite: { data, _ in keychain.value = data },
+      activeCLIProcesses: { _ in activity.next() }
+    )
+
+    var thrown: AccountSwitchError?
+    do {
+      try service.switchCLI(
+        toRegistryAccount: saved.id,
+        now: .distantPast,
+        allowingActiveSessions: CLIActivitySnapshot(
+          provider: .claude,
+          processes: ["claude (PID 42)"]
+        )
+      )
+    } catch let error as AccountSwitchError {
+      thrown = error
+    }
+
+    guard case let .cliStillRunning(processes) = thrown else {
+      Issue.record("expected .cliStillRunning, got \(String(describing: thrown))")
+      return
+    }
+    #expect(processes == ["claude (PID 99)"])
+    #expect(keychain.value == original)
+  }
+
   @Test func activeClaudeProcessCannotOutliveTheSwitch() throws {
     let registry = makeSwitchRegistry()
     let saved = try savedClaudeAccount(registry: registry)
