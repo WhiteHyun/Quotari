@@ -12,12 +12,16 @@ extension UsageStore {
   func resolvedSavedClaudeProfiles(
     _ accounts: [CapturedAccount]
   ) async -> SavedClaudeProfileResolution {
-    var profiles: [(CapturedAccount, ClaudeProfile)] = []
+    var profiles: [ResolvedSavedClaudeProfile] = []
     var hasUnresolvedProfile = false
     for captured in accounts {
       if let resolution = await resolvedClaudeCaptureProfile(for: captured.providerAccount),
          let profile = resolution.profile {
-        profiles.append((captured, profile))
+        profiles.append(ResolvedSavedClaudeProfile(
+          captured: captured,
+          profile: profile,
+          requiresReauthentication: resolution.requiresReauthentication
+        ))
       } else if await unresolvedSavedClaudeProfileShouldBlock(captured.providerAccount) {
         hasUnresolvedProfile = true
       }
@@ -84,13 +88,15 @@ extension UsageStore {
     )
     credentials = credentialResolution.credentials
     let credentialTransition = credentialResolution.transition
+    let requiresReauthentication = credentialResolution.requiresReauthentication
     let fingerprint = ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
     if let cached = claudeProfiles[account.id],
        cached.fingerprint == fingerprint,
        cached.hasStableAccountIdentity {
       return ClaudeCaptureProfileResolution(
         profile: cached,
-        credentialTransition: credentialTransition
+        credentialTransition: credentialTransition,
+        requiresReauthentication: requiresReauthentication
       )
     }
     // Stable profile identity outlives an access token. If refreshing an
@@ -99,7 +105,8 @@ extension UsageStore {
     guard !credentials.isExpired(now: now) else {
       return ClaudeCaptureProfileResolution(
         profile: nil,
-        credentialTransition: credentialTransition
+        credentialTransition: credentialTransition,
+        requiresReauthentication: requiresReauthentication
       )
     }
 
@@ -112,7 +119,8 @@ extension UsageStore {
     else {
       return ClaudeCaptureProfileResolution(
         profile: nil,
-        credentialTransition: credentialTransition
+        credentialTransition: credentialTransition,
+        requiresReauthentication: requiresReauthentication
       )
     }
     let verified = fetched.verified(for: fingerprint)
@@ -123,7 +131,8 @@ extension UsageStore {
     enqueueClaudeQuotaNotificationScopeRestore()
     return ClaudeCaptureProfileResolution(
       profile: verified,
-      credentialTransition: credentialTransition
+      credentialTransition: credentialTransition,
+      requiresReauthentication: requiresReauthentication
     )
   }
 
@@ -136,7 +145,13 @@ extension UsageStore {
     guard credentials.isExpired(now: now),
           let refreshToken = credentials.refreshToken,
           !refreshToken.isEmpty
-    else { return ClaudeCredentialResolution(credentials: credentials, transition: nil) }
+    else {
+      return ClaudeCredentialResolution(
+        credentials: credentials,
+        transition: nil,
+        requiresReauthentication: false
+      )
+    }
     let loader = claudeCredentialLoader
     let initialScopeID = account.credentialScopeID
     let result = await refreshClaudeCredential(
@@ -146,7 +161,13 @@ extension UsageStore {
     )
     guard let refreshed = await Task.detached(operation: {
       loader(account.credentialSource)
-    }).value else { return ClaudeCredentialResolution(credentials: credentials, transition: nil) }
+    }).value else {
+      return ClaudeCredentialResolution(
+        credentials: credentials,
+        transition: nil,
+        requiresReauthentication: false
+      )
+    }
     let refreshedAccount = ProviderAccount(
       provider: .claude,
       displayName: account.displayName,
@@ -164,7 +185,15 @@ extension UsageStore {
     } else {
       nil
     }
-    return ClaudeCredentialResolution(credentials: refreshed, transition: transition)
+    return ClaudeCredentialResolution(
+      credentials: refreshed,
+      transition: transition,
+      // The endpoint's invalid-grant verdict alone is not enough: the CLI may
+      // have installed a fresh pair between the failed exchange and this
+      // re-read, in which case the row just recovered through rotation.
+      requiresReauthentication: result?.indicatesClaudeReauthenticationRequired == true
+        && refreshed.isExpired(now: now)
+    )
   }
 
   private func refreshClaudeCredential(
@@ -210,8 +239,17 @@ private extension ProviderCredentialSource {
   }
 }
 
+struct ResolvedSavedClaudeProfile {
+  let captured: CapturedAccount
+  let profile: ClaudeProfile
+  /// The OAuth endpoint definitively rejected this row's stored refresh token
+  /// during this scan (invalid grant) and no newer pair rescued the slot — the
+  /// snapshot can never renew itself again. Transient failures stay `false`.
+  let requiresReauthentication: Bool
+}
+
 struct SavedClaudeProfileResolution {
-  let profiles: [(CapturedAccount, ClaudeProfile)]
+  let profiles: [ResolvedSavedClaudeProfile]
   let hasUnresolvedProfile: Bool
 }
 
@@ -229,6 +267,7 @@ struct LiveClaudeProfileResolution {
 private struct ClaudeCaptureProfileResolution {
   let profile: ClaudeProfile?
   let credentialTransition: ClaudeCredentialScopeTransition?
+  let requiresReauthentication: Bool
 }
 
 private struct ClaudeCredentialScopeTransition {
@@ -239,4 +278,20 @@ private struct ClaudeCredentialScopeTransition {
 private struct ClaudeCredentialResolution {
   let credentials: ClaudeCredentials
   let transition: ClaudeCredentialScopeTransition?
+  let requiresReauthentication: Bool
+}
+
+private extension Result where Success == ProviderFetchResult, Failure == Error {
+  /// Whether this fetch failed because the OAuth token endpoint rejected the
+  /// stored refresh token outright. Unlike network or usage-request failures,
+  /// an invalid grant is a permanent verdict on the stored pair.
+  var indicatesClaudeReauthenticationRequired: Bool {
+    guard case let .failure(error) = self else { return false }
+    let underlying = (error as? ProviderFetchTransitionError)?.underlying ?? error
+    guard let refreshError = underlying as? ClaudeTokenRefreshError else { return false }
+    if case .reauthenticationRequired = refreshError {
+      return true
+    }
+    return false
+  }
 }

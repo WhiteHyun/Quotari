@@ -61,7 +61,9 @@ extension UsageStore {
       )
     }
 
-    let savedResolution = await resolvedSavedClaudeProfiles(saved)
+    let savedResolution = await healedSavedClaudeProfileResolution(
+      resolvedSavedClaudeProfiles(saved)
+    )
     let liveResolution = await resolvedLiveClaudeProfiles(
       liveAccounts,
       capturedCopies: capturedCopies
@@ -81,6 +83,71 @@ extension UsageStore {
       verifiedDuplicateCredentialScopeIDs: verifiedDuplicateClaudeCredentialScopeIDs(in: liveProfiles),
       credentialTransitions: liveResolution.credentialTransitions
     )
+  }
+
+  /// Registry hygiene for verified duplicates: two saved rows proven to be the
+  /// same account can never both stay renewable — the account has one rotating
+  /// refresh-token chain, so at most one row can hold it. When all but one of
+  /// the duplicates are provably dead (their stored refresh token was rejected
+  /// as an invalid grant this scan), remove the dead rows and keep a single
+  /// canonical row for the normal refresh plan to converge on. Two duplicates
+  /// that are both plausibly alive remain ambiguous and keep failing closed.
+  private func healedSavedClaudeProfileResolution(
+    _ resolution: SavedClaudeProfileResolution
+  ) async -> SavedClaudeProfileResolution {
+    let removedIDs = await removedDeadDuplicateSavedClaudeRowIDs(resolution.profiles)
+    guard !removedIDs.isEmpty else { return resolution }
+    return SavedClaudeProfileResolution(
+      profiles: resolution.profiles.filter { !removedIDs.contains($0.captured.id) },
+      hasUnresolvedProfile: resolution.hasUnresolvedProfile
+    )
+  }
+
+  private func removedDeadDuplicateSavedClaudeRowIDs(
+    _ profiles: [ResolvedSavedClaudeProfile]
+  ) async -> Set<String> {
+    var groups: [[ResolvedSavedClaudeProfile]] = []
+    for row in profiles {
+      if let index = groups.firstIndex(where: { group in
+        group.contains { row.profile.identifiesSameAccount(as: $0.profile) }
+      }) {
+        groups[index].append(row)
+      } else {
+        groups.append([row])
+      }
+    }
+    var removed = Set<String>()
+    for group in groups where group.count > 1 {
+      let alive = group.filter { !$0.requiresReauthentication }
+      // With two plausibly-live rows there is no proof which one owns the
+      // account's refresh-token chain; removal could destroy the only working
+      // snapshot, so ambiguity keeps the existing blocked behavior.
+      guard alive.count <= 1,
+            let canonical = alive.first
+              ?? group.max(by: { $0.captured.capturedAt < $1.captured.capturedAt })
+      else { continue }
+      for row in group
+        where row.requiresReauthentication && row.captured.id != canonical.captured.id {
+        do {
+          try await removeDeadSavedClaudeRow(id: row.captured.id)
+          removed.insert(row.captured.id)
+        } catch {
+          // The row stays in the resolution; planning keeps failing closed for
+          // this account exactly as before, and a later scan retries.
+        }
+      }
+    }
+    return removed
+  }
+
+  private func removeDeadSavedClaudeRow(id: String) async throws {
+    let capture = accountCapture
+    try await Task.detached { try capture.remove(id: id) }.value
+    let savedID = ProviderAccount.id(provider: .claude, source: .quotariRegistry(id: id))
+    claudeProfiles[savedID] = nil
+    profileFetchAttempts[savedID] = nil
+    emptyClaudeProfileFingerprints[savedID] = nil
+    try? profileStore.save(claudeProfiles)
   }
 
   private func verifiedDuplicateClaudeCredentialScopeIDs(
@@ -146,8 +213,8 @@ extension UsageStore {
     candidates: [ProviderAccount],
     savedResolution: SavedClaudeProfileResolution
   ) -> AutomaticAccountCapturePlan {
-    let matchingSaved = savedResolution.profiles.filter { profile.identifiesSameAccount(as: $0.1) }
-    if matchingSaved.count == 1, let saved = matchingSaved.first?.0.providerAccount {
+    let matchingSaved = savedResolution.profiles.filter { profile.identifiesSameAccount(as: $0.profile) }
+    if matchingSaved.count == 1, let saved = matchingSaved.first?.captured.providerAccount {
       return .ignoreDuplicate(
         savedOrigin: saved,
         canonicalCandidateID: nil,
@@ -183,18 +250,18 @@ extension UsageStore {
     guard let fingerprint = profile.fingerprint else {
       return .blocked("Couldn’t verify this Claude account before managing it.")
     }
-    let matches = resolution.profiles.filter { profile.identifiesSameAccount(as: $0.1) }
+    let matches = resolution.profiles.filter { profile.identifiesSameAccount(as: $0.profile) }
     if matches.count == 1, let match = matches.first {
       guard isRenewable else {
         return .ignoreDuplicate(
-          savedOrigin: match.0.providerAccount,
+          savedOrigin: match.captured.providerAccount,
           canonicalCandidateID: nil,
           fallbackCapturePlan: nil
         )
       }
       return .refreshClaude(
-        id: match.0.id,
-        savedOrigin: match.0.providerAccount,
+        id: match.captured.id,
+        savedOrigin: match.captured.providerAccount,
         accessTokenFingerprint: fingerprint,
         profile: profile
       )
