@@ -1,3 +1,4 @@
+import CustomDump
 import Foundation
 @testable import Quotari
 @testable import QuotariCore
@@ -5,6 +6,34 @@ import Testing
 
 @MainActor
 struct AutomaticCaptureIdentitySafetyTests {
+  @Test func externalWeakIdentityRotationRemainsSeparateAndVisible() async throws {
+    let fixture = try makeWeakIdentityRotationFixture()
+
+    await fixture.store.reloadAccounts()
+
+    expectNoDifference(fixture.registry.load().map(\.id).sorted(), fixture.expectedIDs)
+    expectNoDifference(
+      fixture.registry.load().compactMap(\.claudeAccountIdentity),
+      [fixture.weakIdentity, fixture.weakIdentity]
+    )
+    expectNoDifference(
+      fixture.store.captureWarnings[.claude],
+      UsageStore.weakClaudeIdentityDuplicateMessage
+    )
+    #expect(fixture.store.captureErrors[.claude] == nil)
+
+    // The bounded post-capture discovery and a later full reload both retain
+    // the warning without creating another row for the same token generation.
+    await fixture.store.reloadAccounts()
+
+    expectNoDifference(fixture.registry.load().map(\.id).sorted(), fixture.expectedIDs)
+    expectNoDifference(
+      fixture.store.captureWarnings[.claude],
+      UsageStore.weakClaudeIdentityDuplicateMessage
+    )
+    #expect(fixture.store.captureErrors[.claude] == nil)
+  }
+
   @Test func externalClaudeReloginDuringFetchDoesNotInheritThePreviousSelection() async throws {
     let fixture = try await makeReloginSafetyFixture()
 

@@ -3,11 +3,10 @@ import QuotariCore
 
 extension UsageStore {
   /// Claude refresh tokens rotate, so a token fingerprint mismatch does not
-  /// necessarily mean a different account. Before creating another registry
-  /// row, resolve stable profile identity for the live candidate and every
-  /// existing saved Claude account. A proven match refreshes that row in
-  /// place; incomplete identity evidence fails closed instead of accumulating
-  /// a stale duplicate.
+  /// necessarily mean a different account. Strong profile identity can refresh
+  /// a proven saved row across generations and authorize duplicate cleanup.
+  /// Renewable weak identities are captured conservatively instead: they never
+  /// authorize merging or deletion and may remain as separate registry rows.
   func automaticCapturePlanning(
     for candidates: [ProviderAccount],
     among accounts: [ProviderAccount],

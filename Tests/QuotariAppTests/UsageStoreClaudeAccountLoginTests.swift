@@ -240,6 +240,13 @@ struct UsageStoreClaudeAccountLoginTests {
     #expect(strongCredentials.accessToken == "current-access")
     #expect(weakCredentials.accessToken == "weak-rotated-access")
     #expect(store.accountLoginErrors[.claude] == nil)
+
+    await store.addAccount(for: .claude)
+
+    #expect(context.registry.load().count == 2)
+    #expect(store.captureErrors[.claude] == nil)
+    #expect(store.captureWarnings[.claude] == UsageStore.weakClaudeIdentityDuplicateMessage)
+    #expect(store.accountLoginErrors[.claude] == nil)
   }
 }
 

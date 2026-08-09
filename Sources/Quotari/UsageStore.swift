@@ -101,6 +101,7 @@ final class UsageStore {
   let claudeCredentialLoader: @Sendable (ProviderCredentialSource) -> ClaudeCredentials?
   private let defaults: UserDefaults
   var captureErrors: [UsageProvider: String] = [:]
+  var captureWarnings: [UsageProvider: String] = [:]
   /// Fetched Claude account profiles keyed by `ProviderAccount.id`, used to
   /// label accounts by email. Loaded from disk at launch, refreshed lazily.
   var claudeProfiles: [String: ClaudeProfile] = [:]

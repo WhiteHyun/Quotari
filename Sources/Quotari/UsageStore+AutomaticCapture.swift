@@ -43,7 +43,7 @@ extension UsageStore {
     let failures = outcomes.compactMap { outcome in
       outcome.error.map { "Couldn’t manage “\(outcome.account.displayName)” automatically: \($0)" }
     }
-    captureErrors[provider] = failures.isEmpty ? nil : failures.joined(separator: "\n")
+    await recordAutomaticCaptureMessages(failures, provider: provider)
     return AutomaticAccountCaptureResult(
       selectionOrigins: outcomes.reduce(into: [:]) { origins, outcome in
         guard let origin = outcome.selectionOrigin else { return }
