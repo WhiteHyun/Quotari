@@ -135,11 +135,13 @@ extension UsageStore {
     from redundant: ProviderAccount,
     to canonical: ProviderAccount
   ) throws {
+    guard isMonitoringConfigurationLoaded else {
+      throw ClaudeRegistryReferenceMigrationError.monitoringConfigurationUnavailable
+    }
+
     var selections = persistableSelections()
-    let selectionChanged = selections[.claude]?.id == redundant.id
-    if selectionChanged {
+    if selections[.claude]?.id == redundant.id {
       selections[.claude] = canonical
-      try accountSelectionStore.save(selections)
     }
 
     var monitoring = persistedMonitoredAccounts
@@ -150,8 +152,13 @@ extension UsageStore {
         with: canonical,
         in: monitoring[.claude] ?? []
       )
-      try accountMonitoringStore.save(monitoring)
     }
+
+    // A prior failed scan may already have reconciled the in-memory references
+    // to `canonical` while the durable files still name `redundant`. Rewrite
+    // both complete maps on every retry so memory can never mask that debt.
+    try accountSelectionStore.save(selections)
+    try accountMonitoringStore.save(monitoring)
 
     if selectedAccounts[.claude]?.id == redundant.id {
       selectAccount(
@@ -172,10 +179,8 @@ extension UsageStore {
         waitsForDelayedCredentialRefresh: true
       )
     }
-    if monitoringChanged {
-      persistedMonitoredAccounts = monitoring
-      isMonitoringConfigurationLoaded = true
-    }
+    persistedMonitoredAccounts = monitoring
+    isMonitoringConfigurationLoaded = true
     monitoredAccounts[.claude] = replacingAccount(
       redundant,
       with: canonical,
@@ -362,4 +367,8 @@ extension UsageStore {
     case .codexAuthFile, .codexKeychain, .claudeEnvironment, .quotariRegistry: 2
     }
   }
+}
+
+private enum ClaudeRegistryReferenceMigrationError: Error {
+  case monitoringConfigurationUnavailable
 }

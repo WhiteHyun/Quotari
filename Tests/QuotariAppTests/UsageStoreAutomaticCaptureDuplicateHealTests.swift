@@ -1,5 +1,5 @@
-import Foundation
 import CustomDump
+import Foundation
 @testable import Quotari
 @testable import QuotariCore
 import Testing
@@ -29,8 +29,8 @@ struct AutomaticCaptureDuplicateHealTests {
     #expect(fixture.selectionStore.load()[.claude]?.credentialSource == .quotariRegistry(
       id: fixture.canonicalID
     ))
-    expectNoDifference(
-      try fixture.monitoringStore.load()[.claude]?.map(\.credentialSource),
+    try expectNoDifference(
+      fixture.monitoringStore.load()[.claude]?.map(\.credentialSource),
       [.quotariRegistry(id: fixture.canonicalID)]
     )
     #expect(fixture.store.accounts[.claude]?.contains(where: { $0.id == fixture.redundantProviderID }) == false)
@@ -48,13 +48,56 @@ struct AutomaticCaptureDuplicateHealTests {
     #expect(fixture.selectionStore.load()[.claude]?.credentialSource == .quotariRegistry(
       id: fixture.canonicalID
     ))
-    expectNoDifference(
-      try fixture.monitoringStore.load()[.claude]?.map(\.credentialSource),
+    try expectNoDifference(
+      fixture.monitoringStore.load()[.claude]?.map(\.credentialSource),
       [.quotariRegistry(id: fixture.canonicalID)]
     )
     #expect(fixture.store.reconciledSelectionOrigins[.claude]?.credentialSource == .quotariRegistry(
       id: fixture.canonicalID
     ))
+  }
+
+  @Test func selectionWriteFailureKeepsRedundantRowAcrossRetriesThenConverges() async throws {
+    let fixture = try makeDuplicateHealReloadFixture(canonicalAlreadyLive: false)
+    try blockDuplicateHealPersistenceWrites(at: fixture.selectionStore.url)
+
+    await fixture.store.reloadAccounts()
+    expectDuplicateRows(fixture)
+    await fixture.store.reloadAccounts()
+    expectDuplicateRows(fixture)
+
+    try restoreDuplicateHealPersistenceWrites(at: fixture.selectionStore.url)
+    await fixture.store.reloadAccounts()
+
+    expectNoDifference(fixture.registry.load().map(\.id), [fixture.canonicalID])
+    #expect(fixture.selectionStore.load()[.claude]?.credentialSource == .quotariRegistry(
+      id: fixture.canonicalID
+    ))
+  }
+
+  @Test func monitoringWriteFailureKeepsRedundantRowAcrossRetriesThenConverges() async throws {
+    let fixture = try makeDuplicateHealReloadFixture(canonicalAlreadyLive: false)
+    try blockDuplicateHealPersistenceWrites(at: fixture.monitoringStore.url)
+
+    await fixture.store.reloadAccounts()
+    expectDuplicateRows(fixture)
+    await fixture.store.reloadAccounts()
+    expectDuplicateRows(fixture)
+    #expect(!fixture.store.isMonitoringConfigurationLoaded)
+
+    try restoreDuplicateHealPersistenceWrites(at: fixture.monitoringStore.url)
+    // The first healthy reload durably recovers the monitoring map. Cleanup is
+    // allowed only on the following scan, once that readable state is known.
+    await fixture.store.reloadAccounts()
+    expectDuplicateRows(fixture)
+    #expect(fixture.store.isMonitoringConfigurationLoaded)
+    await fixture.store.reloadAccounts()
+
+    expectNoDifference(fixture.registry.load().map(\.id), [fixture.canonicalID])
+    try expectNoDifference(
+      fixture.monitoringStore.load()[.claude]?.map(\.credentialSource),
+      [.quotariRegistry(id: fixture.canonicalID)]
+    )
   }
 
   @Test func persistedStrongIdentityHealsDuplicatesWithoutProfileCache() async throws {
@@ -236,5 +279,25 @@ struct AutomaticCaptureDuplicateHealTests {
     )
 
     #expect(fixture.store.claudeProfiles[removedSavedID] != nil)
+  }
+
+  private func expectDuplicateRows(_ fixture: DuplicateHealReloadFixture) {
+    expectNoDifference(
+      fixture.registry.load().map(\.id).sorted(),
+      [fixture.canonicalID, fixture.redundantID].sorted()
+    )
+  }
+
+  private func blockDuplicateHealPersistenceWrites(at url: URL) throws {
+    let fileManager = FileManager.default
+    if fileManager.fileExists(atPath: url.path) {
+      try fileManager.removeItem(at: url)
+    }
+    try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+  }
+
+  private func restoreDuplicateHealPersistenceWrites(at url: URL) throws {
+    guard FileManager.default.fileExists(atPath: url.path) else { return }
+    try FileManager.default.removeItem(at: url)
   }
 }

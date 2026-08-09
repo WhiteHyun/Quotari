@@ -10,6 +10,7 @@ struct DuplicateHealReloadFixture {
   let selectionStore: ProviderAccountSelectionStore
   let monitoringStore: ProviderAccountMonitoringStore
   let canonicalID: String
+  let redundantID: String
   let redundantProviderID: String
 }
 
@@ -47,6 +48,7 @@ func makeDuplicateHealReloadFixture(
     selectionStore: selectionStore,
     monitoringStore: monitoringStore,
     canonicalID: state.canonical.id,
+    redundantID: state.redundant.id,
     redundantProviderID: state.redundant.providerAccount.id
   )
 }
@@ -268,8 +270,13 @@ struct SavedRowSpec {
   let capturedAt: Date
   var expiresAt = Date(timeIntervalSince1970: 0)
 
-  var accessToken: String { "\(token)-access" }
-  var refreshToken: String { "\(token)-refresh" }
+  var accessToken: String {
+    "\(token)-access"
+  }
+
+  var refreshToken: String {
+    "\(token)-refresh"
+  }
 }
 
 @MainActor
