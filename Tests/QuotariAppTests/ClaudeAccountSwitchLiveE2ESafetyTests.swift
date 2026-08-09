@@ -1,3 +1,4 @@
+import CustomDump
 import Foundation
 @testable import QuotariCore
 import Testing
@@ -5,7 +6,8 @@ import Testing
 struct ClaudeAccountSwitchLiveE2ESafetyTests {
   private let original = ClaudeProfile(
     accountID: "original-account",
-    email: "original@example.com"
+    email: "original@example.com",
+    organizationID: "original-organization"
   )
 
   @Test
@@ -42,6 +44,139 @@ struct ClaudeAccountSwitchLiveE2ESafetyTests {
     #expect(evidence.matches(original: original))
   }
 
+  @Test
+  func sameAccountUUIDInAnotherOrganizationRequiresRestoration() {
+    let evidence = ClaudeLiveAuthenticationEvidence(
+      credentialProfile: ClaudeProfile(
+        accountID: original.accountID,
+        email: original.email,
+        organizationID: "other-organization"
+      ),
+      cliStatus: ClaudeCLIAuthStatus(loggedIn: true, email: original.email)
+    )
+
+    #expect(!evidence.matches(original: original))
+  }
+
+  @Test
+  func missingOrganizationUUIDRequiresRestoration() {
+    let evidence = ClaudeLiveAuthenticationEvidence(
+      credentialProfile: ClaudeProfile(
+        accountID: original.accountID,
+        email: original.email
+      ),
+      cliStatus: ClaudeCLIAuthStatus(loggedIn: true, email: original.email)
+    )
+
+    #expect(!evidence.matches(original: original))
+  }
+}
+
+extension ClaudeAccountSwitchLiveE2ESafetyTests {
+  @Test
+  func targetRequiresMatchingStrongStoredAndClaudeCodeIdentities() throws {
+    let target = try targetAccount(
+      storedOrganizationID: "target-organization",
+      stateOrganizationID: "target-organization"
+    )
+
+    let identity = try requiredStrongTargetIdentity(for: target)
+
+    expectNoDifference(
+      identity,
+      ClaudeAccountIdentity(
+        accountID: "target-account",
+        email: "target@example.com",
+        organizationID: "target-organization"
+      )
+    )
+  }
+
+  @Test
+  func targetWithSameAccountUUIDInAnotherOrganizationFailsClosed() throws {
+    let target = try targetAccount(
+      storedOrganizationID: "stored-organization",
+      stateOrganizationID: "other-organization"
+    )
+
+    do {
+      _ = try requiredStrongTargetIdentity(for: target)
+      Issue.record("Expected a conflicting target organization to fail closed")
+    } catch ClaudeSwitchLiveE2EError.targetIdentityUnavailable {
+      // Expected.
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+  }
+
+  @Test
+  func targetWithoutOrganizationUUIDFailsClosed() throws {
+    let target = try targetAccount(
+      storedOrganizationID: nil,
+      stateOrganizationID: nil
+    )
+
+    do {
+      _ = try requiredStrongTargetIdentity(for: target)
+      Issue.record("Expected a weak target identity to fail closed")
+    } catch ClaudeSwitchLiveE2EError.targetIdentityUnavailable {
+      // Expected.
+    } catch {
+      Issue.record("Unexpected error: \(error)")
+    }
+  }
+}
+
+extension ClaudeAccountSwitchLiveE2ESafetyTests {
+  @Test
+  func cleanupRemovesOnlyAnExactStrongOriginalBackup() throws {
+    let fixture = try cleanupFixture(identity: ClaudeAccountIdentity(
+      accountID: original.accountID,
+      organizationID: original.organizationID
+    ))
+
+    try removeTestCreatedOriginalBackup(
+      from: fixture.registry,
+      preserving: [],
+      original: fixture.original
+    )
+
+    #expect(fixture.registry.account(id: fixture.backupID) == nil)
+  }
+
+  @Test
+  func cleanupPreservesSameAccountUUIDInAnotherOrganization() throws {
+    let fixture = try cleanupFixture(identity: ClaudeAccountIdentity(
+      accountID: original.accountID,
+      organizationID: "other-organization"
+    ))
+
+    try removeTestCreatedOriginalBackup(
+      from: fixture.registry,
+      preserving: [],
+      original: fixture.original
+    )
+
+    #expect(fixture.registry.account(id: fixture.backupID) != nil)
+  }
+
+  @Test
+  func cleanupPreservesBackupWithoutOrganizationUUID() throws {
+    let fixture = try cleanupFixture(identity: ClaudeAccountIdentity(
+      accountID: original.accountID
+    ))
+
+    try removeTestCreatedOriginalBackup(
+      from: fixture.registry,
+      preserving: [],
+      original: fixture.original
+    )
+
+    #expect(fixture.registry.account(id: fixture.backupID) != nil)
+  }
+}
+
+extension ClaudeAccountSwitchLiveE2ESafetyTests {
   @Test
   func authStatusDoesNotBlockOnNoisyStandardError() throws {
     let executable = try temporaryExecutable(
@@ -108,7 +243,9 @@ struct ClaudeAccountSwitchLiveE2ESafetyTests {
     #expect(refreshed.credentials.accessToken == "fresh-access")
     #expect(refreshed.credentials.refreshToken == "rotated-refresh")
   }
+}
 
+private extension ClaudeAccountSwitchLiveE2ESafetyTests {
   private func temporaryExecutable(_ contents: String) throws -> URL {
     let url = FileManager.default.temporaryDirectory
       .appending(path: "QuotariLiveE2ESafety-\(UUID().uuidString)")
@@ -116,4 +253,66 @@ struct ClaudeAccountSwitchLiveE2ESafetyTests {
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
     return url
   }
+
+  private func targetAccount(
+    storedOrganizationID: String?,
+    stateOrganizationID: String?
+  ) throws -> CapturedAccount {
+    var oauthAccount: [String: Any] = [
+      "accountUuid": "target-account",
+      "emailAddress": "target@example.com",
+    ]
+    if let stateOrganizationID {
+      oauthAccount["organizationUuid"] = stateOrganizationID
+    }
+    return try CapturedAccount(
+      id: "claude:target",
+      provider: .claude,
+      displayName: "Target",
+      detail: nil,
+      capturedAt: Date(timeIntervalSince1970: 0),
+      origin: .claudeKeychain(service: "test-service"),
+      payload: Data(),
+      claudeOAuthAccount: JSONSerialization.data(withJSONObject: oauthAccount),
+      claudeAccountIdentity: ClaudeAccountIdentity(
+        accountID: "target-account",
+        email: "target@example.com",
+        organizationID: storedOrganizationID
+      )
+    )
+  }
+
+  private func cleanupFixture(
+    identity: ClaudeAccountIdentity
+  ) throws -> ClaudeSwitchCleanupFixture {
+    let payload = Data(
+      #"{"claudeAiOauth":{"accessToken":"test-access","refreshToken":"test-refresh"}}"#.utf8
+    )
+    let credentialIdentity = try #require(
+      ProviderCredentialIdentity.key(provider: .claude, payload: payload)
+    )
+    let registry = CapturedAccountStore.inMemoryForTesting()
+    let backupID = "claude:test-backup"
+    try registry.save(CapturedAccount(
+      id: backupID,
+      provider: .claude,
+      displayName: "Original backup",
+      detail: nil,
+      capturedAt: Date(timeIntervalSince1970: 0),
+      origin: .claudeKeychain(service: "test-service"),
+      payload: payload,
+      claudeAccountIdentity: identity
+    ))
+    return ClaudeSwitchCleanupFixture(
+      registry: registry,
+      backupID: backupID,
+      original: ClaudeOriginalAccountState(identity: credentialIdentity, profile: original)
+    )
+  }
+}
+
+private struct ClaudeSwitchCleanupFixture {
+  var registry: CapturedAccountStore
+  var backupID: String
+  var original: ClaudeOriginalAccountState
 }

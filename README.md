@@ -88,8 +88,9 @@ login in another fresh process, and removes a newly created original-login
 backup only when its account identity proves that the round trip created it.
 
 Quit the Quotari app and every Claude Code session first. The target must already
-be saved in Quotari, have a verified email identity, and differ from the current
-CLI login. Then run:
+be saved in Quotari, have verified account and organization UUIDs that agree
+with its saved Claude Code state, and differ from the current CLI login by that
+exact identity. Then run:
 
 ```sh
 ./Scripts/run-claude-switch-e2e.sh \
