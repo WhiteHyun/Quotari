@@ -25,7 +25,11 @@ struct UsageStoreClaudeCredentialRaceTests {
     )
     let previousLogin = PreservedClaudeLogin(
       account: saved.providerAccount,
-      profile: ClaudeProfile(accountID: "account-current", email: "current@example.com")
+      profile: ClaudeProfile(
+        accountID: "account-current",
+        email: "current@example.com",
+        organizationID: "organization-current"
+      )
     )
     let rotatedPayload = claudePayload(
       accessToken: "rotated-current-access",

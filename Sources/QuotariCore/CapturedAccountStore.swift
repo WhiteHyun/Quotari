@@ -20,6 +20,9 @@ public struct CapturedAccount: Codable, Equatable, Sendable, Identifiable {
   /// separate `~/.claude.json.oauthAccount` object. Store the exact object
   /// with the renewable credential so both can be restored together.
   public var claudeOAuthAccount: Data?
+  /// Token-independent identity verified from Claude's profile endpoint.
+  /// Optional for backward compatibility with legacy token-keyed rows.
+  public var claudeAccountIdentity: ClaudeAccountIdentity?
 
   public init(
     id: String,
@@ -29,7 +32,8 @@ public struct CapturedAccount: Codable, Equatable, Sendable, Identifiable {
     capturedAt: Date,
     origin: ProviderCredentialSource,
     payload: Data,
-    claudeOAuthAccount: Data? = nil
+    claudeOAuthAccount: Data? = nil,
+    claudeAccountIdentity: ClaudeAccountIdentity? = nil
   ) {
     self.id = id
     self.provider = provider
@@ -39,6 +43,21 @@ public struct CapturedAccount: Codable, Equatable, Sendable, Identifiable {
     self.origin = origin
     self.payload = payload
     self.claudeOAuthAccount = claudeOAuthAccount
+    self.claudeAccountIdentity = claudeAccountIdentity
+  }
+}
+
+public enum CapturedAccountStoreError: LocalizedError, Equatable, Sendable {
+  case ambiguousIdentity
+  case conflictingClaudeIdentity
+
+  public var errorDescription: String? {
+    switch self {
+    case .ambiguousIdentity:
+      "Multiple saved accounts match the same verified identity. No account was changed."
+    case .conflictingClaudeIdentity:
+      "The saved account has a different verified Claude identity. No account was changed."
+    }
   }
 }
 
@@ -58,9 +77,9 @@ public struct CapturedAccountStore: Sendable {
   /// two concurrent captures could each read the index and drop the other's
   /// id, and a refresh could race a removal. Quotari owns these items, so a
   /// process-local lock is the whole scope of contention.
-  private static let mutationLock = NSLock()
+  static let mutationLock = NSLock()
 
-  private let keychain: KeychainItemStore
+  let keychain: KeychainItemStore
   private let itemPrefix: String
   private let indexService: String
 
@@ -99,13 +118,7 @@ public struct CapturedAccountStore: Sendable {
   /// established without decoding the row.
   public func registeredAccounts(for provider: UsageProvider) throws -> [CapturedAccount] {
     try Self.mutationLock.withLock {
-      try (indexIDs() ?? []).compactMap { id in
-        if let indexedProvider = Self.provider(encodedIn: id), indexedProvider != provider {
-          return nil
-        }
-        let account = try strictlyLoadRegisteredAccount(id: id)
-        return account.provider == provider ? account : nil
-      }
+      try registeredAccountsUnlocked(for: provider)
     }
   }
 
@@ -115,7 +128,17 @@ public struct CapturedAccountStore: Sendable {
   /// secret with no index entry. The index read fails closed, so a transient
   /// read failure throws instead of writing a truncated index.
   public func save(_ account: CapturedAccount) throws {
-    _ = try upsert(account) { _, candidate in candidate }
+    try Self.mutationLock.withLock {
+      var ids = try indexIDs() ?? []
+      if !ids.contains(account.id) {
+        ids.append(account.id)
+        try writeIndex(ids)
+      }
+      // An explicit same-id save is also the recovery path for a readable but
+      // corrupt item. Identity-based upserts remain strict and ambiguous rows
+      // still fail closed before reaching this write.
+      try keychain.write(encode(account), service: itemService(account.id))
+    }
   }
 
   /// Atomically inserts `candidate`, or lets the caller merge it with the
@@ -127,12 +150,36 @@ public struct CapturedAccountStore: Sendable {
     _ candidate: CapturedAccount,
     mergingExisting merge: (CapturedAccount, CapturedAccount) throws -> CapturedAccount
   ) throws -> CapturedAccount {
+    try upsert(candidate, matchingExisting: { _, _ in false }, mergingExisting: merge)
+  }
+
+  /// Atomically finds a row by immutable account identity and writes the new
+  /// credential generation into that row. The winning existing id is retained
+  /// even when `candidate` was created with a fresh local UUID.
+  @discardableResult
+  public func upsert(
+    _ candidate: CapturedAccount,
+    matchingExisting matches: (CapturedAccount, CapturedAccount) throws -> Bool,
+    mergingExisting merge: (CapturedAccount, CapturedAccount) throws -> CapturedAccount
+  ) throws -> CapturedAccount {
     try Self.mutationLock.withLock {
-      // The public best-effort lookup intentionally hides keychain failures
-      // for UI reads, but doing that here could let a stale candidate overwrite
-      // a fresher stored refresh-token pair without invoking `merge`.
-      let existing = try loadAccount(id: candidate.id)
-      let resolved = try existing.map { try merge($0, candidate) } ?? candidate
+      let candidates = try registeredAccountsUnlocked(for: candidate.provider).filter {
+        if $0.id == candidate.id { return true }
+        return try matches($0, candidate)
+      }
+      guard candidates.count <= 1 else {
+        throw CapturedAccountStoreError.ambiguousIdentity
+      }
+      let existing = candidates.first
+      var insert = candidate
+      if let existing {
+        insert.id = existing.id
+      }
+      var resolved = try existing.map { try merge($0, insert) } ?? insert
+      if let existing {
+        resolved.id = existing.id
+        resolved.provider = existing.provider
+      }
       var ids = try indexIDs() ?? []
       if !ids.contains(resolved.id) {
         ids.append(resolved.id)
@@ -149,137 +196,39 @@ public struct CapturedAccountStore: Sendable {
   /// a check-then-write (e.g. a stale-token guard) can't race a concurrent
   /// capture or refresh into clobbering the newer pair.
   public func updatePayload(id: String, transform: (Data) throws -> Data) throws {
-    try updatePayload(id: id, claudeOAuthAccount: nil, transform: transform)
+    try updatePayload(
+      id: id,
+      claudeOAuthAccount: nil,
+      claudeAccountIdentity: nil,
+      transform: transform
+    )
   }
 
   public func updatePayload(
     id: String,
     claudeOAuthAccount: Data?,
+    claudeAccountIdentity: ClaudeAccountIdentity? = nil,
     transform: (Data) throws -> Data
   ) throws {
     try Self.mutationLock.withLock {
-      guard var account = account(id: id) else {
+      guard var account = try loadAccount(id: id) else {
         throw KeychainItemStore.KeychainError.commandFailed(status: 44)
       }
       account.payload = try transform(account.payload)
       if account.provider == .claude, let claudeOAuthAccount {
         account.claudeOAuthAccount = claudeOAuthAccount
       }
+      if account.provider == .claude, let claudeAccountIdentity {
+        if let stored = account.claudeAccountIdentity {
+          guard let merged = stored.merged(with: claudeAccountIdentity) else {
+            throw CapturedAccountStoreError.conflictingClaudeIdentity
+          }
+          account.claudeAccountIdentity = merged
+        } else {
+          account.claudeAccountIdentity = claudeAccountIdentity
+        }
+      }
       try keychain.write(encode(account), service: itemService(id))
-    }
-  }
-
-  /// Durable copy of a grant whose account-item write failed, so quitting
-  /// before the retry doesn't lose the only rotated pair. Its own keychain
-  /// item (never a file — secrets stay in the keychain), outside the index;
-  /// the account's removal cleans it up. Serialized with removal and gated
-  /// on the account still existing, so an in-flight refresh can't recreate
-  /// a pending blob for an account the user just removed.
-  public func savePendingGrant(_ data: Data, id: String) throws {
-    try Self.mutationLock.withLock {
-      do {
-        // Only a confirmed absence (a removed account) skips the write; a
-        // transient read failure must not drop the only fresh grant.
-        guard try keychain.read(service: itemService(id)) != nil else { return }
-      } catch {}
-      try keychain.write(data, service: pendingService(id))
-    }
-  }
-
-  public func pendingGrantData(id: String) -> Data? {
-    try? loadPendingGrantData(id: id)
-  }
-
-  /// Safety-critical pending-grant read. Unlike `pendingGrantData`, this
-  /// distinguishes a missing item from a keychain failure so a caller never
-  /// falls back to an older, already-consumed credential pair by accident.
-  public func loadPendingGrantData(id: String) throws -> Data? {
-    try keychain.read(service: pendingService(id))
-  }
-
-  public func removePendingGrant(id: String) throws {
-    try Self.mutationLock.withLock {
-      try keychain.delete(service: pendingService(id))
-    }
-  }
-
-  /// Installs a recovery grant only when no different recovery is already in
-  /// flight for the account. A linked live refresh must never overwrite an
-  /// unrelated saved-account rotation that owns the same pending slot.
-  @discardableResult
-  public func savePendingGrantIfAbsent(_ data: Data, id: String) throws -> Bool {
-    try Self.mutationLock.withLock {
-      if let current = try keychain.read(service: pendingService(id)) {
-        return current == data
-      }
-      guard try keychain.read(service: itemService(id)) != nil else { return false }
-      try keychain.write(data, service: pendingService(id))
-      return true
-    }
-  }
-
-  /// Installs recovery data for a live credential source that has no captured
-  /// account item to anchor it. The caller owns the namespaced id and must
-  /// compare-and-delete the item after the source accepts the grant or moves
-  /// to another login. Keeping this separate from `savePendingGrantIfAbsent`
-  /// preserves the latter's removal guard for user-managed saved accounts.
-  @discardableResult
-  func saveLivePendingGrantIfAbsent(_ data: Data, id: String) throws -> Bool {
-    try Self.mutationLock.withLock {
-      if let current = try keychain.read(service: pendingService(id)) {
-        return current == data
-      }
-      try keychain.write(data, service: pendingService(id))
-      return true
-    }
-  }
-
-  /// Compare-and-delete for a recovery that was previously read or created.
-  /// A newer concurrent pending grant survives instead of being mistaken for
-  /// the one this caller just resolved.
-  @discardableResult
-  public func removePendingGrant(id: String, matching expected: Data) throws -> Bool {
-    try Self.mutationLock.withLock {
-      guard let current = try keychain.read(service: pendingService(id)), current == expected else {
-        return false
-      }
-      try keychain.delete(service: pendingService(id))
-      return true
-    }
-  }
-
-  /// Typed callers can compare decoded grants atomically. JSON object key
-  /// ordering is not stable across encoders or app versions, so safety-
-  /// critical compare-and-delete must not depend only on byte equality.
-  @discardableResult
-  public func removePendingGrant(
-    id: String,
-    when matches: (Data) throws -> Bool
-  ) throws -> Bool {
-    try Self.mutationLock.withLock {
-      guard let current = try keychain.read(service: pendingService(id)), try matches(current) else {
-        return false
-      }
-      try keychain.delete(service: pendingService(id))
-      return true
-    }
-  }
-
-  /// Compare-and-replace for a recovery item whose metadata advances while
-  /// retaining the same grant. A concurrent owner wins instead of being
-  /// overwritten by a stale account-switch snapshot.
-  @discardableResult
-  func replacePendingGrant(
-    id: String,
-    when matches: (Data) throws -> Bool,
-    with replacement: Data
-  ) throws -> Bool {
-    try Self.mutationLock.withLock {
-      guard let current = try keychain.read(service: pendingService(id)), try matches(current) else {
-        return false
-      }
-      try keychain.write(replacement, service: pendingService(id))
-      return true
     }
   }
 
@@ -315,13 +264,37 @@ public struct CapturedAccountStore: Sendable {
     return try? JSONDecoder().decode(CapturedAccount.self, from: data)
   }
 
-  private func strictlyLoadRegisteredAccount(id: String) throws -> CapturedAccount {
-    guard let data = try keychain.read(service: itemService(id)),
-          let account = try? JSONDecoder().decode(CapturedAccount.self, from: data)
-    else {
-      throw RegisteredAccountReadError.unavailable(id)
+  /// Strictly reads provider rows and repairs only confirmed dangling index
+  /// entries. This lets a UUID-based insert retry after an account-item write
+  /// failure without treating a keychain read error as absence.
+  private func registeredAccountsUnlocked(for provider: UsageProvider) throws -> [CapturedAccount] {
+    let ids = try indexIDs() ?? []
+    var danglingIDs = Set<String>()
+    var accounts: [CapturedAccount] = []
+    for id in ids {
+      if let indexedProvider = Self.provider(encodedIn: id), indexedProvider != provider {
+        continue
+      }
+      guard let data = try keychain.read(service: itemService(id)) else {
+        danglingIDs.insert(id)
+        continue
+      }
+      guard let account = try? JSONDecoder().decode(CapturedAccount.self, from: data) else {
+        throw RegisteredAccountReadError.unavailable(id)
+      }
+      if account.provider == provider {
+        accounts.append(account)
+      }
     }
-    return account
+    if !danglingIDs.isEmpty {
+      let repaired = ids.filter { !danglingIDs.contains($0) }
+      if repaired.isEmpty {
+        try keychain.delete(service: indexService)
+      } else {
+        try writeIndex(repaired)
+      }
+    }
+    return accounts
   }
 
   private func writeIndex(_ ids: [String]) throws {
@@ -340,11 +313,11 @@ public struct CapturedAccountStore: Sendable {
     return try encoder.encode(account)
   }
 
-  private func itemService(_ id: String) -> String {
+  func itemService(_ id: String) -> String {
     "\(itemPrefix).\(id)"
   }
 
-  private func pendingService(_ id: String) -> String {
+  func pendingService(_ id: String) -> String {
     "\(itemPrefix).pending.\(id)"
   }
 

@@ -45,7 +45,8 @@ extension AccountSwitchService {
     origin: ProviderCredentialSource,
     now: Date,
     refreshingTargetID: String?,
-    claudeOAuthAccount: Data? = nil
+    claudeOAuthAccount: Data? = nil,
+    claudeAccountIdentity: ClaudeAccountIdentity? = nil
   ) throws -> Data? {
     try backUp(
       provider: .claude,
@@ -53,7 +54,8 @@ extension AccountSwitchService {
       origin: origin,
       now: now,
       refreshingTargetID: refreshingTargetID,
-      claudeOAuthAccount: claudeOAuthAccount
+      claudeOAuthAccount: claudeOAuthAccount,
+      claudeAccountIdentity: claudeAccountIdentity
     )
     return payload
   }
@@ -64,7 +66,8 @@ extension AccountSwitchService {
     origin: ProviderCredentialSource,
     now: Date,
     refreshingTargetID: String? = nil,
-    claudeOAuthAccount: Data? = nil
+    claudeOAuthAccount: Data? = nil,
+    claudeAccountIdentity: ClaudeAccountIdentity? = nil
   ) throws {
     guard let payload else { return }
     // Renewability — not a resolvable identity — is the bar: a renewable
@@ -88,7 +91,8 @@ extension AccountSwitchService {
           id: refreshingTargetID,
           provider: provider,
           payload: payload,
-          claudeOAuthAccount: claudeOAuthAccount
+          claudeOAuthAccount: claudeOAuthAccount,
+          claudeAccountIdentity: claudeAccountIdentity
         )
       } else {
         try capture.captureRawPayload(
@@ -97,6 +101,7 @@ extension AccountSwitchService {
           payload: payload,
           now: now,
           claudeOAuthAccount: claudeOAuthAccount,
+          claudeAccountIdentity: claudeAccountIdentity,
           preserveExistingClaudeOAuthAccount: provider == .claude
         )
       }

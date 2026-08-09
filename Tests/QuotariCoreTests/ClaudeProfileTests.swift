@@ -93,6 +93,56 @@ struct ClaudeProfileStoreTests {
   }
 }
 
+struct ClaudeAccountIdentityTests {
+  @Test func exactKeyNormalizesIdentifiersAndEmail() {
+    let identity = ClaudeAccountIdentity(
+      accountID: "  ACCOUNT-ID\n",
+      email: " User@Example.COM ",
+      organizationID: " ORG-ID "
+    )
+
+    #expect(identity.accountID == "account-id")
+    #expect(identity.email == "user@example.com")
+    #expect(identity.organizationID == "org-id")
+    #expect(identity.key == .account("account-id", organizationID: "org-id"))
+    #expect(identity.isStrong)
+  }
+
+  @Test func missingOrganizationIsNotAWildcardForAUUIDIdentity() {
+    let weak = ClaudeAccountIdentity(accountID: "account", email: "user@example.com")
+    let strong = ClaudeAccountIdentity(
+      accountID: "account",
+      email: "user@example.com",
+      organizationID: "organization"
+    )
+
+    #expect(weak.isUsable)
+    #expect(!weak.isStrong)
+    #expect(!weak.identifiesSameAccount(as: strong))
+  }
+
+  @Test func emailOnlyIdentityCannotBridgeToUUIDIdentity() {
+    let emailOnly = ClaudeAccountIdentity(email: "user@example.com", organizationID: "organization")
+    let uuidIdentity = ClaudeAccountIdentity(
+      accountID: "account",
+      email: "user@example.com",
+      organizationID: "organization"
+    )
+
+    #expect(emailOnly.key == .email("user@example.com", organizationID: "organization"))
+    #expect(!emailOnly.identifiesSameAccount(as: uuidIdentity))
+  }
+
+  @Test func organizationScopesOtherwiseIdenticalAccountUUIDs() {
+    let first = ClaudeAccountIdentity(accountID: "account", organizationID: "organization-a")
+    let second = ClaudeAccountIdentity(accountID: "account", organizationID: "organization-b")
+
+    #expect(first.isStrong)
+    #expect(second.isStrong)
+    #expect(!first.identifiesSameAccount(as: second))
+  }
+}
+
 private struct ProfileStubTransport: ProviderHTTPTransport {
   let body: Data
   let status: Int

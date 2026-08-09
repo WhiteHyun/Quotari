@@ -34,21 +34,54 @@ func makeClaudeLoginContext(
     credentialFileURL: credentialFileURL,
     discovery: discovery,
     capture: capture,
-    profiles: TokenClaudeProfileFetcher(profiles: [
-      "current-access": ClaudeProfile(accountID: "account-current", email: "current@example.com"),
-      "added-access": ClaudeProfile(accountID: "account-added", email: "added@example.com"),
-      "reauthenticated-access": ClaudeProfile(accountID: "account-current", email: "current@example.com"),
-      "saved-other-access": ClaudeProfile(accountID: "account-other", email: "other@example.com"),
-      "saved-other-reauthenticated-access": ClaudeProfile(
-        accountID: "account-other",
-        email: "other@example.com"
-      ),
-      "interrupted-access": ClaudeProfile(accountID: "account-interrupted", email: "interrupted@example.com"),
-      "intervening-access": ClaudeProfile(accountID: "account-intervening", email: "intervening@example.com"),
-      "rotated-current-access": ClaudeProfile(accountID: "account-current", email: "current@example.com"),
-      "organization-only-access": ClaudeProfile(organizationName: "Example Organization"),
-    ])
+    profiles: TokenClaudeProfileFetcher(profiles: claudeLoginProfiles())
   )
+}
+
+private func claudeLoginProfiles() -> [String: ClaudeProfile] {
+  [
+    "current-access": ClaudeProfile(
+      accountID: "account-current",
+      email: "current@example.com",
+      organizationID: "organization-current"
+    ),
+    "added-access": ClaudeProfile(
+      accountID: "account-added",
+      email: "added@example.com",
+      organizationID: "organization-added"
+    ),
+    "reauthenticated-access": ClaudeProfile(
+      accountID: "account-current",
+      email: "current@example.com",
+      organizationID: "organization-current"
+    ),
+    "saved-other-access": ClaudeProfile(
+      accountID: "account-other",
+      email: "other@example.com",
+      organizationID: "organization-other"
+    ),
+    "saved-other-reauthenticated-access": ClaudeProfile(
+      accountID: "account-other",
+      email: "other@example.com",
+      organizationID: "organization-other"
+    ),
+    "interrupted-access": ClaudeProfile(
+      accountID: "account-interrupted",
+      email: "interrupted@example.com",
+      organizationID: "organization-interrupted"
+    ),
+    "intervening-access": ClaudeProfile(
+      accountID: "account-intervening",
+      email: "intervening@example.com",
+      organizationID: "organization-intervening"
+    ),
+    "rotated-current-access": ClaudeProfile(
+      accountID: "account-current",
+      email: "current@example.com",
+      organizationID: "organization-current"
+    ),
+    "organization-only-access": ClaudeProfile(organizationName: "Example Organization"),
+  ]
 }
 
 enum InitialClaudeLoginSource {
@@ -164,6 +197,16 @@ final class ClaudeLoginIntBox: @unchecked Sendable {
   }
 }
 
+final class ClaudeLoginStringBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage: String?
+
+  var value: String? {
+    get { lock.withLock { storage } }
+    set { lock.withLock { storage = newValue } }
+  }
+}
+
 func countingClaudeDescriptor(
   strategy: AutomaticCaptureCountingStrategy
 ) -> ProviderDescriptor {
@@ -176,6 +219,37 @@ func countingClaudeDescriptor(
     ),
     pipeline: ProviderFetchPipeline { _ in [strategy] }
   )
+}
+
+func deadDuplicateClaudeLoginDescriptor(ids: Set<String>) -> ProviderDescriptor {
+  ProviderDescriptor(
+    id: .claude,
+    metadata: ProviderMetadata(
+      displayName: "Claude",
+      accent: .init(0.8, 0.5, 0.2),
+      supportsWeekly: true
+    ),
+    pipeline: ProviderFetchPipeline { _ in
+      [DeadDuplicateClaudeLoginStrategy(ids: ids)]
+    }
+  )
+}
+
+private struct DeadDuplicateClaudeLoginStrategy: ProviderFetchStrategy {
+  let id = "dead-duplicate-login"
+  let kind = ProviderFetchKind.oauth
+  let ids: Set<String>
+
+  func fetch(_ context: ProviderFetchContext) async throws -> ProviderFetchResult {
+    if case let .quotariRegistry(id) = context.account?.credentialSource,
+       ids.contains(id) {
+      throw ClaudeTokenRefreshError.reauthenticationRequired
+    }
+    return ProviderFetchResult(
+      usage: UsageSnapshot(provider: context.provider, updatedAt: context.now),
+      sourceLabel: "Stub"
+    )
+  }
 }
 
 actor AccountLoginGatedClaudeProfileFetcher: ClaudeProfileFetching {

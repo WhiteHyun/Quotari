@@ -50,14 +50,6 @@ extension UsageStore {
     }
   }
 
-  /// Removes the hidden saved copy of a live login — its registry row is
-  /// suppressed while the identity is live. Product policy keeps every scanned
-  /// live login managed, so removal is blocked until its CLI slot is switched
-  /// to another account or logged out.
-  func removeCapturedCopy(of account: ProviderAccount) async {
-    captureErrors[account.provider] = Self.activeAccountRemovalMessage
-  }
-
   /// Claude refresh-token fingerprints cannot identify an unrenewable live
   /// slot: the saved row hashes its refresh token while the live row falls back
   /// to its access token. Only verified current profiles can prove such a row
@@ -77,7 +69,7 @@ extension UsageStore {
     guard let savedProfile = await currentVerifiedClaudeProfile(for: saved) else { return true }
     for live in liveAccounts {
       guard let liveProfile = await currentVerifiedClaudeProfile(for: live) else { return true }
-      if savedProfile.identifiesSameAccount(as: liveProfile) {
+      if savedProfile.stronglyIdentifiesSameAccount(as: liveProfile) {
         return true
       }
     }
@@ -86,7 +78,7 @@ extension UsageStore {
 
   private func currentVerifiedClaudeProfile(for account: ProviderAccount) async -> ClaudeProfile? {
     guard let profile = claudeProfiles[account.id],
-          profile.hasStableAccountIdentity,
+          profile.hasStrongAccountIdentity,
           let expectedFingerprint = profile.fingerprint
     else { return nil }
     let loader = claudeCredentialLoader
@@ -201,27 +193,21 @@ extension UsageStore {
   /// Claude's refresh token rotates, so its credential fingerprint cannot by
   /// itself prove that a freshly backed-up live slot is the saved account the
   /// user picked. A profile is accepted only when its fingerprint still
-  /// matches the source's current access token; UUID is preferred and email
-  /// is the fallback stable identity. Passing only a verified source lets the
-  /// switch refresh that registry id in place instead of reinstalling its
-  /// now-consumed token pair.
+  /// matches the source's current access token. Updating a saved row in place
+  /// is destructive, so both profiles must also carry the same account UUID
+  /// and organization UUID. Passing only that verified source lets the switch
+  /// refresh the registry id instead of reinstalling its consumed token pair.
   private func knownLiveTarget(for saved: ProviderAccount) -> KnownLiveClaudeTarget? {
     guard saved.provider == .claude else { return nil }
-    guard let savedProfile = verifiedClaudeProfile(for: saved) else { return nil }
+    guard let savedProfile = verifiedClaudeProfile(for: saved),
+          savedProfile.hasStrongAccountIdentity
+    else { return nil }
     let matches = (accounts[.claude] ?? []).compactMap { live -> (ProviderAccount, ClaudeProfile)? in
       guard !live.credentialSource.isCaptured,
-            let liveProfile = verifiedClaudeProfile(for: live)
+            let liveProfile = verifiedClaudeProfile(for: live),
+            savedProfile.stronglyIdentifiesSameAccount(as: liveProfile)
       else { return nil }
-      if let savedID = savedProfile.accountID, !savedID.isEmpty,
-         let liveID = liveProfile.accountID, !liveID.isEmpty {
-        return savedID == liveID ? (live, liveProfile) : nil
-      }
-      guard let savedEmail = savedProfile.email, !savedEmail.isEmpty,
-            let liveEmail = liveProfile.email, !liveEmail.isEmpty
-      else { return nil }
-      return liveEmail.localizedCaseInsensitiveCompare(savedEmail) == .orderedSame
-        ? (live, liveProfile)
-        : nil
+      return (live, liveProfile)
     }
     let match = matches.first(where: { account, _ in
       if case .claudeKeychain = account.credentialSource {

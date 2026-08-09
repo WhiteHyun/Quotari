@@ -107,7 +107,7 @@ extension UsageStore {
       for: ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
     )
     let oauthAccount = currentClaudeOAuthAccount(for: profile, accountState: evidence.accountState)
-    if let saved = try await uniquelyMatchingSavedClaudeAccount(
+    if let saved = try await matchingSavedClaudeAccount(
       for: profile,
       previousClaudeLogin: previousClaudeLogin,
       registryBaseline: registryBaseline
@@ -132,7 +132,8 @@ extension UsageStore {
         origin: source,
         payload: payload,
         now: Date(),
-        claudeOAuthAccount: oauthAccount
+        claudeOAuthAccount: oauthAccount,
+        claudeAccountIdentity: verifiedProfile.accountIdentity
       )
     }.value
     guard let captured else { throw AddedAccountImportError.preservationFailed }

@@ -47,12 +47,13 @@ struct AccountSwitchWriteFailureTests {
     let live = try ClaudeCredentialsStore.parse(#require(slot.value))
     #expect(live.accessToken == "kc-tok")
     #expect(live.refreshToken == "kc-ref")
-    // Both prior logins were preserved before any write.
-    let fpKc = ProviderCredentialIdentity.claudeIdentity(refreshToken: "kc-ref", accessToken: "kc-tok")
-    let fpFile = ProviderCredentialIdentity.claudeIdentity(refreshToken: "file-ref", accessToken: "file-tok")
-    let ids = Set(registry.load().map(\.id))
-    #expect(ids.contains("claude:\(fpKc ?? "")"))
-    #expect(ids.contains("claude:\(fpFile ?? "")"))
+    // Both prior logins were preserved before any write. New Claude registry
+    // IDs are opaque, so locate each row by its saved credential instead.
+    let keychainBackup = try capturedClaudeAccount(registry: registry, refreshToken: "kc-ref")
+    let fileBackup = try capturedClaudeAccount(registry: registry, refreshToken: "file-ref")
+    #expect(keychainBackup.id.hasPrefix("claude:"))
+    #expect(fileBackup.id.hasPrefix("claude:"))
+    #expect(keychainBackup.id != fileBackup.id)
   }
 
   @Test func claudeCommitAndRollbackFailuresSurfaceAPartialSwitch() throws {

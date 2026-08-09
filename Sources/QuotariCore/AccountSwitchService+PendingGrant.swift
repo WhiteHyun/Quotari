@@ -11,6 +11,7 @@ extension AccountSwitchService {
     var registryID: String
     var now: Date
     var knownLiveTarget: KnownLiveClaudeTarget?
+    var verifiedLiveIdentity: VerifiedLiveClaudeIdentity?
   }
 
   struct ClaudeLiveSnapshot {

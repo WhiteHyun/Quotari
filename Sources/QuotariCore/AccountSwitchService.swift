@@ -189,9 +189,8 @@ extension AccountSwitchService {
     let fileSource = ProviderCredentialSource.claudeCredentialsFile(path: fileURL.standardizedFileURL.path)
     let sources = [keychainSource, fileSource]
     let context = ClaudeBackupContext(
-      registryID: registryID,
-      now: now,
-      knownLiveTarget: knownLiveTarget
+      registryID: registryID, now: now,
+      knownLiveTarget: knownLiveTarget, verifiedLiveIdentity: verifiedLiveIdentity
     )
 
     // Snapshot/decode both source-scoped recovery items before any registry
@@ -296,8 +295,8 @@ extension AccountSwitchService {
       try? ClaudeCredentialsStore.parse($0)
     } != nil
     // Refresh the explicitly verified row before capturing a matching mirror.
-    // Its newly rotated identity then makes the mirror converge on that row
-    // instead of creating a duplicate under the refresh-token fingerprint.
+    // The verified profile identity then makes the mirror converge on that
+    // immutable local row instead of creating another UUID-backed row.
     if context.knownLiveTarget?.source == fileSource {
       let file = try backedUpClaudeSlot(
         slots.file,
@@ -345,6 +344,11 @@ extension AccountSwitchService {
       source: source,
       knownLiveTarget: context.knownLiveTarget
     )
+    let claudeAccountIdentity = verifiedClaudeAccountIdentity(
+      payload: verificationPayload,
+      source: source,
+      evidence: context.verifiedLiveIdentity
+    )
     return try backedUpSlot(
       payload,
       origin: source,
@@ -352,8 +356,24 @@ extension AccountSwitchService {
       refreshingTargetID: refreshingTargetID,
       // A known target proves the credential generation, not that the
       // terminal state beside it is current. Keep its trusted saved identity.
-      claudeOAuthAccount: refreshingTargetID == nil ? claudeOAuthAccount : nil
+      claudeOAuthAccount: refreshingTargetID == nil ? claudeOAuthAccount : nil,
+      claudeAccountIdentity: claudeAccountIdentity
     )
+  }
+
+  private func verifiedClaudeAccountIdentity(
+    payload: Data?,
+    source: ProviderCredentialSource,
+    evidence: VerifiedLiveClaudeIdentity?
+  ) -> ClaudeAccountIdentity? {
+    guard let evidence, evidence.source == source,
+          evidence.profile.fingerprint == evidence.accessTokenFingerprint,
+          let payload,
+          let credentials = try? ClaudeCredentialsStore.parse(payload),
+          ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
+          == evidence.accessTokenFingerprint
+    else { return nil }
+    return evidence.profile.accountIdentity
   }
 
   /// Source equality alone is not identity proof: an external relogin can

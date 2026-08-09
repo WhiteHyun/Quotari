@@ -49,7 +49,11 @@ private func makePinnedExpiredSavedClaudeFixture() throws -> PinnedExpiredSavedC
     provider: .claude,
     source: .quotariRegistry(id: "claude:expired")
   )
-  let profile = ClaudeProfile(accountID: "same-account", email: "same@example.com")
+  let profile = ClaudeProfile(
+    accountID: "same-account",
+    email: "same@example.com",
+    organizationID: "same-organization"
+  )
   try profileStore.save([
     savedAccountID: profile.verified(
       for: ProviderCredentialIdentity.fingerprint(of: "saved-expired-access")
@@ -74,14 +78,7 @@ private func makePinnedExpiredSavedClaudeFixture() throws -> PinnedExpiredSavedC
     ]),
     profileStore: profileStore,
     claudeCredentialLoader: { source in
-      switch source {
-      case .claudeKeychain:
-        try? ClaudeCredentialsStore.parse(livePayload)
-      case let .quotariRegistry(id):
-        registry.account(id: id).flatMap { try? ClaudeCredentialsStore.parse($0.payload) }
-      case .codexAuthFile, .codexKeychain, .claudeEnvironment, .claudeCredentialsFile:
-        nil
-      }
+      automaticCaptureClaudeCredentials(source: source, keychainPayload: livePayload, registry: registry)
     },
     startsAutomatically: false
   )
@@ -148,18 +145,19 @@ private func makeExpiredSavedClaudeFixture() throws -> ExpiredSavedClaudeFixture
     ),
     automaticallyCapturesDiscoveredAccounts: true,
     profileFetcher: TokenClaudeProfileFetcher(profiles: [
-      "saved-fresh-access": ClaudeProfile(accountID: "saved-account", email: "saved@example.com"),
-      "live-access": ClaudeProfile(accountID: "live-account", email: "live@example.com"),
+      "saved-fresh-access": ClaudeProfile(
+        accountID: "saved-account",
+        email: "saved@example.com",
+        organizationID: "saved-organization"
+      ),
+      "live-access": ClaudeProfile(
+        accountID: "live-account",
+        email: "live@example.com",
+        organizationID: "live-organization"
+      ),
     ]),
     claudeCredentialLoader: { source in
-      switch source {
-      case .claudeKeychain:
-        try? ClaudeCredentialsStore.parse(livePayload)
-      case let .quotariRegistry(id):
-        registry.account(id: id).flatMap { try? ClaudeCredentialsStore.parse($0.payload) }
-      case .codexAuthFile, .codexKeychain, .claudeEnvironment, .claudeCredentialsFile:
-        nil
-      }
+      automaticCaptureClaudeCredentials(source: source, keychainPayload: livePayload, registry: registry)
     },
     startsAutomatically: false
   )

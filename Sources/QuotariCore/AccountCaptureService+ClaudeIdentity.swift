@@ -1,6 +1,27 @@
 import Foundation
 
 public extension AccountCaptureService {
+  /// Persists verified profile identity on a legacy row without changing its
+  /// immutable local id or credential generation.
+  @discardableResult
+  func recordClaudeAccountIdentity(
+    id: String,
+    identity: ClaudeAccountIdentity
+  ) throws -> CapturedAccount {
+    guard capturedAccounts.account(id: id)?.provider == .claude else {
+      throw AccountCaptureError.payloadUnavailable
+    }
+    try capturedAccounts.updatePayload(
+      id: id,
+      claudeOAuthAccount: nil,
+      claudeAccountIdentity: identity
+    ) { $0 }
+    guard let captured = capturedAccounts.account(id: id) else {
+      throw AccountCaptureError.payloadUnavailable
+    }
+    return captured
+  }
+
   /// Captures the exact Claude payload whose access token established the
   /// stable profile match. Reading and validating once prevents a replaced
   /// slot from receiving the previous login's profile.
@@ -8,6 +29,7 @@ public extension AccountCaptureService {
   func captureClaudeAccount(
     _ account: ProviderAccount,
     expectedAccessTokenFingerprint: String,
+    profile: ClaudeProfile,
     now: Date
   ) throws -> CapturedAccount {
     guard account.provider == .claude,
@@ -23,7 +45,8 @@ public extension AccountCaptureService {
       provider: .claude,
       origin: account.credentialSource,
       payload: rawPayload,
-      now: now
+      now: now,
+      claudeAccountIdentity: profile.accountIdentity
     ) else { throw AccountCaptureError.payloadUnavailable }
     return captured
   }
@@ -37,7 +60,8 @@ public extension AccountCaptureService {
   func refreshCapturedClaudeAccount(
     id: String,
     from account: ProviderAccount,
-    expectedAccessTokenFingerprint: String
+    expectedAccessTokenFingerprint: String,
+    profile: ClaudeProfile
   ) throws -> CapturedAccount {
     guard account.provider == .claude,
           !account.credentialSource.isCaptured,
@@ -49,6 +73,7 @@ public extension AccountCaptureService {
       id: id,
       provider: .claude,
       payload: rawPayload,
+      claudeAccountIdentity: profile.accountIdentity,
       requiresNewerGenerationEvidence: true
     )
   }

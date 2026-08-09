@@ -262,7 +262,7 @@ extension UsageStore {
       // stable identity requires profile verification; a slot replacement
       // during that work remains an explicit "scan again" failure.
       let discoveryChanged = Set(accounts.map(\.credentialScopeID)) != previousCredentialScopes
-      guard capture.didCapture || (provider == .codex && discoveryChanged) else { break }
+      guard capture.didChangeRegistry || (provider == .codex && discoveryChanged) else { break }
     }
     accounts.removeAll { verifiedDuplicateCredentialScopeIDs.contains($0.credentialScopeID) }
     return ProviderAccountReload(

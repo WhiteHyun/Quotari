@@ -61,6 +61,49 @@ struct UsageStoreClaudeSwitchIdentityTests {
       profile: ClaudeProfile(accountID: "saved", email: "saved@example.com")
     ))
   }
+
+  @Test func sameAccountUUIDInAnotherOrganizationBacksUpSeparately() async throws {
+    let fixture = try ClaudeSwitchIdentityFixture()
+    let livePayload = Data(
+      #"{"claudeAiOauth":{"accessToken":"live","refreshToken":"live-ref","expiresAt":9999999999999}}"#.utf8
+    )
+    fixture.keychain.value = livePayload
+    fixture.publishLiveAccounts()
+    await fixture.store.reloadAccounts()
+    fixture.store.claudeProfiles[fixture.savedAccount.id] = ClaudeProfile(
+      accountID: "shared-account",
+      email: "shared@example.com",
+      organizationID: "saved-organization",
+      fingerprint: ProviderCredentialIdentity.fingerprint(of: "s")
+    )
+    fixture.store.claudeProfiles[fixture.liveKeychain.id] = ClaudeProfile(
+      accountID: "shared-account",
+      email: "shared@example.com",
+      organizationID: "live-organization",
+      fingerprint: ProviderCredentialIdentity.fingerprint(of: "live")
+    )
+
+    await fixture.store.switchCLIAccount(to: fixture.savedAccount)
+
+    let captured = fixture.registry.load()
+    let saved = try #require(captured.first(where: { $0.id == "claude:fp-saved" }))
+    #expect(saved.payload == fixture.savedPayload)
+    let backup = try #require(captured.first(where: { account in
+      guard account.id != saved.id,
+            let credentials = try? ClaudeCredentialsStore.parse(account.payload)
+      else { return false }
+      return credentials.accessToken == "live" && credentials.refreshToken == "live-ref"
+    }))
+    #expect(
+      backup.claudeAccountIdentity == ClaudeAccountIdentity(
+        accountID: "shared-account", email: "shared@example.com", organizationID: "live-organization"
+      )
+    )
+    let installedCredentials = try ClaudeCredentialsStore.parse(#require(fixture.keychain.value))
+    #expect(installedCredentials.accessToken == "s")
+    #expect(installedCredentials.refreshToken == "s-ref")
+    await fixture.delay.resumeAll()
+  }
 }
 
 @MainActor
@@ -179,8 +222,15 @@ private func claudeSwitchIdentityStore(
       }
     ),
     claudeCredentialLoader: { source in
-      guard case .quotariRegistry(id: "claude:fp-saved") = source else { return nil }
-      return try? ClaudeCredentialsStore.parse(context.savedPayload)
+      let payload: Data? = switch source {
+      case .claudeKeychain:
+        context.keychain.value
+      case let .quotariRegistry(id):
+        context.registry.account(id: id)?.payload
+      case .codexAuthFile, .codexKeychain, .claudeCredentialsFile, .claudeEnvironment:
+        nil
+      }
+      return payload.flatMap { try? ClaudeCredentialsStore.parse($0) }
     },
     postCredentialRefreshSleep: postCredentialRefreshSleep,
     startsAutomatically: false

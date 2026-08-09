@@ -41,12 +41,14 @@ struct UsageStoreClaudeAccountLoginTests {
 
   @Test func reauthenticatingTheCurrentAccountRefreshesItsSavedCopy() async throws {
     let context = try makeClaudeLoginContext()
+    let preservedID = ClaudeLoginStringBox()
     let reauthenticated = claudePayload(
       accessToken: "reauthenticated-access",
       refreshToken: "reauthenticated-refresh"
     )
     let login = AccountLoginService { provider in
       #expect(context.registry.load().count == 1)
+      preservedID.value = context.registry.load().first?.id
       context.liveCredential.value = reauthenticated
       return AccountLoginResult(
         provider: provider,
@@ -61,9 +63,67 @@ struct UsageStoreClaudeAccountLoginTests {
     let saved = try #require(context.registry.load().first)
     let credentials = try ClaudeCredentialsStore.parse(saved.payload)
     #expect(context.registry.load().count == 1)
+    #expect(saved.id == preservedID.value)
     #expect(credentials.accessToken == "reauthenticated-access")
     #expect(credentials.refreshToken == "reauthenticated-refresh")
+    #expect(saved.claudeAccountIdentity == ClaudeAccountIdentity(
+      accountID: "account-current",
+      email: "current@example.com",
+      organizationID: "organization-current"
+    ))
     #expect(store.monitoredAccounts[.claude]?.count == 1)
+    #expect(store.accountLoginErrors[.claude] == nil)
+  }
+
+  @Test func reauthenticationConvergesPersistedAllDeadDuplicates() async throws {
+    let context = try makeClaudeLoginContext(source: .none)
+    let identity = ClaudeAccountIdentity(
+      accountID: "account-current",
+      email: "current@example.com",
+      organizationID: "organization-current"
+    )
+    for (id, token, capturedAt) in [
+      ("claude:dead-a", "dead-a", 200.0),
+      ("claude:dead-b", "dead-b", 100.0),
+    ] {
+      try context.registry.save(CapturedAccount(
+        id: id,
+        provider: .claude,
+        displayName: "Claude Code",
+        detail: "Saved in Quotari",
+        capturedAt: Date(timeIntervalSince1970: capturedAt),
+        origin: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+        payload: claudePayload(
+          accessToken: "\(token)-access",
+          refreshToken: "\(token)-refresh",
+          expiresAt: Date(timeIntervalSince1970: 0)
+        ),
+        claudeAccountIdentity: identity
+      ))
+    }
+    let reauthenticated = claudePayload(
+      accessToken: "reauthenticated-access",
+      refreshToken: "reauthenticated-refresh"
+    )
+    let login = AccountLoginService { provider in
+      context.liveCredential.value = reauthenticated
+      return AccountLoginResult(
+        provider: provider,
+        origin: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+        payload: reauthenticated
+      )
+    }
+    let store = context.makeStore(
+      login: login,
+      descriptor: deadDuplicateClaudeLoginDescriptor(ids: ["claude:dead-a", "claude:dead-b"])
+    )
+
+    await store.addAccount(for: .claude)
+
+    let saved = try #require(context.registry.load().first)
+    #expect(context.registry.load().map(\.id) == ["claude:dead-a"])
+    #expect(try ClaudeCredentialsStore.parse(saved.payload).accessToken == "reauthenticated-access")
+    #expect(saved.claudeAccountIdentity == identity)
     #expect(store.accountLoginErrors[.claude] == nil)
   }
 
@@ -131,11 +191,60 @@ struct UsageStoreClaudeAccountLoginTests {
     let saved = try #require(context.registry.account(id: existing.id))
     let credentials = try ClaudeCredentialsStore.parse(saved.payload)
     #expect(context.registry.load().count == 2)
+    #expect(saved.id == existing.id)
     #expect(credentials.accessToken == "saved-other-reauthenticated-access")
     #expect(credentials.refreshToken == "saved-other-reauthenticated-refresh")
+    #expect(saved.claudeAccountIdentity == ClaudeAccountIdentity(
+      accountID: "account-other",
+      email: "other@example.com",
+      organizationID: "organization-other"
+    ))
     #expect(store.accountLoginErrors[.claude] == nil)
   }
 
+  @Test func weakRotatedLoginDoesNotOverwriteTheStrongSavedAccount() async throws {
+    let context = try makeClaudeLoginContext()
+    let weakPayload = claudePayload(
+      accessToken: "weak-rotated-access",
+      refreshToken: "weak-rotated-refresh"
+    )
+    let login = AccountLoginService { provider in
+      context.liveCredential.value = weakPayload
+      return AccountLoginResult(
+        provider: provider,
+        origin: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+        payload: weakPayload
+      )
+    }
+    let profiles = TokenClaudeProfileFetcher(profiles: [
+      "current-access": ClaudeProfile(
+        accountID: "account-current",
+        email: "current@example.com",
+        organizationID: "organization-current"
+      ),
+      "weak-rotated-access": ClaudeProfile(
+        accountID: "account-current",
+        email: "current@example.com"
+      ),
+    ])
+    let store = context.makeStore(login: login, profileFetcher: profiles)
+
+    await store.addAccount(for: .claude)
+
+    let saved = context.registry.load()
+    #expect(saved.count == 2)
+    let strong = try #require(saved.first(where: { $0.claudeAccountIdentity?.isStrong == true }))
+    let weak = try #require(saved.first(where: { $0.claudeAccountIdentity?.isStrong != true }))
+    let strongCredentials = try ClaudeCredentialsStore.parse(strong.payload)
+    let weakCredentials = try ClaudeCredentialsStore.parse(weak.payload)
+    #expect(strongCredentials.accessToken == "current-access")
+    #expect(weakCredentials.accessToken == "weak-rotated-access")
+    #expect(store.accountLoginErrors[.claude] == nil)
+  }
+}
+
+@MainActor
+struct UsageStoreClaudeAccountLoginFailureTests {
   @Test func failedLoginRetainsTheWrittenCredentialAndRestoresThePreservedCLISlot() async throws {
     let context = try makeClaudeLoginContext()
     let interruptedPayload = claudePayload(

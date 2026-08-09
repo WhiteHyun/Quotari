@@ -12,7 +12,6 @@ enum AddedAccountImportError: LocalizedError {
   case savedCopyUnverified
   case savedIdentityUnverified
   case savedRegistryIdentityUnverified
-  case ambiguousSavedIdentity
   case identityVerificationFailed
   case notRenewable
   case registrySnapshotFailed
@@ -33,10 +32,6 @@ enum AddedAccountImportError: LocalizedError {
     case .savedRegistryIdentityUnverified:
       L10n.string(
         "Quotari couldn’t verify every saved Claude account, so it did not create a potentially duplicate account."
-      )
-    case .ambiguousSavedIdentity:
-      L10n.string(
-        "More than one saved Claude account has this identity. Resolve the duplicate accounts before logging in again."
       )
     case .identityVerificationFailed:
       L10n.string("Quotari couldn’t verify the new Claude account identity, so it restored the previous login.")

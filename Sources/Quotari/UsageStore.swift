@@ -86,7 +86,7 @@ final class UsageStore {
   let costEstimator: any UsageCostEstimating
   let usageInsightsChangeMonitor: any UsageInsightsChangeMonitoring
   let accountDiscovery: any ProviderAccountDiscovering
-  private let accountSelectionStore: ProviderAccountSelectionStore
+  let accountSelectionStore: ProviderAccountSelectionStore
   let accountMonitoringStore: ProviderAccountMonitoringStore
   let accountCapture: AccountCaptureService
   let accountLogin: AccountLoginService

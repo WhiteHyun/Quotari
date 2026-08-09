@@ -2,6 +2,22 @@ import Foundation
 @testable import Quotari
 @testable import QuotariCore
 
+extension UsageStore {
+  func automaticCapturePlans(
+    for candidates: [ProviderAccount],
+    among accounts: [ProviderAccount],
+    provider: UsageProvider,
+    capturedCopies: [String: ProviderAccount] = [:]
+  ) async -> [String: AutomaticAccountCapturePlan] {
+    await automaticCapturePlanning(
+      for: candidates,
+      among: accounts,
+      provider: provider,
+      capturedCopies: capturedCopies
+    ).plans
+  }
+}
+
 struct AutomaticCaptureContext {
   let directory: TemporaryDirectory
   let home: URL
@@ -87,6 +103,22 @@ func claudePayload(
     #"{"claudeAiOauth":{"accessToken":"\#(accessToken)","refreshToken":"\#(refreshToken)","expiresAt":\#(milliseconds)}}"#
       .utf8
   )
+}
+
+func automaticCaptureClaudeCredentials(
+  source: ProviderCredentialSource,
+  keychainPayload: Data?,
+  registry: CapturedAccountStore
+) -> ClaudeCredentials? {
+  let payload: Data? = switch source {
+  case .claudeKeychain:
+    keychainPayload
+  case let .quotariRegistry(id):
+    registry.account(id: id)?.payload
+  case .claudeCredentialsFile, .claudeEnvironment, .codexAuthFile, .codexKeychain:
+    nil
+  }
+  return payload.flatMap { try? ClaudeCredentialsStore.parse($0) }
 }
 
 final class AutomaticCapturePayloadBox: @unchecked Sendable {
@@ -197,7 +229,11 @@ struct StableClaudeProfileFetcher: ClaudeProfileFetching {
   let email: String
 
   func fetchProfile(accessToken: String) async throws -> ClaudeProfile {
-    ClaudeProfile(accountID: accountID, email: email)
+    ClaudeProfile(
+      accountID: accountID,
+      email: email,
+      organizationID: "test-organization"
+    )
   }
 }
 

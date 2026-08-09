@@ -10,7 +10,11 @@ struct ClaudeAccountLoginRecoveryTests {
     let profiles = AccountLoginGatedClaudeProfileFetcher(
       gatedAccessToken: "current-access",
       profiles: [
-        "current-access": ClaudeProfile(accountID: "account-current", email: "current@example.com"),
+        "current-access": ClaudeProfile(
+          accountID: "account-current",
+          email: "current@example.com",
+          organizationID: "organization-current"
+        ),
       ]
     )
     let loginCalled = ClaudeLoginBooleanBox()

@@ -22,6 +22,7 @@ struct AccountSwitchClaudeBackupIdentityTests {
       #"{"oauthAccount":{"accountUuid":"live-id","emailAddress":"live@example.com"}}"#.utf8
     ).write(to: stateURL)
     let keychain = KeychainSlot(livePayload)
+    let profile = strongClaudeProfile("live")
     let service = AccountSwitchService(
       capturedAccounts: registry,
       capture: AccountCaptureService(capturedAccounts: registry, claudeKeychainRead: { _ in keychain.value }),
@@ -36,14 +37,15 @@ struct AccountSwitchClaudeBackupIdentityTests {
       to: saved.id,
       source: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
       accessToken: "live-tok",
-      profile: ClaudeProfile(accountID: "live-id", email: "live@example.com")
+      profile: profile
     )
 
-    let fingerprint = ProviderCredentialIdentity.claudeIdentity(
-      refreshToken: "live-ref",
-      accessToken: "live-tok"
+    let backedUp = try capturedClaudeAccount(
+      registry: registry,
+      refreshToken: "live-ref"
     )
-    let backedUp = try #require(registry.load().first { $0.id == "claude:\(fingerprint ?? "")" })
+    #expect(backedUp.id.hasPrefix("claude:"))
+    #expect(backedUp.claudeAccountIdentity == profile.accountIdentity)
     try expectClaudeIdentity(backedUp.claudeOAuthAccount, accountID: "live-id", email: "live@example.com")
 
     // No profile is supplied for the reverse switch: the exact identity must
@@ -75,6 +77,7 @@ struct AccountSwitchClaudeBackupIdentityTests {
       #"{"oauthAccount":{"accountUuid":"file-id","emailAddress":"file@example.com"}}"#.utf8
     ).write(to: stateURL)
     let keychain = KeychainSlot(Data(#"{"notClaudeOAuth":true}"#.utf8))
+    let profile = strongClaudeProfile("file")
     let service = AccountSwitchService(
       capturedAccounts: registry,
       capture: AccountCaptureService(capturedAccounts: registry, claudeKeychainRead: { _ in keychain.value }),
@@ -89,14 +92,15 @@ struct AccountSwitchClaudeBackupIdentityTests {
       to: saved.id,
       source: .claudeCredentialsFile(path: fileURL.standardizedFileURL.path),
       accessToken: "file-tok",
-      profile: ClaudeProfile(accountID: "file-id", email: "file@example.com")
+      profile: profile
     )
 
-    let fingerprint = ProviderCredentialIdentity.claudeIdentity(
-      refreshToken: "file-ref",
-      accessToken: "file-tok"
+    let backedUp = try capturedClaudeAccount(
+      registry: registry,
+      refreshToken: "file-ref"
     )
-    let backedUp = try #require(registry.load().first { $0.id == "claude:\(fingerprint ?? "")" })
+    #expect(backedUp.id.hasPrefix("claude:"))
+    #expect(backedUp.claudeAccountIdentity == profile.accountIdentity)
     try expectClaudeIdentity(backedUp.claudeOAuthAccount, accountID: "file-id", email: "file@example.com")
 
     try service.switchCLI(toRegistryAccount: backedUp.id, now: Date(timeIntervalSince1970: 6000))
@@ -153,7 +157,9 @@ struct AccountSwitchClaudeBackupIdentityTests {
       profile: ClaudeProfile(accountID: "saved-id", email: "saved@example.com")
     ))
   }
+}
 
+struct AccountSwitchClaudeBackupStateTests {
   @Test func switchBackupPreservesAnExistingIdentityOverStaleTerminalState() throws {
     let registry = makeSwitchRegistry()
     let switchTarget = try savedClaudeAccount(registry: registry)
@@ -220,6 +226,7 @@ struct AccountSwitchClaudeBackupIdentityTests {
     let targetPayload = claudeSwitchPayload(accessToken: "rotated-target", refreshToken: "rotated-target-ref")
     try targetPayload.write(to: fileURL)
     let otherPayload = claudeSwitchPayload(accessToken: "other-tok", refreshToken: "other-ref")
+    let otherProfile = strongClaudeProfile("other")
     let stateURL = home.appendingPathComponent(".claude.json")
     try Data(
       #"{"oauthAccount":{"accountUuid":"other-id","emailAddress":"other@example.com"}}"#.utf8
@@ -240,18 +247,18 @@ struct AccountSwitchClaudeBackupIdentityTests {
       verifiedLiveClaudeIdentity: verifiedClaudeLiveIdentity(
         source: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
         accessToken: "other-tok",
-        accountID: "other-id",
-        email: "other@example.com"
+        profile: otherProfile
       )
     )
 
-    let otherID = claudeSwitchRegistryID(accessToken: "other-tok", refreshToken: "other-ref")
+    let other = try capturedClaudeAccount(registry: registry, refreshToken: "other-ref")
+    #expect(other.claudeAccountIdentity == otherProfile.accountIdentity)
     try expectClaudeIdentity(
-      registry.account(id: otherID)?.claudeOAuthAccount,
+      other.claudeOAuthAccount,
       accountID: "other-id",
       email: "other@example.com"
     )
-    try service.switchCLI(toRegistryAccount: otherID, now: Date(timeIntervalSince1970: 6000))
+    try service.switchCLI(toRegistryAccount: other.id, now: Date(timeIntervalSince1970: 6000))
     try expectClaudeIdentity(
       ClaudeCodeAccountState.oauthAccount(from: Data(contentsOf: stateURL)),
       accountID: "other-id",
