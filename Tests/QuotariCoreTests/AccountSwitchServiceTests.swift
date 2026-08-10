@@ -187,9 +187,9 @@ struct AccountSwitchServiceTests {
       #expect((root?["claudeAiOauth"] as? [String: Any])?["accessToken"] as? String == "saved-tok")
       #expect((root?["mcpOAuth"] as? [String: Any])?.keys.contains("github") == true)
     }
-    // The previous login was captured under its refresh-token fingerprint.
-    let fingerprint = ProviderCredentialIdentity.claudeIdentity(refreshToken: "live-ref", accessToken: "live-tok")
-    #expect(registry.load().contains { $0.id == "claude:\(fingerprint ?? "")" })
+    // The previous login was captured under an opaque registry ID.
+    let backedUp = try capturedClaudeAccount(registry: registry, refreshToken: "live-ref")
+    #expect(backedUp.id.hasPrefix("claude:"))
   }
 
   @Test func switchAbortsWithTheSlotUntouchedWhenTheBackupWriteFails() throws {
@@ -317,11 +317,11 @@ struct AccountSwitchServiceTests {
 
     try service.switchCLI(toRegistryAccount: saved.id, now: Date(timeIntervalSince1970: 5000))
 
-    let fpA = ProviderCredentialIdentity.claudeIdentity(refreshToken: "ref-A", accessToken: "tok-A")
-    let fpB = ProviderCredentialIdentity.claudeIdentity(refreshToken: "ref-B", accessToken: "tok-B")
-    let ids = Set(registry.load().map(\.id))
-    #expect(ids.contains("claude:\(fpA ?? "")"))
-    #expect(ids.contains("claude:\(fpB ?? "")"))
+    let backupA = try capturedClaudeAccount(registry: registry, refreshToken: "ref-A")
+    let backupB = try capturedClaudeAccount(registry: registry, refreshToken: "ref-B")
+    #expect(backupA.id.hasPrefix("claude:"))
+    #expect(backupB.id.hasPrefix("claude:"))
+    #expect(backupA.id != backupB.id)
   }
 
   @Test func claudeSwitchRollsBackTheKeychainWhenTheFileWriteFails() throws {
@@ -361,7 +361,7 @@ struct AccountSwitchServiceTests {
     let restored = try JSONSerialization.jsonObject(with: #require(slot.value)) as? [String: Any]
     #expect((restored?["claudeAiOauth"] as? [String: Any])?["accessToken"] as? String == "live-tok")
     // The live login was still preserved.
-    let fp = ProviderCredentialIdentity.claudeIdentity(refreshToken: "live-ref", accessToken: "live-tok")
-    #expect(registry.load().contains { $0.id == "claude:\(fp ?? "")" })
+    let backedUp = try capturedClaudeAccount(registry: registry, refreshToken: "live-ref")
+    #expect(backedUp.id.hasPrefix("claude:"))
   }
 }

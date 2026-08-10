@@ -15,21 +15,67 @@ extension UsageStore {
     var profiles: [ResolvedSavedClaudeProfile] = []
     var hasUnresolvedProfile = false
     for captured in accounts {
-      if let resolution = await resolvedClaudeCaptureProfile(for: captured.providerAccount),
-         let profile = resolution.profile {
-        profiles.append(ResolvedSavedClaudeProfile(
-          captured: captured,
-          profile: profile,
-          requiresReauthentication: resolution.requiresReauthentication
-        ))
-      } else if await unresolvedSavedClaudeProfileShouldBlock(captured.providerAccount) {
+      guard let resolution = await resolvedClaudeCaptureProfile(
+        for: captured.providerAccount,
+        persistedIdentity: captured.claudeAccountIdentity
+      ) else {
+        if await unresolvedSavedClaudeProfileShouldBlock(captured.providerAccount) {
+          hasUnresolvedProfile = true
+        }
+        continue
+      }
+      switch await resolvedSavedClaudeProfileOutcome(captured, resolution: resolution) {
+      case let .resolved(profile):
+        profiles.append(profile)
+      case .unresolved:
         hasUnresolvedProfile = true
+      case .ignored:
+        break
       }
     }
     return SavedClaudeProfileResolution(
       profiles: profiles,
       hasUnresolvedProfile: hasUnresolvedProfile
     )
+  }
+
+  private func resolvedSavedClaudeProfileOutcome(
+    _ captured: CapturedAccount,
+    resolution: ClaudeCaptureProfileResolution
+  ) async -> ResolvedSavedClaudeProfileOutcome {
+    if let profile = resolution.profile, let identity = profile.accountIdentity {
+      let identified: CapturedAccount
+      if captured.claudeAccountIdentity == identity {
+        identified = captured
+      } else {
+        let capture = accountCapture
+        guard let persisted = try? await Task.detached(operation: {
+          try capture.recordClaudeAccountIdentity(id: captured.id, identity: identity)
+        }).value else { return .unresolved }
+        identified = persisted
+      }
+      return .resolved(ResolvedSavedClaudeProfile(
+        captured: identified,
+        profile: profileApplyingPersistedIdentity(
+          profile,
+          identity: identified.claudeAccountIdentity ?? identity
+        ),
+        requiresReauthentication: resolution.requiresReauthentication
+      ))
+    }
+    if let identity = captured.claudeAccountIdentity, identity.isStrong {
+      return .resolved(ResolvedSavedClaudeProfile(
+        captured: captured,
+        profile: profileApplyingPersistedIdentity(
+          ClaudeProfile(fingerprint: resolution.accessTokenFingerprint),
+          identity: identity
+        ),
+        requiresReauthentication: resolution.requiresReauthentication
+      ))
+    }
+    return await unresolvedSavedClaudeProfileShouldBlock(captured.providerAccount)
+      ? .unresolved
+      : .ignored
   }
 
   func resolvedLiveClaudeProfiles(
@@ -73,7 +119,8 @@ extension UsageStore {
 
   private func resolvedClaudeCaptureProfile(
     for account: ProviderAccount,
-    capturedRegistryID: String? = nil
+    capturedRegistryID: String? = nil,
+    persistedIdentity: ClaudeAccountIdentity? = nil
   ) async -> ClaudeCaptureProfileResolution? {
     let loader = claudeCredentialLoader
     guard var credentials = await Task.detached(operation: {
@@ -87,52 +134,70 @@ extension UsageStore {
       capturedRegistryID: capturedRegistryID
     )
     credentials = credentialResolution.credentials
-    let credentialTransition = credentialResolution.transition
-    let requiresReauthentication = credentialResolution.requiresReauthentication
     let fingerprint = ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
     if let cached = claudeProfiles[account.id],
-       cached.fingerprint == fingerprint,
-       cached.hasStableAccountIdentity {
-      return ClaudeCaptureProfileResolution(
-        profile: cached,
-        credentialTransition: credentialTransition,
-        requiresReauthentication: requiresReauthentication
-      )
+       cached.fingerprint == fingerprint {
+      if let persistedIdentity, persistedIdentity.isStrong {
+        return captureProfileResolution(
+          profileApplyingPersistedIdentity(cached, identity: persistedIdentity),
+          credential: credentialResolution
+        )
+      }
+      if cached.hasStrongAccountIdentity {
+        return captureProfileResolution(cached, credential: credentialResolution)
+      }
     }
     // Stable profile identity outlives an access token. If refreshing an
     // expired saved row fails because the CLI already rotated the account,
     // its matching pinned profile still prevents a duplicate registry row.
     guard !credentials.isExpired(now: now) else {
-      return ClaudeCaptureProfileResolution(
-        profile: nil,
-        credentialTransition: credentialTransition,
-        requiresReauthentication: requiresReauthentication
-      )
+      return captureProfileResolution(nil, credential: credentialResolution)
     }
 
-    guard let fetched = try? await profileFetcher.fetchProfile(accessToken: credentials.accessToken),
-          fetched.hasStableAccountIdentity,
-          let current = await Task.detached(operation: {
-            loader(account.credentialSource)
-          }).value,
-          ProviderCredentialIdentity.fingerprint(of: current.accessToken) == fingerprint
+    guard let verified = await freshlyVerifiedClaudeProfile(
+      for: account,
+      credentials: credentials,
+      fingerprint: fingerprint
+    )
     else {
-      return ClaudeCaptureProfileResolution(
-        profile: nil,
-        credentialTransition: credentialTransition,
-        requiresReauthentication: requiresReauthentication
-      )
+      return captureProfileResolution(nil, credential: credentialResolution)
     }
-    let verified = fetched.verified(for: fingerprint)
     claudeProfiles[account.id] = verified
     profileFetchAttempts[account.id] = fingerprint
     emptyClaudeProfileFingerprints[account.id] = nil
     try? profileStore.save(claudeProfiles)
     enqueueClaudeQuotaNotificationScopeRestore()
-    return ClaudeCaptureProfileResolution(
-      profile: verified,
-      credentialTransition: credentialTransition,
-      requiresReauthentication: requiresReauthentication
+    return captureProfileResolution(verified, credential: credentialResolution)
+  }
+
+  private func freshlyVerifiedClaudeProfile(
+    for account: ProviderAccount,
+    credentials: ClaudeCredentials,
+    fingerprint: String
+  ) async -> ClaudeProfile? {
+    guard let fetched = try? await profileFetcher.fetchProfile(accessToken: credentials.accessToken),
+          fetched.hasStableAccountIdentity
+    else { return nil }
+    let loader = claudeCredentialLoader
+    guard let current = await Task.detached(operation: {
+      loader(account.credentialSource)
+    }).value,
+      ProviderCredentialIdentity.fingerprint(of: current.accessToken) == fingerprint
+    else { return nil }
+    return fetched.verified(for: fingerprint)
+  }
+
+  private func captureProfileResolution(
+    _ profile: ClaudeProfile?,
+    credential: ClaudeCredentialResolution
+  ) -> ClaudeCaptureProfileResolution {
+    ClaudeCaptureProfileResolution(
+      profile: profile,
+      accessTokenFingerprint: ProviderCredentialIdentity.fingerprint(
+        of: credential.credentials.accessToken
+      ),
+      credentialTransition: credential.transition,
+      requiresReauthentication: credential.requiresReauthentication
     )
   }
 
@@ -175,25 +240,56 @@ extension UsageStore {
       credentialSource: account.credentialSource,
       credentialIdentity: refreshed.accessToken
     )
-    let transition: ClaudeCredentialScopeTransition? = if let evidence = result?.credentialTransitionEvidence,
-                                                          evidence.sourceScopeIDs.contains(initialScopeID),
-                                                          evidence.targetScopeID == refreshedAccount.credentialScopeID {
-      ClaudeCredentialScopeTransition(
-        sourceScopeID: initialScopeID,
-        targetScopeID: evidence.targetScopeID
-      )
-    } else {
-      nil
-    }
     return ClaudeCredentialResolution(
       credentials: refreshed,
-      transition: transition,
-      // The endpoint's invalid-grant verdict alone is not enough: the CLI may
-      // have installed a fresh pair between the failed exchange and this
-      // re-read, in which case the row just recovered through rotation.
-      requiresReauthentication: result?.indicatesClaudeReauthenticationRequired == true
-        && refreshed.isExpired(now: now)
+      transition: claudeCredentialTransition(
+        from: result,
+        initialScopeID: initialScopeID,
+        refreshedScopeID: refreshedAccount.credentialScopeID
+      ),
+      requiresReauthentication: claudeCredentialRequiresReauthentication(
+        result,
+        attempted: credentials,
+        current: refreshed,
+        now: now
+      )
     )
+  }
+
+  private func claudeCredentialTransition(
+    from result: Result<ProviderFetchResult, Error>?,
+    initialScopeID: String,
+    refreshedScopeID: String
+  ) -> ClaudeCredentialScopeTransition? {
+    guard let evidence = result?.credentialTransitionEvidence,
+          evidence.sourceScopeIDs.contains(initialScopeID),
+          evidence.targetScopeID == refreshedScopeID
+    else { return nil }
+    return ClaudeCredentialScopeTransition(
+      sourceScopeID: initialScopeID,
+      targetScopeID: evidence.targetScopeID
+    )
+  }
+
+  /// An invalid grant applies only to the exchanged refresh token; expiry
+  /// cannot bind that verdict to a concurrently replaced credential pair.
+  private func claudeCredentialRequiresReauthentication(
+    _ result: Result<ProviderFetchResult, Error>?,
+    attempted: ClaudeCredentials,
+    current: ClaudeCredentials,
+    now: Date
+  ) -> Bool {
+    guard result?.indicatesClaudeReauthenticationRequired == true,
+          let attemptedGeneration = ProviderCredentialIdentity.claudeIdentity(
+            refreshToken: attempted.refreshToken,
+            accessToken: attempted.accessToken
+          )
+    else { return false }
+    let currentGeneration = ProviderCredentialIdentity.claudeIdentity(
+      refreshToken: current.refreshToken,
+      accessToken: current.accessToken
+    )
+    return attemptedGeneration == currentGeneration && current.isExpired(now: now)
   }
 
   private func refreshClaudeCredential(
@@ -239,6 +335,12 @@ private extension ProviderCredentialSource {
   }
 }
 
+private enum ResolvedSavedClaudeProfileOutcome {
+  case resolved(ResolvedSavedClaudeProfile)
+  case unresolved
+  case ignored
+}
+
 struct ResolvedSavedClaudeProfile {
   let captured: CapturedAccount
   let profile: ClaudeProfile
@@ -266,6 +368,7 @@ struct LiveClaudeProfileResolution {
 
 private struct ClaudeCaptureProfileResolution {
   let profile: ClaudeProfile?
+  let accessTokenFingerprint: String
   let credentialTransition: ClaudeCredentialScopeTransition?
   let requiresReauthentication: Bool
 }

@@ -29,17 +29,12 @@ struct UsageStoreMonitoringRotationTests {
       url: directory.url.appendingPathComponent("monitoring.json")
     )
     try monitoringStore.save([.claude: [source]])
-    let store = UsageStore.isolatedForTesting(
-      providers: [claudeDescriptorForAutomaticCapture()],
-      accountDiscovery: discovery,
-      accountSelectionStore: selectionStore,
-      accountMonitoringStore: monitoringStore,
-      accountCapture: AccountCaptureService(
-        capturedAccounts: registry,
-        claudeKeychainRead: { _ in payload.value }
-      ),
-      automaticallyCapturesDiscoveredAccounts: true,
-      startsAutomatically: false
+    let store = monitoringRotationStore(
+      discovery: discovery,
+      selectionStore: selectionStore,
+      monitoringStore: monitoringStore,
+      payload: payload,
+      registry: registry
     )
 
     payload.value = targetPayload
@@ -56,4 +51,37 @@ struct UsageStoreMonitoringRotationTests {
     #expect(store.monitoredAccounts[.claude] == [target])
     #expect(try monitoringStore.load()[.claude] == [saved.providerAccount])
   }
+}
+
+@MainActor
+private func monitoringRotationStore(
+  discovery: ProviderAccountDiscovery,
+  selectionStore: ProviderAccountSelectionStore,
+  monitoringStore: ProviderAccountMonitoringStore,
+  payload: AutomaticCapturePayloadBox,
+  registry: CapturedAccountStore
+) -> UsageStore {
+  UsageStore.isolatedForTesting(
+    providers: [claudeDescriptorForAutomaticCapture()],
+    accountDiscovery: discovery,
+    accountSelectionStore: selectionStore,
+    accountMonitoringStore: monitoringStore,
+    accountCapture: AccountCaptureService(
+      capturedAccounts: registry,
+      claudeKeychainRead: { _ in payload.value }
+    ),
+    automaticallyCapturesDiscoveredAccounts: true,
+    profileFetcher: StableClaudeProfileFetcher(
+      accountID: "monitored-account",
+      email: "monitored@example.com"
+    ),
+    claudeCredentialLoader: { source in
+      automaticCaptureClaudeCredentials(
+        source: source,
+        keychainPayload: payload.value,
+        registry: registry
+      )
+    },
+    startsAutomatically: false
+  )
 }

@@ -8,20 +8,6 @@ extension UsageStore {
   /// existing saved Claude account. A proven match refreshes that row in
   /// place; incomplete identity evidence fails closed instead of accumulating
   /// a stale duplicate.
-  func automaticCapturePlans(
-    for candidates: [ProviderAccount],
-    among accounts: [ProviderAccount],
-    provider: UsageProvider,
-    capturedCopies: [String: ProviderAccount] = [:]
-  ) async -> [String: AutomaticAccountCapturePlan] {
-    await automaticCapturePlanning(
-      for: candidates,
-      among: accounts,
-      provider: provider,
-      capturedCopies: capturedCopies
-    ).plans
-  }
-
   func automaticCapturePlanning(
     for candidates: [ProviderAccount],
     among accounts: [ProviderAccount],
@@ -49,18 +35,6 @@ extension UsageStore {
   ) async -> AutomaticAccountCapturePlanningResult {
     let saved = await savedClaudeAccounts()
     let liveAccounts = accounts.filter(\.credentialSource.isAutomaticallyCapturable)
-    if let plans = soleClaudeCapturePlans(
-      candidates: candidates,
-      liveAccounts: liveAccounts,
-      savedAccounts: saved
-    ) {
-      return AutomaticAccountCapturePlanningResult(
-        plans: plans,
-        verifiedDuplicateCredentialScopeIDs: [],
-        credentialTransitions: [:]
-      )
-    }
-
     let savedResolution = await healedSavedClaudeProfileResolution(
       resolvedSavedClaudeProfiles(saved)
     )
@@ -106,30 +80,28 @@ extension UsageStore {
   private func removedDeadDuplicateSavedClaudeRowIDs(
     _ profiles: [ResolvedSavedClaudeProfile]
   ) async -> Set<String> {
-    var groups: [[ResolvedSavedClaudeProfile]] = []
+    var groups: [ClaudeAccountIdentity.Key: [ResolvedSavedClaudeProfile]] = [:]
     for row in profiles {
-      if let index = groups.firstIndex(where: { group in
-        group.contains { row.profile.identifiesSameAccount(as: $0.profile) }
-      }) {
-        groups[index].append(row)
-      } else {
-        groups.append([row])
-      }
+      guard let identity = row.profile.accountIdentity,
+            identity.isStrong,
+            let key = identity.key
+      else { continue }
+      groups[key, default: []].append(row)
     }
     var removed = Set<String>()
-    for group in groups where group.count > 1 {
+    for group in groups.values where group.count > 1 {
       let alive = group.filter { !$0.requiresReauthentication }
       // With two plausibly-live rows there is no proof which one owns the
       // account's refresh-token chain; removal could destroy the only working
       // snapshot, so ambiguity keeps the existing blocked behavior.
-      guard alive.count <= 1,
-            let canonical = alive.first
-              ?? group.max(by: { $0.captured.capturedAt < $1.captured.capturedAt })
-      else { continue }
+      // An all-dead group is consolidated only after a live credential has
+      // successfully refreshed the chosen canonical row. Planning must never
+      // delete every fallback before that write succeeds.
+      guard alive.count == 1, let canonical = alive.first else { continue }
       for row in group
         where row.requiresReauthentication && row.captured.id != canonical.captured.id {
         do {
-          try await removeDeadSavedClaudeRow(id: row.captured.id)
+          try await consolidateDeadSavedClaudeRow(row.captured, into: canonical.captured)
           removed.insert(row.captured.id)
         } catch {
           // The row stays in the resolution; planning keeps failing closed for
@@ -140,14 +112,93 @@ extension UsageStore {
     return removed
   }
 
-  private func removeDeadSavedClaudeRow(id: String) async throws {
+  func consolidateDeadSavedClaudeRow(
+    _ redundant: CapturedAccount,
+    into canonical: CapturedAccount
+  ) async throws {
+    try migrateClaudeRegistryReferences(
+      from: redundant.providerAccount,
+      to: canonical.providerAccount
+    )
     let capture = accountCapture
-    try await Task.detached { try capture.remove(id: id) }.value
-    let savedID = ProviderAccount.id(provider: .claude, source: .quotariRegistry(id: id))
+    try await Task.detached { try capture.remove(id: redundant.id) }.value
+    let savedID = redundant.providerAccount.id
     claudeProfiles[savedID] = nil
     profileFetchAttempts[savedID] = nil
     emptyClaudeProfileFingerprints[savedID] = nil
     try? profileStore.save(claudeProfiles)
+  }
+
+  /// Durable references move before the old Keychain row is deleted. If either
+  /// atomic JSON write fails, the old row remains and the next scan retries.
+  private func migrateClaudeRegistryReferences(
+    from redundant: ProviderAccount,
+    to canonical: ProviderAccount
+  ) throws {
+    var selections = persistableSelections()
+    let selectionChanged = selections[.claude]?.id == redundant.id
+    if selectionChanged {
+      selections[.claude] = canonical
+      try accountSelectionStore.save(selections)
+    }
+
+    var monitoring = persistedMonitoredAccounts
+    let monitoringChanged = monitoring[.claude]?.contains(where: { $0.id == redundant.id }) == true
+    if monitoringChanged {
+      monitoring[.claude] = replacingAccount(
+        redundant,
+        with: canonical,
+        in: monitoring[.claude] ?? []
+      )
+      try accountMonitoringStore.save(monitoring)
+    }
+
+    if selectedAccounts[.claude]?.id == redundant.id {
+      selectAccount(
+        canonical,
+        for: .claude,
+        standingInFor: nil,
+        refreshInteraction: .background,
+        cancelsDelayedCredentialRefresh: false,
+        waitsForDelayedCredentialRefresh: true
+      )
+    } else if reconciledSelectionOrigins[.claude]?.id == redundant.id {
+      selectAccount(
+        selectedAccounts[.claude],
+        for: .claude,
+        standingInFor: canonical,
+        refreshInteraction: .background,
+        cancelsDelayedCredentialRefresh: false,
+        waitsForDelayedCredentialRefresh: true
+      )
+    }
+    if monitoringChanged {
+      persistedMonitoredAccounts = monitoring
+      isMonitoringConfigurationLoaded = true
+    }
+    monitoredAccounts[.claude] = replacingAccount(
+      redundant,
+      with: canonical,
+      in: monitoredAccounts[.claude] ?? []
+    )
+    capturedEquivalents = capturedEquivalents.mapValues {
+      $0.id == redundant.id ? canonical : $0
+    }
+    accountUsage[.claude]?[redundant.id] = nil
+    notificationScopeIDsByAccountID[redundant.id] = nil
+    accountRevisions[.claude, default: 0] &+= 1
+  }
+
+  private func replacingAccount(
+    _ redundant: ProviderAccount,
+    with canonical: ProviderAccount,
+    in accounts: [ProviderAccount]
+  ) -> [ProviderAccount] {
+    var seen = Set<String>()
+    return accounts.compactMap { account in
+      let replacement = account.id == redundant.id ? canonical : account
+      return seen.insert(replacement.id).inserted ? replacement : nil
+    }
   }
 
   private func verifiedDuplicateClaudeCredentialScopeIDs(
@@ -157,7 +208,7 @@ extension UsageStore {
     var duplicates = Set<String>()
     for candidate in profiles.sorted(by: prefersClaudeCaptureSource) {
       if canonicalProfiles.contains(where: {
-        candidate.profile.identifiesSameAccount(as: $0.profile)
+        candidate.profile.stronglyIdentifiesSameAccount(as: $0.profile)
       }) {
         duplicates.insert(candidate.account.credentialScopeID)
       } else {
@@ -165,17 +216,6 @@ extension UsageStore {
       }
     }
     return duplicates
-  }
-
-  private func soleClaudeCapturePlans(
-    candidates: [ProviderAccount],
-    liveAccounts: [ProviderAccount],
-    savedAccounts: [CapturedAccount]
-  ) -> [String: AutomaticAccountCapturePlan]? {
-    guard savedAccounts.isEmpty, liveAccounts.count == 1, let candidate = candidates.first else {
-      return nil
-    }
-    return capturePlans(for: [candidate])
   }
 
   private func claudeCapturePlan(
@@ -188,7 +228,16 @@ extension UsageStore {
       return .blocked("Couldn’t verify this Claude account before managing it.")
     }
     let profile = candidateProfile.profile
-    let matchingLiveAccounts = liveProfiles.filter { profile.identifiesSameAccount(as: $0.profile) }
+    if !profile.hasStrongAccountIdentity {
+      guard candidateProfile.isRenewable, let fingerprint = profile.fingerprint else {
+        return .blocked("Couldn’t verify this Claude account before managing it.")
+      }
+      return .captureClaude(
+        accessTokenFingerprint: fingerprint,
+        profile: profile
+      )
+    }
+    let matchingLiveAccounts = liveProfiles.filter { profile.stronglyIdentifiesSameAccount(as: $0.profile) }
     let canonical = matchingLiveAccounts.min(by: prefersClaudeCaptureSource)
     guard canonical?.account.id != candidate.id else {
       return claudeSavedAccountPlan(
@@ -213,7 +262,9 @@ extension UsageStore {
     candidates: [ProviderAccount],
     savedResolution: SavedClaudeProfileResolution
   ) -> AutomaticAccountCapturePlan {
-    let matchingSaved = savedResolution.profiles.filter { profile.identifiesSameAccount(as: $0.profile) }
+    let matchingSaved = savedResolution.profiles.filter {
+      profile.stronglyIdentifiesSameAccount(as: $0.profile)
+    }
     if matchingSaved.count == 1, let saved = matchingSaved.first?.captured.providerAccount {
       return .ignoreDuplicate(
         savedOrigin: saved,
@@ -250,7 +301,9 @@ extension UsageStore {
     guard let fingerprint = profile.fingerprint else {
       return .blocked("Couldn’t verify this Claude account before managing it.")
     }
-    let matches = resolution.profiles.filter { profile.identifiesSameAccount(as: $0.profile) }
+    let matches = resolution.profiles.filter {
+      profile.stronglyIdentifiesSameAccount(as: $0.profile)
+    }
     if matches.count == 1, let match = matches.first {
       guard isRenewable else {
         return .ignoreDuplicate(
@@ -267,6 +320,19 @@ extension UsageStore {
       )
     }
     if matches.count > 1 {
+      let alive = matches.filter { !$0.requiresReauthentication }
+      if alive.isEmpty, isRenewable,
+         let canonical = matches.max(by: { $0.captured.capturedAt < $1.captured.capturedAt }) {
+        return .refreshClaude(
+          id: canonical.captured.id,
+          savedOrigin: canonical.captured.providerAccount,
+          accessTokenFingerprint: fingerprint,
+          profile: profile,
+          redundantAccounts: matches
+            .filter { $0.captured.id != canonical.captured.id }
+            .map(\.captured)
+        )
+      }
       return .blocked("Multiple saved Claude accounts have the same verified profile.")
     }
     if resolution.hasUnresolvedProfile {
@@ -294,113 +360,6 @@ extension UsageStore {
     case .claudeKeychain: 0
     case .claudeCredentialsFile: 1
     case .codexAuthFile, .codexKeychain, .claudeEnvironment, .quotariRegistry: 2
-    }
-  }
-}
-
-indirect enum AutomaticAccountCapturePlan: Sendable {
-  case capture
-  case captureClaude(accessTokenFingerprint: String, profile: ClaudeProfile)
-  case refreshClaude(
-    id: String,
-    savedOrigin: ProviderAccount,
-    accessTokenFingerprint: String,
-    profile: ClaudeProfile
-  )
-  case ignoreDuplicate(
-    savedOrigin: ProviderAccount?,
-    canonicalCandidateID: String?,
-    fallbackCapturePlan: AutomaticAccountCapturePlan?
-  )
-  case blocked(String)
-
-  func capture(
-    _ account: ProviderAccount,
-    using service: AccountCaptureService,
-    now: Date
-  ) throws -> CapturedAccount? {
-    switch self {
-    case .capture:
-      try service.capture(account, now: now)
-    case let .captureClaude(fingerprint, _):
-      try service.captureClaudeAccount(
-        account,
-        expectedAccessTokenFingerprint: fingerprint,
-        now: now
-      )
-    case let .refreshClaude(id, _, fingerprint, _):
-      try service.refreshCapturedClaudeAccount(
-        id: id,
-        from: account,
-        expectedAccessTokenFingerprint: fingerprint
-      )
-    case .ignoreDuplicate:
-      nil
-    case let .blocked(message):
-      throw AutomaticAccountCapturePlanError.blocked(message)
-    }
-  }
-
-  func savedClaudeIdentity(captured: CapturedAccount?) -> (id: String, profile: ClaudeProfile)? {
-    switch self {
-    case let .captureClaude(_, profile):
-      return captured.map { ($0.id, profile) }
-    case let .refreshClaude(id, _, fingerprint, profile):
-      guard let captured,
-            let accessToken = ProviderCredentialIdentity.discoveredAccountIdentity(
-              provider: .claude,
-              payload: captured.payload
-            ),
-            ProviderCredentialIdentity.fingerprint(of: accessToken) == fingerprint
-      else { return nil }
-      return (id, profile)
-    case .capture, .ignoreDuplicate, .blocked:
-      return nil
-    }
-  }
-
-  var isIgnoredDuplicate: Bool {
-    if case .ignoreDuplicate = self {
-      return true
-    }
-    return false
-  }
-
-  var duplicateSavedOrigin: ProviderAccount? {
-    switch self {
-    case let .refreshClaude(_, savedOrigin, _, _): savedOrigin
-    case let .ignoreDuplicate(savedOrigin, _, _): savedOrigin
-    case .capture, .captureClaude, .blocked: nil
-    }
-  }
-
-  var canonicalCandidateID: String? {
-    guard case let .ignoreDuplicate(_, canonicalCandidateID, _) = self else { return nil }
-    return canonicalCandidateID
-  }
-
-  var fallbackCapturePlan: AutomaticAccountCapturePlan? {
-    guard case let .ignoreDuplicate(_, _, fallbackCapturePlan) = self else { return nil }
-    return fallbackCapturePlan
-  }
-}
-
-private enum AutomaticAccountCapturePlanError: LocalizedError {
-  case blocked(String)
-
-  var errorDescription: String? {
-    guard case let .blocked(message) = self else { return nil }
-    return message
-  }
-}
-
-extension ProviderCredentialSource {
-  var isAutomaticallyCapturable: Bool {
-    switch self {
-    case .codexAuthFile, .codexKeychain, .claudeKeychain, .claudeCredentialsFile:
-      true
-    case .claudeEnvironment, .quotariRegistry:
-      false
     }
   }
 }

@@ -6,50 +6,23 @@ import Testing
 @MainActor
 struct AutomaticCaptureIdentitySafetyTests {
   @Test func externalClaudeReloginDuringFetchDoesNotInheritThePreviousSelection() async throws {
-    let directory = try TemporaryDirectory()
-    let payload = AutomaticCapturePayloadBox(
-      claudePayload(accessToken: "account-a-access", refreshToken: "account-a-refresh")
-    )
-    let registry = CapturedAccountStore.inMemoryForTesting()
-    let discovery = ProviderAccountDiscovery(
-      environment: [:],
-      home: directory.url,
-      keychainData: { payload.value },
-      capturedAccounts: registry
-    )
-    let selected = try #require(await discovery.accounts(for: .claude).first)
-    let selectionStore = ProviderAccountSelectionStore(
-      url: directory.url.appendingPathComponent("selection.json")
-    )
-    try selectionStore.save([.claude: selected])
-    let strategy = GatedNonRotatingClaudeStrategy()
-    let store = UsageStore.isolatedForTesting(
-      providers: [identitySafetyClaudeDescriptor(strategy: strategy)],
-      accountDiscovery: discovery,
-      accountSelectionStore: selectionStore,
-      accountCapture: AccountCaptureService(
-        capturedAccounts: registry,
-        claudeKeychainRead: { _ in payload.value }
-      ),
-      automaticallyCapturesDiscoveredAccounts: true,
-      startsAutomatically: false
-    )
+    let fixture = try await makeReloginSafetyFixture()
 
-    store.beginRefresh()
-    await strategy.waitUntilRequestStarts()
-    let reload = Task { await store.reloadAccounts() }
-    #expect(await waitUntilIdentitySafetyCaptureStarts(store))
-    payload.value = claudePayload(
+    fixture.store.beginRefresh()
+    await fixture.strategy.waitUntilRequestStarts()
+    let reload = Task { await fixture.store.reloadAccounts() }
+    #expect(await waitUntilIdentitySafetyCaptureStarts(fixture.store))
+    fixture.payload.value = claudePayload(
       accessToken: "account-b-access",
       refreshToken: "account-b-refresh"
     )
-    await strategy.resume()
+    await fixture.strategy.resume()
     await reload.value
-    await store.inFlightRefresh?.value
+    await fixture.store.inFlightRefresh?.value
 
-    #expect(registry.load().count == 1)
-    #expect(store.selectedAccounts[.claude] == nil)
-    #expect(selectionStore.load()[.claude] == nil)
+    #expect(fixture.registry.load().count == 1)
+    #expect(fixture.store.selectedAccounts[.claude] == nil)
+    #expect(fixture.selectionStore.load()[.claude] == nil)
   }
 
   @Test func unreadableSavedClaudeCredentialBlocksDuplicateCapture() async throws {
@@ -197,6 +170,78 @@ struct AutomaticCaptureIdentitySafetyTests {
     #expect(registry.load().map(\.id) == ["claude:saved"])
     #expect(store.captureErrors[.claude]?.contains("verify this Claude account") == true)
   }
+}
+
+private struct ReloginSafetyFixture {
+  let directory: TemporaryDirectory
+  let payload: AutomaticCapturePayloadBox
+  let registry: CapturedAccountStore
+  let selectionStore: ProviderAccountSelectionStore
+  let strategy: GatedNonRotatingClaudeStrategy
+  let store: UsageStore
+}
+
+@MainActor
+private func makeReloginSafetyFixture() async throws -> ReloginSafetyFixture {
+  let directory = try TemporaryDirectory()
+  let payload = AutomaticCapturePayloadBox(
+    claudePayload(accessToken: "account-a-access", refreshToken: "account-a-refresh")
+  )
+  let registry = CapturedAccountStore.inMemoryForTesting()
+  let discovery = ProviderAccountDiscovery(
+    environment: [:],
+    home: directory.url,
+    keychainData: { payload.value },
+    capturedAccounts: registry
+  )
+  let selected = try #require(await discovery.accounts(for: .claude).first)
+  let selectionStore = ProviderAccountSelectionStore(
+    url: directory.url.appendingPathComponent("selection.json")
+  )
+  try selectionStore.save([.claude: selected])
+  let strategy = GatedNonRotatingClaudeStrategy()
+  let store = UsageStore.isolatedForTesting(
+    providers: [identitySafetyClaudeDescriptor(strategy: strategy)],
+    accountDiscovery: discovery,
+    accountSelectionStore: selectionStore,
+    accountCapture: AccountCaptureService(
+      capturedAccounts: registry,
+      claudeKeychainRead: { _ in payload.value }
+    ),
+    automaticallyCapturesDiscoveredAccounts: true,
+    profileFetcher: TokenClaudeProfileFetcher(profiles: reloginSafetyProfiles()),
+    claudeCredentialLoader: { source in
+      automaticCaptureClaudeCredentials(
+        source: source,
+        keychainPayload: payload.value,
+        registry: registry
+      )
+    },
+    startsAutomatically: false
+  )
+  return ReloginSafetyFixture(
+    directory: directory,
+    payload: payload,
+    registry: registry,
+    selectionStore: selectionStore,
+    strategy: strategy,
+    store: store
+  )
+}
+
+private func reloginSafetyProfiles() -> [String: ClaudeProfile] {
+  [
+    "account-a-access": ClaudeProfile(
+      accountID: "account-a",
+      email: "a@example.com",
+      organizationID: "organization-a"
+    ),
+    "account-b-access": ClaudeProfile(
+      accountID: "account-b",
+      email: "b@example.com",
+      organizationID: "organization-b"
+    ),
+  ]
 }
 
 private actor GatedNonRotatingClaudeStrategy: ProviderFetchStrategy {

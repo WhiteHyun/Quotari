@@ -74,18 +74,21 @@ func switchTemporaryHome() throws -> URL {
 func verifiedClaudeLiveIdentity(
   source: ProviderCredentialSource,
   accessToken: String,
-  accountID: String,
-  email: String
+  profile: ClaudeProfile
 ) -> VerifiedLiveClaudeIdentity {
   let fingerprint = ProviderCredentialIdentity.fingerprint(of: accessToken)
   return VerifiedLiveClaudeIdentity(
     source: source,
     accessTokenFingerprint: fingerprint,
-    profile: ClaudeProfile(
-      accountID: accountID,
-      email: email,
-      fingerprint: fingerprint
-    )
+    profile: profile.verified(for: fingerprint)
+  )
+}
+
+func strongClaudeProfile(_ stem: String) -> ClaudeProfile {
+  ClaudeProfile(
+    accountID: "\(stem)-id",
+    email: "\(stem)@example.com",
+    organizationID: "\(stem)-org"
   )
 }
 
@@ -106,6 +109,8 @@ func switchClaudeWithVerifiedLiveIdentity(
       profile: ClaudeProfile(
         accountID: profile.accountID,
         email: profile.email,
+        organizationID: profile.organizationID,
+        organizationName: profile.organizationName,
         fingerprint: fingerprint
       )
     )
@@ -118,23 +123,41 @@ func claudeSwitchPayload(accessToken: String, refreshToken: String) -> Data {
   )
 }
 
-func claudeSwitchRegistryID(accessToken: String, refreshToken: String) -> String {
-  let fingerprint = ProviderCredentialIdentity.claudeIdentity(
-    refreshToken: refreshToken,
-    accessToken: accessToken
-  )
-  return "claude:\(fingerprint ?? "")"
+func capturedClaudeAccount(
+  registry: CapturedAccountStore,
+  refreshToken: String
+) throws -> CapturedAccount {
+  try #require(registry.load().first { account in
+    guard account.provider == .claude,
+          let credentials = try? ClaudeCredentialsStore.parse(account.payload)
+    else { return false }
+    return credentials.refreshToken == refreshToken
+  })
 }
 
 func expectClaudeIdentity(
   _ identity: Data?,
   accountID: String,
-  email: String
+  email: String,
+  organizationID: String? = nil
 ) throws {
   #expect(try ClaudeCodeAccountState.matches(
     #require(identity),
-    profile: ClaudeProfile(accountID: accountID, email: email)
+    profile: ClaudeProfile(
+      accountID: accountID,
+      email: email,
+      organizationID: organizationID
+    )
   ))
+}
+
+func expectStrongClaudeIdentity(_ identity: Data?, stem: String) throws {
+  try expectClaudeIdentity(
+    identity,
+    accountID: "\(stem)-id",
+    email: "\(stem)@example.com",
+    organizationID: "\(stem)-org"
+  )
 }
 
 func makeClaudeBackupSwitchService(

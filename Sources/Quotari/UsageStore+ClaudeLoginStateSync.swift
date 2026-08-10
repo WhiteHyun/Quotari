@@ -24,7 +24,8 @@ extension UsageStore {
         origin: result.origin,
         payload: result.payload,
         now: Date(),
-        claudeOAuthAccount: claudeOAuthAccount
+        claudeOAuthAccount: claudeOAuthAccount,
+        claudeAccountIdentity: verifiedClaudeProfile?.accountIdentity
       )
     }.value
     guard let captured else { throw AddedAccountImportError.notRenewable }

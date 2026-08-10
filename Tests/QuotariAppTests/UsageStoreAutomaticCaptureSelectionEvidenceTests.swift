@@ -113,8 +113,16 @@ struct CaptureSelectionEvidenceTests {
       ),
       automaticallyCapturesDiscoveredAccounts: true,
       profileFetcher: TokenClaudeProfileFetcher(profiles: [
-        "access-a": ClaudeProfile(accountID: "same-account", email: "same@example.com"),
-        "saved-access": ClaudeProfile(accountID: "same-account", email: "same@example.com"),
+        "access-a": ClaudeProfile(
+          accountID: "same-account",
+          email: "same@example.com",
+          organizationID: "same-organization"
+        ),
+        "saved-access": ClaudeProfile(
+          accountID: "same-account",
+          email: "same@example.com",
+          organizationID: "same-organization"
+        ),
       ]),
       claudeCredentialLoader: { source in
         selectionEvidenceCredentials(source: source, payload: payload, registry: registry)

@@ -19,7 +19,11 @@ struct ClaudeLoginBoundaryTests {
       gatedAccessToken: "current-access",
       gatedRequest: nil,
       profiles: [
-        "current-access": ClaudeProfile(accountID: "account-current", email: "current@example.com"),
+        "current-access": ClaudeProfile(
+          accountID: "account-current",
+          email: "current@example.com",
+          organizationID: "organization-current"
+        ),
       ]
     )
     let mutationStarted = ClaudeLoginBooleanBox()

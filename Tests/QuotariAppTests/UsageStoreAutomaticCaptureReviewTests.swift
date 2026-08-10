@@ -51,6 +51,13 @@ struct UsageStoreAutomaticCaptureReviewTests {
         claudeKeychainRead: { _ in payload }
       ),
       automaticallyCapturesDiscoveredAccounts: true,
+      profileFetcher: StableClaudeProfileFetcher(
+        accountID: "claude-account",
+        email: "claude@example.com"
+      ),
+      claudeCredentialLoader: { source in
+        automaticCaptureClaudeCredentials(source: source, keychainPayload: payload, registry: registry)
+      },
       startsAutomatically: false
     )
 

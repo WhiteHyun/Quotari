@@ -21,11 +21,19 @@ struct AccountSwitchClaudeStaleIdentityTests {
       to: switchTarget.id,
       source: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
       accessToken: "new-tok",
-      profile: ClaudeProfile(accountID: "new-id", email: "new@example.com")
+      profile: ClaudeProfile(
+        accountID: "new-id",
+        email: "new@example.com",
+        organizationID: "new-org"
+      )
     )
 
-    let backedUpID = claudeSwitchRegistryID(accessToken: "new-tok", refreshToken: "new-ref")
-    let backedUp = try #require(registry.account(id: backedUpID))
+    let backedUp = try capturedClaudeAccount(registry: registry, refreshToken: "new-ref")
+    #expect(backedUp.claudeAccountIdentity == ClaudeAccountIdentity(
+      accountID: "new-id",
+      email: "new@example.com",
+      organizationID: "new-org"
+    ))
     #expect(backedUp.claudeOAuthAccount == nil)
 
     #expect(throws: AccountSwitchError.self) {

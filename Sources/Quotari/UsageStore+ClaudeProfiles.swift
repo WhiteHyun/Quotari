@@ -259,7 +259,7 @@ extension UsageStore {
     guard let savedProfile = claudeProfiles[saved.id],
           let savedFingerprint = evidence.savedAccessTokenFingerprint,
           savedProfile.fingerprint == savedFingerprint,
-          profile.identifiesSameAccount(as: savedProfile)
+          profile.stronglyIdentifiesSameAccount(as: savedProfile)
     else { return nil }
     return savedFingerprint
   }

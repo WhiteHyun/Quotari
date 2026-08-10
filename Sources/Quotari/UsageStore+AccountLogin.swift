@@ -216,7 +216,7 @@ extension UsageStore {
         candidate: result.claudeOAuthAccount,
         profile: profile
       )
-      let captured: CapturedAccount = if let saved = try await uniquelyMatchingSavedClaudeAccount(
+      let captured: CapturedAccount = if let saved = try await matchingSavedClaudeAccount(
         for: profile,
         previousClaudeLogin: previousClaudeLogin,
         registryBaseline: registryBaseline
@@ -253,84 +253,6 @@ extension UsageStore {
     )
   }
 
-  func uniquelyMatchingSavedClaudeAccount(
-    for profile: ClaudeProfile,
-    previousClaudeLogin: PreservedClaudeLogin?,
-    registryBaseline: AccountLoginRegistryBaseline? = nil
-  ) async throws -> ProviderAccount? {
-    var candidates: [String: ProviderAccount] = [:]
-    if let previousClaudeLogin {
-      candidates[previousClaudeLogin.account.id] = previousClaudeLogin.account
-    }
-    for account in accounts[.claude] ?? [] where account.credentialSource.isCaptured {
-      candidates[account.id] = account
-    }
-    for account in capturedEquivalents.values where account.provider == .claude {
-      candidates[account.id] = account
-    }
-    for account in registryBaseline?.registeredProviderAccounts ?? [] where account.provider == .claude {
-      candidates[account.id] = account
-    }
-
-    var matches: [ProviderAccount] = []
-    for candidate in candidates.values {
-      let savedProfile: ClaudeProfile
-      if candidate.id == previousClaudeLogin?.account.id, let previousClaudeLogin {
-        savedProfile = previousClaudeLogin.profile
-      } else {
-        do {
-          savedProfile = try await resolvedClaudeLoginProfile(for: candidate)
-        } catch {
-          throw AddedAccountImportError.savedRegistryIdentityUnverified
-        }
-      }
-      if savedProfile.identifiesSameAccount(as: profile) {
-        matches.append(candidate)
-      }
-    }
-    guard matches.count <= 1 else {
-      throw AddedAccountImportError.ambiguousSavedIdentity
-    }
-    return matches.first
-  }
-
-  func refreshReauthenticatedClaudeAccount(
-    _ saved: ProviderAccount,
-    payload: Data,
-    profile: ClaudeProfile?,
-    claudeOAuthAccount: Data? = nil,
-    requiresNewerGenerationEvidence: Bool = false
-  ) async throws -> CapturedAccount {
-    guard case let .quotariRegistry(id) = saved.credentialSource else {
-      throw AddedAccountImportError.savedCopyUnverified
-    }
-    let capture = accountCapture
-    let captured = try await Task.detached {
-      try capture.refreshCapturedAccount(
-        id: id,
-        provider: .claude,
-        payload: payload,
-        claudeOAuthAccount: claudeOAuthAccount,
-        requiresNewerGenerationEvidence: requiresNewerGenerationEvidence
-      )
-    }.value
-    if let profile {
-      storeClaudeLoginProfile(profile, for: captured)
-    }
-    return captured
-  }
-
-  func storeClaudeLoginProfile(_ profile: ClaudeProfile, for captured: CapturedAccount) {
-    storeClaudeLoginProfile(profile, accountID: captured.providerAccount.id)
-  }
-
-  private func storeClaudeLoginProfile(_ profile: ClaudeProfile, accountID: String) {
-    claudeProfiles[accountID] = profile
-    profileFetchAttempts[accountID] = profile.fingerprint
-    emptyClaudeProfileFingerprints[accountID] = nil
-    try? profileStore.save(claudeProfiles)
-  }
-
   private func finishAccountLogin(_ captured: CapturedAccount, for provider: UsageProvider) async {
     if isSwitching {
       await reloadAccountsDuringSwitch()
@@ -345,30 +267,5 @@ extension UsageStore {
     includeAccountInAutomaticMonitoring(visibleAccount)
     accountLoginErrors[provider] = nil
     accountLoginOutputs[provider] = nil
-  }
-
-  func resolvedClaudeLoginProfile(for saved: ProviderAccount) async throws -> ClaudeProfile {
-    let loader = claudeCredentialLoader
-    guard let credentials = await Task.detached(operation: {
-      loader(saved.credentialSource)
-    }).value else {
-      throw AddedAccountImportError.savedIdentityUnverified
-    }
-    let fingerprint = ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
-    if let cached = claudeProfiles[saved.id],
-       cached.hasStableAccountIdentity,
-       cached.fingerprint == fingerprint {
-      return cached
-    }
-    let fetched = try await profileFetcher.fetchProfile(accessToken: credentials.accessToken)
-    guard fetched.hasStableAccountIdentity,
-          let current = await Task.detached(operation: {
-            loader(saved.credentialSource)
-          }).value,
-          ProviderCredentialIdentity.fingerprint(of: current.accessToken) == fingerprint
-    else { throw AddedAccountImportError.savedIdentityUnverified }
-    let verified = fetched.verified(for: fingerprint)
-    storeClaudeLoginProfile(verified, accountID: saved.id)
-    return verified
   }
 }

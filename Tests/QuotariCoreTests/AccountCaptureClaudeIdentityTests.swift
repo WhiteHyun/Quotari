@@ -25,6 +25,7 @@ struct AccountCaptureClaudeIdentityTests {
       try service.captureClaudeAccount(
         account,
         expectedAccessTokenFingerprint: ProviderCredentialIdentity.fingerprint(of: "c-tok"),
+        profile: ClaudeProfile(accountID: "acct", organizationID: "org"),
         now: Date(timeIntervalSince1970: 1000)
       )
     }

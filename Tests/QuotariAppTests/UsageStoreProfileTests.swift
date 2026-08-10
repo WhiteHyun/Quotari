@@ -227,7 +227,7 @@ struct UsageStoreProfileTests {
     try await waitFor { store.accountLabel(for: Self.claudeAccount()) == "Claude Code" }
   }
 
-  @Test func verifiedAccountUUIDIdentifiesTheRotatedLiveTargetBeforeEmail() async throws {
+  @Test func verifiedStrongIdentityIdentifiesTheRotatedLiveTargetBeforeEmail() async throws {
     let outcome = try await switchOutcome(
       savedAccountID: "account-uuid",
       savedEmail: "old-address@example.com",
@@ -240,7 +240,7 @@ struct UsageStoreProfileTests {
     #expect(outcome.capturedCount == 1)
   }
 
-  @Test func verifiedEmailIdentifiesTheRotatedLiveTargetWhenUUIDIsUnavailable() async throws {
+  @Test func verifiedEmailAloneDoesNotOverwriteTheSavedTarget() async throws {
     let outcome = try await switchOutcome(
       savedAccountID: nil,
       savedEmail: "Dev@Example.com",
@@ -249,8 +249,8 @@ struct UsageStoreProfileTests {
       liveProfileAccessToken: "live-access"
     )
 
-    #expect(outcome.savedAccessToken == "live-access")
-    #expect(outcome.capturedCount == 1)
+    #expect(outcome.savedAccessToken == "saved-access")
+    #expect(outcome.capturedCount == 2)
   }
 
   @Test func staleProfileFingerprintCannotIdentifyTheLiveTarget() async throws {
@@ -262,8 +262,6 @@ struct UsageStoreProfileTests {
       liveProfileAccessToken: "stale-access"
     )
 
-    // The unverified profile is ignored. The live login is preserved as its
-    // own saved row instead of being mistaken for a fresher copy of the target.
     #expect(outcome.savedAccessToken == "saved-access")
     #expect(outcome.capturedCount == 2)
   }
@@ -315,11 +313,13 @@ struct UsageStoreProfileTests {
       savedAccount.id: ClaudeProfile(
         accountID: savedAccountID,
         email: savedEmail,
+        organizationID: savedAccountID.map { _ in "organization-uuid" },
         fingerprint: ProviderCredentialIdentity.fingerprint(of: "saved-access")
       ),
       liveAccount.id: ClaudeProfile(
         accountID: liveAccountID,
         email: liveEmail,
+        organizationID: liveAccountID.map { _ in "organization-uuid" },
         fingerprint: ProviderCredentialIdentity.fingerprint(of: liveProfileAccessToken)
       ),
     ])

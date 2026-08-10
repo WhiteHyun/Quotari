@@ -16,7 +16,7 @@ extension UsageStore {
       capturedCopies[account.id] == nil && account.credentialSource.isAutomaticallyCapturable
     }
     let drainedCredentialTransitions = await drainProviderActivityBeforeCapture(provider)
-    guard !candidates.isEmpty else {
+    guard !candidates.isEmpty || provider == .claude else {
       return captureResultWithoutCandidates(
         provider: provider,
         credentialTransitions: drainedCredentialTransitions
@@ -38,6 +38,7 @@ extension UsageStore {
       plans: planning.plans,
       drainedCredentialTransitions: credentialTransitions
     )
+    let didConsolidate = await consolidateCapturedClaudeDuplicates(from: outcomes)
     recordCapturedClaudeProfiles(from: outcomes)
     let failures = outcomes.compactMap { outcome in
       outcome.error.map { "Couldn’t manage “\(outcome.account.displayName)” automatically: \($0)" }
@@ -62,7 +63,7 @@ extension UsageStore {
       },
       credentialTransitions: credentialTransitions,
       verifiedDuplicateCredentialScopeIDs: planning.verifiedDuplicateCredentialScopeIDs,
-      didCapture: outcomes.contains { $0.captured != nil },
+      didChangeRegistry: outcomes.contains { $0.captured != nil } || didConsolidate,
       attempted: true
     )
   }
@@ -81,7 +82,7 @@ extension UsageStore {
       managedCopies: [:],
       credentialTransitions: credentialTransitions,
       verifiedDuplicateCredentialScopeIDs: [],
-      didCapture: false,
+      didChangeRegistry: false,
       attempted: true
     )
   }
@@ -193,6 +194,26 @@ extension UsageStore {
     }.value
   }
 
+  private func consolidateCapturedClaudeDuplicates(
+    from outcomes: [AutomaticAccountCaptureOutcome]
+  ) async -> Bool {
+    var changed = false
+    for outcome in outcomes {
+      guard let canonical = outcome.captured else { continue }
+      for redundant in outcome.redundantClaudeAccounts {
+        do {
+          try await consolidateDeadSavedClaudeRow(redundant, into: canonical)
+          changed = true
+        } catch {
+          // The canonical write already succeeded. Reference persistence or
+          // registry deletion failed closed, so the redundant row remains for
+          // a later scan instead of becoming a ghost.
+        }
+      }
+    }
+    return changed
+  }
+
   private func recordCapturedClaudeProfiles(from outcomes: [AutomaticAccountCaptureOutcome]) {
     var changed = false
     for outcome in outcomes {
@@ -234,7 +255,7 @@ struct AutomaticAccountCaptureResult: Sendable {
     managedCopies: [:],
     credentialTransitions: [:],
     verifiedDuplicateCredentialScopeIDs: [],
-    didCapture: false,
+    didChangeRegistry: false,
     attempted: false
   )
 
@@ -249,7 +270,7 @@ struct AutomaticAccountCaptureResult: Sendable {
   /// rediscovery observes the proven target generation.
   let credentialTransitions: [String: String]
   let verifiedDuplicateCredentialScopeIDs: Set<String>
-  let didCapture: Bool
+  let didChangeRegistry: Bool
   let attempted: Bool
 }
 
@@ -265,6 +286,7 @@ private struct AutomaticAccountCaptureOutcome: Sendable {
   let error: String?
   let refreshedClaudeRegistryID: String?
   let verifiedClaudeProfile: ClaudeProfile?
+  let redundantClaudeAccounts: [CapturedAccount]
   let selectionOriginOverride: ProviderAccount?
   let drainedCredentialTransitionTarget: String?
 
@@ -284,6 +306,10 @@ private struct AutomaticAccountCaptureOutcome: Sendable {
         error: nil,
         refreshedClaudeRegistryID: refreshed?.id,
         verifiedClaudeProfile: refreshed?.profile,
+        // `refreshCapturedClaudeAccount` can deliberately keep the stored
+        // payload when the live generation is not provably newer. Only an
+        // exact post-write fingerprint match authorizes destructive cleanup.
+        redundantClaudeAccounts: refreshed == nil ? [] : plan.redundantClaudeAccounts,
         selectionOriginOverride: selectionEvidence.override,
         drainedCredentialTransitionTarget: selectionEvidence.drainedCredentialTransitionTarget
       )
@@ -294,6 +320,7 @@ private struct AutomaticAccountCaptureOutcome: Sendable {
         error: error.localizedDescription,
         refreshedClaudeRegistryID: nil,
         verifiedClaudeProfile: nil,
+        redundantClaudeAccounts: [],
         // Planning may already have proven that this login belongs to an
         // existing saved account, and provider activity may already have
         // installed a new credential generation. A registry failure must not
@@ -343,6 +370,7 @@ private struct AutomaticAccountCaptureOutcome: Sendable {
       error: nil,
       refreshedClaudeRegistryID: nil,
       verifiedClaudeProfile: nil,
+      redundantClaudeAccounts: [],
       selectionOriginOverride: origin,
       drainedCredentialTransitionTarget: nil
     )

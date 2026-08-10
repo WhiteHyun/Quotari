@@ -13,15 +13,32 @@ extension AccountCaptureService {
   static func preferredCredentialSnapshot(
     existing: CapturedAccount,
     candidate: CapturedAccount
-  ) -> CapturedAccount {
+  ) throws -> CapturedAccount {
+    var resolved: CapturedAccount
     if let storedExpiry = expiry(provider: existing.provider, payload: existing.payload),
        let candidateExpiry = expiry(provider: candidate.provider, payload: candidate.payload),
        candidateExpiry < storedExpiry {
-      return existing
+      resolved = existing
+    } else if candidate.claudeOAuthAccount != nil {
+      resolved = candidate
+    } else {
+      var candidate = candidate
+      candidate.claudeOAuthAccount = existing.claudeOAuthAccount
+      resolved = candidate
     }
-    guard candidate.claudeOAuthAccount == nil else { return candidate }
-    var resolved = candidate
-    resolved.claudeOAuthAccount = existing.claudeOAuthAccount
+    switch (existing.claudeAccountIdentity, candidate.claudeAccountIdentity) {
+    case let (stored?, incoming?):
+      guard let merged = stored.merged(with: incoming) else {
+        throw CapturedAccountStoreError.conflictingClaudeIdentity
+      }
+      resolved.claudeAccountIdentity = merged
+    case let (stored?, nil):
+      resolved.claudeAccountIdentity = stored
+    case let (nil, incoming?):
+      resolved.claudeAccountIdentity = incoming
+    case (nil, nil):
+      break
+    }
     return resolved
   }
 }

@@ -255,14 +255,19 @@ extension UsageStore {
   }
 
   private func stableClaudeNotificationIdentity(from profile: ClaudeProfile) -> String? {
-    if let accountID = profile.accountID?.trimmingCharacters(in: .whitespacesAndNewlines),
-       !accountID.isEmpty {
-      return "id:\(accountID)"
+    guard let key = profile.accountIdentity?.key else { return nil }
+    let base: String
+    let organizationID: String?
+    switch key {
+    case let .account(accountID, organization):
+      base = "id:\(accountID)"
+      organizationID = organization
+    case let .email(email, organization):
+      base = "email:\(email)"
+      organizationID = organization
     }
-    guard let email = profile.email?.trimmingCharacters(in: .whitespacesAndNewlines),
-          !email.isEmpty
-    else { return nil }
-    return "email:\(email.lowercased())"
+    guard let organizationID else { return base }
+    return "\(base):org:\(organizationID)"
   }
 
   private nonisolated static func automaticClaudeSourceRank(

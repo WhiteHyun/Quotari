@@ -292,11 +292,7 @@ private func makeClaudeDuplicateReplacementFixture() throws -> ClaudeDuplicateRe
       claudeKeychainRead: { _ in keychainPayload.value }
     ),
     automaticallyCapturesDiscoveredAccounts: true,
-    profileFetcher: TokenClaudeProfileFetcher(profiles: [
-      "keychain-access": ClaudeProfile(accountID: "account-a", email: "a@example.com"),
-      "file-access": ClaudeProfile(accountID: "account-a", email: "a@example.com"),
-      "replacement-access": ClaudeProfile(accountID: "account-b", email: "b@example.com"),
-    ]),
+    profileFetcher: TokenClaudeProfileFetcher(profiles: raceClaudeProfiles()),
     claudeCredentialLoader: { source in
       credentials(for: source, keychainPayload: keychainPayload, registry: registry)
     },
@@ -368,15 +364,31 @@ private func makeChangedCanonicalFixture() throws -> ChangedCanonicalFixture {
     accountDiscovery: discovery,
     accountCapture: capture,
     automaticallyCapturesDiscoveredAccounts: true,
-    profileFetcher: TokenClaudeProfileFetcher(profiles: [
-      "keychain-access": ClaudeProfile(accountID: "account-a", email: "a@example.com"),
-      "file-access": ClaudeProfile(accountID: "account-a", email: "a@example.com"),
-      "replacement-access": ClaudeProfile(accountID: "account-b", email: "b@example.com"),
-    ]),
+    profileFetcher: TokenClaudeProfileFetcher(profiles: raceClaudeProfiles()),
     claudeCredentialLoader: { source in
       credentials(for: source, keychainPayload: keychainPayload, registry: registry)
     },
     startsAutomatically: false
   )
   return ChangedCanonicalFixture(directory: directory, registry: registry, store: store)
+}
+
+private func raceClaudeProfiles() -> [String: ClaudeProfile] {
+  [
+    "keychain-access": ClaudeProfile(
+      accountID: "account-a",
+      email: "a@example.com",
+      organizationID: "organization-a"
+    ),
+    "file-access": ClaudeProfile(
+      accountID: "account-a",
+      email: "a@example.com",
+      organizationID: "organization-a"
+    ),
+    "replacement-access": ClaudeProfile(
+      accountID: "account-b",
+      email: "b@example.com",
+      organizationID: "organization-b"
+    ),
+  ]
 }

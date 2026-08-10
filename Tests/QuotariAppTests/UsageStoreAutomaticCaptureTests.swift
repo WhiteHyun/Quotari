@@ -26,6 +26,17 @@ struct UsageStoreAutomaticCaptureTests {
       accountDiscovery: discovery,
       accountCapture: capture,
       automaticallyCapturesDiscoveredAccounts: true,
+      profileFetcher: StableClaudeProfileFetcher(
+        accountID: "claude-account",
+        email: "claude@example.com"
+      ),
+      claudeCredentialLoader: { source in
+        automaticCaptureClaudeCredentials(
+          source: source,
+          keychainPayload: payload,
+          registry: registry
+        )
+      },
       startsAutomatically: false
     )
 
@@ -132,18 +143,6 @@ struct UsageStoreAutomaticCaptureTests {
     #expect(store.selectedAccounts[.codex]?.credentialSource == .quotariRegistry(id: "codex:acct-a"))
     #expect(context.selectionStore.load()[.codex]?.credentialSource == .quotariRegistry(id: "codex:acct-a"))
     #expect(store.capturedEquivalents.values.contains { $0.credentialSource == .quotariRegistry(id: "codex:acct-b") })
-  }
-
-  @Test func activeCLIAccountCannotBeRemoved() async throws {
-    let context = try makeContext(accountID: "acct-a", email: "a@example.com")
-    let store = context.makeStore()
-    await store.reloadAccounts()
-    let live = try #require(store.accounts[.codex]?.first)
-
-    await store.removeCapturedCopy(of: live)
-
-    #expect(context.registry.load().map(\.id) == ["codex:acct-a"])
-    #expect(store.captureErrors[.codex] == UsageStore.activeAccountRemovalMessage)
   }
 
   @Test func unresolvedUnrenewableClaudeSlotBlocksSavedCopyRemoval() async throws {

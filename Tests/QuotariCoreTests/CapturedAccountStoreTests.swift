@@ -2,6 +2,14 @@ import Foundation
 @testable import QuotariCore
 import Testing
 
+// swiftlint:disable file_length
+
+extension CapturedAccountStore {
+  func pendingGrantData(id: String) -> Data? {
+    try? loadPendingGrantData(id: id)
+  }
+}
+
 /// An in-memory stand-in for the keychain so tests never touch the real one.
 /// `failingServices` makes reads of matching services throw, to exercise the
 /// fail-closed paths.
@@ -37,6 +45,10 @@ final class InMemoryKeychain: @unchecked Sendable {
 
   func failWrites(of service: String) {
     lock.withLock { _ = failingWrites.insert(service) }
+  }
+
+  func stopFailingWrites(of service: String) {
+    lock.withLock { _ = failingWrites.remove(service) }
   }
 
   func writeCount(of service: String) -> Int {
@@ -238,13 +250,23 @@ struct CapturedAccountStoreTests {
     )
     try store.save(account)
     let metadata = Data(#"{"accountUuid":"a","emailAddress":"a@example.com"}"#.utf8)
+    let identity = ClaudeAccountIdentity(
+      accountID: "account-a",
+      email: "a@example.com",
+      organizationID: "organization-a"
+    )
 
-    try store.updatePayload(id: account.id, claudeOAuthAccount: metadata) { _ in
+    try store.updatePayload(
+      id: account.id,
+      claudeOAuthAccount: metadata,
+      claudeAccountIdentity: identity
+    ) { _ in
       Data(#"{"claudeAiOauth":{"accessToken":"new","refreshToken":"new-ref"}}"#.utf8)
     }
 
     let refreshed = try #require(store.account(id: account.id))
     #expect(refreshed.claudeOAuthAccount == metadata)
+    #expect(refreshed.claudeAccountIdentity == identity)
     #expect(try ClaudeCredentialsStore.parse(refreshed.payload).accessToken == "new")
   }
 
@@ -359,4 +381,136 @@ struct CapturedAccountStoreTests {
     try store.save(Self.account(id: "a", capturedAt: Date(timeIntervalSince1970: 100)))
     #expect(store.load().map(\.id) == ["a", "b"])
   }
+}
+
+struct CapturedAccountStoreAtomicUpsertTests {
+  @Test func concurrentStrongIdentityUpsertsConvergeOnOneUUIDRow() async throws {
+    let keychain = InMemoryKeychain()
+    let service = "ConcurrentIdentityUpsertTest"
+    let store = CapturedAccountStore(keychain: keychain.store, service: service)
+    let identity = ClaudeAccountIdentity(
+      accountID: "account",
+      email: "user@example.com",
+      organizationID: "organization"
+    )
+    let candidates = [
+      claudeAccount(id: "claude:uuid-a", token: "token-a", identity: identity, capturedAt: 100),
+      claudeAccount(id: "claude:uuid-b", token: "token-b", identity: identity, capturedAt: 200),
+    ]
+
+    let upserted = try await withThrowingTaskGroup(
+      of: CapturedAccount.self,
+      returning: [CapturedAccount].self
+    ) { group in
+      for candidate in candidates {
+        group.addTask {
+          try store.upsert(
+            candidate,
+            matchingExisting: matchesStrongClaudeIdentity
+          ) { _, candidate in
+            candidate
+          }
+        }
+      }
+      var results: [CapturedAccount] = []
+      for try await result in group {
+        results.append(result)
+      }
+      return results
+    }
+
+    let persisted = try #require(store.load().first)
+    #expect(store.load().count == 1)
+    #expect(Set(upserted.map(\.id)) == [persisted.id])
+    #expect(["claude:uuid-a", "claude:uuid-b"].contains(persisted.id))
+    #expect(keychain.writeCount(of: "\(service)-Index") == 1)
+    let discardedID = persisted.id == "claude:uuid-a" ? "claude:uuid-b" : "claude:uuid-a"
+    #expect(!keychain.hasItem("\(service).\(discardedID)"))
+  }
+
+  @Test func ambiguousStrongIdentityUpsertLeavesRowsPayloadsAndIndexUntouched() throws {
+    let keychain = InMemoryKeychain()
+    let service = "AmbiguousIdentityUpsertTest"
+    let store = CapturedAccountStore(keychain: keychain.store, service: service)
+    let identity = ClaudeAccountIdentity(
+      accountID: "account",
+      email: "user@example.com",
+      organizationID: "organization"
+    )
+    let first = claudeAccount(id: "claude:uuid-a", token: "token-a", identity: identity, capturedAt: 100)
+    let second = claudeAccount(id: "claude:uuid-b", token: "token-b", identity: identity, capturedAt: 200)
+    try store.save(first)
+    try store.save(second)
+
+    let indexService = "\(service)-Index"
+    let firstService = "\(service).\(first.id)"
+    let secondService = "\(service).\(second.id)"
+    let candidateService = "\(service).claude:uuid-c"
+    let originalIndex = try #require(try keychain.read(indexService))
+    let originalFirst = try #require(try keychain.read(firstService))
+    let originalSecond = try #require(try keychain.read(secondService))
+    let originalAccounts = store.load()
+    let originalServiceCount = keychain.serviceCount
+    let originalWriteCounts = [
+      indexService: keychain.writeCount(of: indexService),
+      firstService: keychain.writeCount(of: firstService),
+      secondService: keychain.writeCount(of: secondService),
+    ]
+    let candidate = claudeAccount(
+      id: "claude:uuid-c",
+      token: "candidate-token",
+      identity: identity,
+      capturedAt: 300
+    )
+
+    #expect(throws: CapturedAccountStoreError.ambiguousIdentity) {
+      try store.upsert(
+        candidate,
+        matchingExisting: matchesStrongClaudeIdentity
+      ) { _, candidate in
+        candidate
+      }
+    }
+
+    #expect(try keychain.read(indexService) == originalIndex)
+    #expect(try keychain.read(firstService) == originalFirst)
+    #expect(try keychain.read(secondService) == originalSecond)
+    #expect(!keychain.hasItem(candidateService))
+    #expect(store.load() == originalAccounts)
+    #expect(keychain.serviceCount == originalServiceCount)
+    #expect(keychain.writeCount(of: indexService) == originalWriteCounts[indexService])
+    #expect(keychain.writeCount(of: firstService) == originalWriteCounts[firstService])
+    #expect(keychain.writeCount(of: secondService) == originalWriteCounts[secondService])
+    #expect(keychain.writeCount(of: candidateService) == 0)
+  }
+}
+
+private func claudeAccount(
+  id: String,
+  token: String,
+  identity: ClaudeAccountIdentity,
+  capturedAt: TimeInterval
+) -> CapturedAccount {
+  CapturedAccount(
+    id: id,
+    provider: .claude,
+    displayName: "Claude",
+    detail: "Keychain",
+    capturedAt: Date(timeIntervalSince1970: capturedAt),
+    origin: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+    payload: Data(#"{"claudeAiOauth":{"accessToken":"\#(token)","refreshToken":"shared-refresh"}}"#.utf8),
+    claudeAccountIdentity: identity
+  )
+}
+
+private func matchesStrongClaudeIdentity(
+  _ existing: CapturedAccount,
+  _ candidate: CapturedAccount
+) -> Bool {
+  guard let existingIdentity = existing.claudeAccountIdentity,
+        existingIdentity.isStrong,
+        let candidateIdentity = candidate.claudeAccountIdentity,
+        candidateIdentity.isStrong
+  else { return false }
+  return existingIdentity.identifiesSameAccount(as: candidateIdentity)
 }

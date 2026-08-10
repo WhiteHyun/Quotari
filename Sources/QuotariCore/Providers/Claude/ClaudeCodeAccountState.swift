@@ -35,14 +35,24 @@ public enum ClaudeCodeAccountState {
 
   public static func matches(_ oauthAccount: Data, profile: ClaudeProfile) -> Bool {
     guard let account = try? jsonObject(oauthAccount) else { return false }
-    if let expected = nonempty(profile.accountID),
-       let actual = nonempty(account["accountUuid"] as? String) {
+    let expectedIdentity = ClaudeAccountIdentity(profile: profile)
+    let actualIdentity = ClaudeAccountIdentity(
+      accountID: account["accountUuid"] as? String,
+      email: account["emailAddress"] as? String,
+      organizationID: account["organizationUuid"] as? String
+    )
+    if let expectedOrganization = expectedIdentity.organizationID,
+       expectedOrganization != actualIdentity.organizationID {
+      return false
+    }
+    if let expected = expectedIdentity.accountID,
+       let actual = actualIdentity.accountID {
       return expected == actual
     }
-    guard let expected = nonempty(profile.email),
-          let actual = nonempty(account["emailAddress"] as? String)
+    guard let expected = expectedIdentity.email,
+          let actual = actualIdentity.email
     else { return false }
-    return expected.localizedCaseInsensitiveCompare(actual) == .orderedSame
+    return expected == actual
   }
 
   /// Legacy Quotari rows predate exact `oauthAccount` snapshots. Build the

@@ -5,7 +5,7 @@ import Testing
 
 @MainActor
 struct UsageStoreAutomaticCaptureLatencyTests {
-  @Test func soleClaudeAccountIsManagedBeforeItsProfileRequestFinishes() async throws {
+  @Test func soleClaudeAccountWaitsForVerifiedIdentityBeforeItIsManaged() async throws {
     let directory = try TemporaryDirectory()
     let payload = claudePayload(accessToken: "claude-access", refreshToken: "claude-refresh")
     let registry = CapturedAccountStore.inMemoryForTesting()
@@ -38,21 +38,18 @@ struct UsageStoreAutomaticCaptureLatencyTests {
     }
     await profileFetcher.waitUntilRequestStarts()
 
-    #expect(await waitUntilFinished(completion))
-    #expect(registry.load().count == 1)
+    #expect(await !completion.isFinished)
+    #expect(registry.load().isEmpty)
 
     await profileFetcher.resume()
     await reload.value
-  }
-
-  private func waitUntilFinished(_ completion: AutomaticCaptureCompletion) async -> Bool {
-    for _ in 0 ..< 100 {
-      if await completion.isFinished {
-        return true
-      }
-      await Task.yield()
-    }
-    return await completion.isFinished
+    let captured = try #require(registry.load().first)
+    #expect(await completion.isFinished)
+    #expect(captured.claudeAccountIdentity == ClaudeAccountIdentity(
+      accountID: "claude-account",
+      email: "claude@example.com",
+      organizationID: "claude-organization"
+    ))
   }
 
   private nonisolated func claudeCredentials(
@@ -92,7 +89,11 @@ private actor GatedAutomaticCaptureProfileFetcher: ClaudeProfileFetching {
     if !isReleased {
       await withCheckedContinuation { releaseWaiters.append($0) }
     }
-    return ClaudeProfile(accountID: "claude-account", email: "claude@example.com")
+    return ClaudeProfile(
+      accountID: "claude-account",
+      email: "claude@example.com",
+      organizationID: "claude-organization"
+    )
   }
 
   func waitUntilRequestStarts() async {

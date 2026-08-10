@@ -55,4 +55,25 @@ struct ClaudeCodeAccountStateTests {
       profile: ClaudeProfile(accountID: "another-id", email: "old@example.com")
     ))
   }
+
+  @Test func organizationScopedProfileRequiresTheSameOrganizationSnapshot() {
+    let matching = Data(
+      #"{"accountUuid":"account-id","emailAddress":"person@example.com","organizationUuid":"org-a"}"#.utf8
+    )
+    let differentOrganization = Data(
+      #"{"accountUuid":"account-id","emailAddress":"person@example.com","organizationUuid":"org-b"}"#.utf8
+    )
+    let missingOrganization = Data(
+      #"{"accountUuid":"account-id","emailAddress":"person@example.com"}"#.utf8
+    )
+    let profile = ClaudeProfile(
+      accountID: "account-id",
+      email: "person@example.com",
+      organizationID: "org-a"
+    )
+
+    #expect(ClaudeCodeAccountState.matches(matching, profile: profile))
+    #expect(!ClaudeCodeAccountState.matches(differentOrganization, profile: profile))
+    #expect(!ClaudeCodeAccountState.matches(missingOrganization, profile: profile))
+  }
 }

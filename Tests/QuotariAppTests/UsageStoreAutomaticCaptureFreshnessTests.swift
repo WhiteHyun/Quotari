@@ -35,6 +35,7 @@ struct UsageStoreAutomaticCaptureFreshnessTests {
     await reload.value
     await fixture.store.inFlightRefresh?.value
 
+    #expect(fixture.store.captureErrors[.claude] == nil)
     let saved = try #require(fixture.registry.load().first)
     let credentials = try ClaudeCredentialsStore.parse(saved.payload)
     let live = try #require(fixture.store.accounts[.claude]?.first(where: { !$0.credentialSource.isCaptured }))
@@ -55,6 +56,7 @@ struct UsageStoreAutomaticCaptureFreshnessTests {
 
     await fixture.store.reloadAccounts()
 
+    #expect(fixture.store.captureErrors[.claude] == nil)
     let saved = try #require(fixture.registry.load().first)
     let live = try #require(fixture.store.accounts[.claude]?.first(where: { !$0.credentialSource.isCaptured }))
     #expect(fixture.store.selectedAccounts[.claude] == live)
@@ -172,6 +174,17 @@ private func makeClaudeRotationFixture() async throws -> ClaudeRotationFixture {
       claudeKeychainRead: { _ in payload.value }
     ),
     automaticallyCapturesDiscoveredAccounts: true,
+    profileFetcher: StableClaudeProfileFetcher(
+      accountID: "rotation-account",
+      email: "rotation@example.com"
+    ),
+    claudeCredentialLoader: {
+      automaticCaptureClaudeCredentials(
+        source: $0,
+        keychainPayload: payload.value,
+        registry: registry
+      )
+    },
     startsAutomatically: false
   )
   return ClaudeRotationFixture(

@@ -1,3 +1,5 @@
+import CustomDump
+
 // Capture and maintenance scenarios share the same credential fixtures.
 // swiftlint:disable file_length
 import Foundation
@@ -109,9 +111,11 @@ struct AccountCaptureServiceTests {
     let keychain = InMemoryKeychain()
     let claudePayload = #"{"claudeAiOauth":{"accessToken":"c-tok","refreshToken":"c-ref"}}"#
     let store = makeStore(keychain)
+    let uuid = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000123"))
     let service = AccountCaptureService(
       capturedAccounts: store,
-      claudeKeychainRead: { _ in Data(claudePayload.utf8) }
+      claudeKeychainRead: { _ in Data(claudePayload.utf8) },
+      makeUUID: { uuid }
     )
     let account = ProviderAccount(
       provider: .claude, displayName: "Claude Code", detail: "Keychain",
@@ -120,7 +124,7 @@ struct AccountCaptureServiceTests {
 
     let captured = try service.capture(account, now: captureNow)
 
-    #expect(captured.id.hasPrefix("claude:fp:"))
+    #expect(captured.id == "claude:00000000-0000-0000-0000-000000000123")
     let credentials = try ClaudeCredentialsStore.load(
       source: .quotariRegistry(id: captured.id), capturedAccounts: store
     )
@@ -146,7 +150,397 @@ struct AccountCaptureServiceTests {
     // Same refresh token ⇒ same identity ⇒ one entry, not two.
     #expect(store.load().count == 1)
   }
+}
 
+struct AccountCaptureStableIdentityTests {
+  @Test func verifiedClaudeIdentityKeepsOneLocalRowAcrossTokenRotation() throws {
+    let store = makeStore(InMemoryKeychain())
+    let firstUUID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000101"))
+    let secondUUID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000102"))
+    let identity = ClaudeAccountIdentity(
+      accountID: "ACCOUNT-A",
+      email: "User@Example.com",
+      organizationID: "ORG-A"
+    )
+    let first = try AccountCaptureService(capturedAccounts: store, makeUUID: { firstUUID })
+      .captureRawPayload(
+        provider: .claude,
+        origin: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+        payload: Data(#"{"claudeAiOauth":{"accessToken":"access-a","refreshToken":"refresh-a"}}"#.utf8),
+        now: captureNow,
+        claudeAccountIdentity: identity
+      )
+    let rotated = try AccountCaptureService(capturedAccounts: store, makeUUID: { secondUUID })
+      .captureRawPayload(
+        provider: .claude,
+        origin: .claudeKeychain(service: ClaudeCredentialsStore.keychainService),
+        payload: Data(#"{"claudeAiOauth":{"accessToken":"access-b","refreshToken":"refresh-b"}}"#.utf8),
+        now: captureNow.addingTimeInterval(60),
+        claudeAccountIdentity: identity
+      )
+
+    let saved = try #require(rotated)
+    expectNoDifference(store.load().map(\.id), ["claude:00000000-0000-0000-0000-000000000101"])
+    #expect(first?.id == saved.id)
+    expectNoDifference(saved.claudeAccountIdentity, identity)
+    #expect(try ClaudeCredentialsStore.parse(saved.payload).refreshToken == "refresh-b")
+  }
+
+  @Test func weakRecaptureCannotDowngradeStrongIdentity() throws {
+    let store = makeStore(InMemoryKeychain())
+    let strong = ClaudeAccountIdentity(
+      accountID: "account",
+      email: "user@example.com",
+      organizationID: "organization"
+    )
+    let first = try captureClaudeTestRow(
+      store: store,
+      uuidSuffix: 501,
+      identity: strong
+    )
+
+    let recaptured = try captureClaudeTestRow(
+      store: store,
+      uuidSuffix: 502,
+      identity: ClaudeAccountIdentity(email: "user@example.com")
+    )
+
+    #expect(recaptured.id == first.id)
+    expectNoDifference(recaptured.claudeAccountIdentity, strong)
+    #expect(store.load().count == 1)
+  }
+
+  @Test func strongRecaptureEnrichesWeakIdentityWithoutRekeying() throws {
+    let store = makeStore(InMemoryKeychain())
+    let first = try captureClaudeTestRow(
+      store: store,
+      uuidSuffix: 511,
+      identity: ClaudeAccountIdentity(email: "user@example.com")
+    )
+    let strong = ClaudeAccountIdentity(
+      accountID: "account",
+      email: "user@example.com",
+      organizationID: "organization"
+    )
+
+    let recaptured = try captureClaudeTestRow(
+      store: store,
+      uuidSuffix: 512,
+      identity: strong
+    )
+
+    #expect(recaptured.id == first.id)
+    expectNoDifference(recaptured.claudeAccountIdentity, strong)
+    #expect(store.load().count == 1)
+  }
+
+  @Test func sameCredentialWithConflictingStrongIdentityFailsClosed() throws {
+    let store = makeStore(InMemoryKeychain())
+    let original = ClaudeAccountIdentity(accountID: "account-a", organizationID: "organization")
+    let first = try captureClaudeTestRow(
+      store: store,
+      uuidSuffix: 521,
+      identity: original,
+      accessToken: "original-access"
+    )
+    let originalPayload = first.payload
+
+    #expect(throws: CapturedAccountStoreError.conflictingClaudeIdentity) {
+      try captureClaudeTestRow(
+        store: store,
+        uuidSuffix: 522,
+        identity: ClaudeAccountIdentity(accountID: "account-b", organizationID: "organization"),
+        accessToken: "candidate-access"
+      )
+    }
+
+    #expect(store.load().map(\.id) == [first.id])
+    expectNoDifference(store.account(id: first.id)?.claudeAccountIdentity, original)
+    expectNoDifference(store.account(id: first.id)?.payload, originalPayload)
+    #expect(try ClaudeCredentialsStore.parse(originalPayload).accessToken == "original-access")
+  }
+
+  @Test func sameClaudeAccountInDifferentOrganizationsUsesSeparateRows() throws {
+    let store = makeStore(InMemoryKeychain())
+    let firstUUID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000201"))
+    let secondUUID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000202"))
+    _ = try AccountCaptureService(capturedAccounts: store, makeUUID: { firstUUID }).captureRawPayload(
+      provider: .claude,
+      origin: .claudeKeychain(service: "first"),
+      payload: Data(#"{"claudeAiOauth":{"accessToken":"a","refreshToken":"ra"}}"#.utf8),
+      now: captureNow,
+      claudeAccountIdentity: ClaudeAccountIdentity(
+        accountID: "acct",
+        email: "same@example.com",
+        organizationID: "org-a"
+      )
+    )
+    _ = try AccountCaptureService(capturedAccounts: store, makeUUID: { secondUUID }).captureRawPayload(
+      provider: .claude,
+      origin: .claudeKeychain(service: "second"),
+      payload: Data(#"{"claudeAiOauth":{"accessToken":"b","refreshToken":"rb"}}"#.utf8),
+      now: captureNow,
+      claudeAccountIdentity: ClaudeAccountIdentity(
+        accountID: "acct",
+        email: "same@example.com",
+        organizationID: "org-b"
+      )
+    )
+
+    expectNoDifference(
+      store.load().map(\.id),
+      [
+        "claude:00000000-0000-0000-0000-000000000201",
+        "claude:00000000-0000-0000-0000-000000000202",
+      ]
+    )
+  }
+
+  @Test func exactCredentialBackfillsIdentityWithoutRekeyingLegacyRow() throws {
+    let store = makeStore(InMemoryKeychain())
+    let payload = Data(#"{"claudeAiOauth":{"accessToken":"legacy-a","refreshToken":"legacy-r"}}"#.utf8)
+    try store.save(CapturedAccount(
+      id: "claude:fp:legacy",
+      provider: .claude,
+      displayName: "Claude Code",
+      detail: "Saved in Quotari",
+      capturedAt: captureNow,
+      origin: .claudeKeychain(service: "legacy"),
+      payload: payload
+    ))
+    let identity = ClaudeAccountIdentity(accountID: "acct", email: "user@example.com", organizationID: "org")
+    let uuid = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000301"))
+
+    let captured = try AccountCaptureService(capturedAccounts: store, makeUUID: { uuid }).captureRawPayload(
+      provider: .claude,
+      origin: .claudeKeychain(service: "legacy"),
+      payload: payload,
+      now: captureNow,
+      claudeAccountIdentity: identity
+    )
+
+    #expect(captured?.id == "claude:fp:legacy")
+    expectNoDifference(store.account(id: "claude:fp:legacy")?.claudeAccountIdentity, identity)
+    #expect(store.load().count == 1)
+  }
+
+  @Test func uuidCaptureRetryRepairsConfirmedDanglingIndexEntry() throws {
+    let keychain = InMemoryKeychain()
+    let prefix = "Test-Capture-Dangling"
+    let store = CapturedAccountStore(
+      keychain: keychain.store,
+      itemPrefix: prefix,
+      indexService: "\(prefix)-Index"
+    )
+    let firstUUID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000401"))
+    let secondUUID = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000402"))
+    let firstItem = "\(prefix).claude:00000000-0000-0000-0000-000000000401"
+    let payload = Data(#"{"claudeAiOauth":{"accessToken":"a","refreshToken":"r"}}"#.utf8)
+    let identity = ClaudeAccountIdentity(accountID: "acct", organizationID: "org")
+    keychain.failWrites(of: firstItem)
+
+    #expect(throws: (any Error).self) {
+      _ = try AccountCaptureService(capturedAccounts: store, makeUUID: { firstUUID }).captureRawPayload(
+        provider: .claude,
+        origin: .claudeKeychain(service: "Claude"),
+        payload: payload,
+        now: captureNow,
+        claudeAccountIdentity: identity
+      )
+    }
+    keychain.stopFailingWrites(of: firstItem)
+
+    let retried = try AccountCaptureService(capturedAccounts: store, makeUUID: { secondUUID }).captureRawPayload(
+      provider: .claude,
+      origin: .claudeKeychain(service: "Claude"),
+      payload: payload,
+      now: captureNow,
+      claudeAccountIdentity: identity
+    )
+
+    #expect(retried?.id == "claude:00000000-0000-0000-0000-000000000402")
+    expectNoDifference(store.load().map(\.id), ["claude:00000000-0000-0000-0000-000000000402"])
+    let indexData = try #require(try keychain.read("\(prefix)-Index"))
+    let index = try #require(JSONSerialization.jsonObject(with: indexData) as? [String: Any])
+    try expectNoDifference(
+      #require(index["ids"] as? [String]),
+      ["claude:00000000-0000-0000-0000-000000000402"]
+    )
+  }
+}
+
+struct AccountCaptureIdentityMergeTests {
+  @Test func exactCredentialEnrichesEmailOnlyIdentityWithAccountUUID() throws {
+    let store = makeStore(InMemoryKeychain())
+    let first = try captureClaudeTestRow(
+      store: store,
+      uuidSuffix: 521,
+      identity: ClaudeAccountIdentity(email: "old@example.com"),
+      accessToken: "old-access"
+    )
+    let enriched = ClaudeAccountIdentity(accountID: "account", email: "new@example.com")
+
+    let recaptured = try captureClaudeTestRow(
+      store: store,
+      uuidSuffix: 522,
+      identity: enriched,
+      accessToken: "new-access"
+    )
+
+    #expect(recaptured.id == first.id)
+    expectNoDifference(recaptured.claudeAccountIdentity, enriched)
+    #expect(store.load().count == 1)
+  }
+
+  @Test func exactCredentialEnrichesChangedEmailOnlyIdentityToStrong() throws {
+    let store = makeStore(InMemoryKeychain())
+    let first = try captureClaudeTestRow(
+      store: store,
+      uuidSuffix: 523,
+      identity: ClaudeAccountIdentity(email: "old@example.com"),
+      accessToken: "old-access"
+    )
+    let strong = ClaudeAccountIdentity(
+      accountID: "account",
+      email: "new@example.com",
+      organizationID: "organization"
+    )
+
+    let recaptured = try captureClaudeTestRow(
+      store: store,
+      uuidSuffix: 524,
+      identity: strong,
+      accessToken: "new-access"
+    )
+
+    #expect(recaptured.id == first.id)
+    expectNoDifference(recaptured.claudeAccountIdentity, strong)
+    #expect(store.load().count == 1)
+  }
+
+  @Test func partialUUIDIdentityEnrichesToStrongIdentityWhenEmailChanges() throws {
+    let store = makeStore(InMemoryKeychain())
+    let first = try captureClaudeTestRow(
+      store: store,
+      uuidSuffix: 531,
+      identity: ClaudeAccountIdentity(accountID: "account", email: "old@example.com"),
+      accessToken: "old-access"
+    )
+    let strong = ClaudeAccountIdentity(
+      accountID: "account",
+      email: "new@example.com",
+      organizationID: "organization"
+    )
+
+    let recaptured = try captureClaudeTestRow(
+      store: store,
+      uuidSuffix: 532,
+      identity: strong,
+      accessToken: "new-access"
+    )
+
+    #expect(recaptured.id == first.id)
+    expectNoDifference(recaptured.claudeAccountIdentity, strong)
+    #expect(try ClaudeCredentialsStore.parse(recaptured.payload).accessToken == "new-access")
+    #expect(store.load().count == 1)
+  }
+
+  @Test func sameStrongIdentityUpdatesChangedEmailAcrossTokenRotation() throws {
+    let store = makeStore(InMemoryKeychain())
+    let first = try captureClaudeTestRow(
+      store: store,
+      uuidSuffix: 541,
+      identity: ClaudeAccountIdentity(
+        accountID: "account",
+        email: "old@example.com",
+        organizationID: "organization"
+      ),
+      accessToken: "old-access",
+      refreshToken: "old-refresh"
+    )
+    let updatedIdentity = ClaudeAccountIdentity(
+      accountID: "account",
+      email: "new@example.com",
+      organizationID: "organization"
+    )
+
+    let recaptured = try captureClaudeTestRow(
+      store: store,
+      uuidSuffix: 542,
+      identity: updatedIdentity,
+      accessToken: "new-access",
+      refreshToken: "new-refresh"
+    )
+
+    #expect(recaptured.id == first.id)
+    expectNoDifference(recaptured.claudeAccountIdentity, updatedIdentity)
+    #expect(try ClaudeCredentialsStore.parse(recaptured.payload).refreshToken == "new-refresh")
+    #expect(store.load().count == 1)
+  }
+
+  @Test func missingIncomingEmailPreservesStoredStrongIdentityEmail() throws {
+    let store = makeStore(InMemoryKeychain())
+    let originalIdentity = ClaudeAccountIdentity(
+      accountID: "account",
+      email: "keep@example.com",
+      organizationID: "organization"
+    )
+    let first = try captureClaudeTestRow(
+      store: store,
+      uuidSuffix: 551,
+      identity: originalIdentity,
+      accessToken: "old-access",
+      refreshToken: "old-refresh"
+    )
+
+    let recaptured = try captureClaudeTestRow(
+      store: store,
+      uuidSuffix: 552,
+      identity: ClaudeAccountIdentity(accountID: "account", organizationID: "organization"),
+      accessToken: "new-access",
+      refreshToken: "new-refresh"
+    )
+
+    #expect(recaptured.id == first.id)
+    expectNoDifference(recaptured.claudeAccountIdentity, originalIdentity)
+    #expect(store.load().count == 1)
+  }
+
+  @Test func sameAccountInDifferentOrganizationCannotOverwriteExactCredential() throws {
+    let store = makeStore(InMemoryKeychain())
+    let originalIdentity = ClaudeAccountIdentity(
+      accountID: "account",
+      email: "user@example.com",
+      organizationID: "organization-a"
+    )
+    let first = try captureClaudeTestRow(
+      store: store,
+      uuidSuffix: 561,
+      identity: originalIdentity,
+      accessToken: "old-access"
+    )
+    let originalPayload = first.payload
+
+    #expect(throws: CapturedAccountStoreError.conflictingClaudeIdentity) {
+      try captureClaudeTestRow(
+        store: store,
+        uuidSuffix: 562,
+        identity: ClaudeAccountIdentity(
+          accountID: "account",
+          email: "user@example.com",
+          organizationID: "organization-b"
+        ),
+        accessToken: "new-access"
+      )
+    }
+
+    #expect(store.load().map(\.id) == [first.id])
+    expectNoDifference(store.account(id: first.id)?.claudeAccountIdentity, originalIdentity)
+    expectNoDifference(store.account(id: first.id)?.payload, originalPayload)
+  }
+}
+
+struct AccountCapturePayloadTests {
   @Test func claudeCaptureDropsUnrelatedMcpSecrets() throws {
     let keychain = InMemoryKeychain()
     let store = makeStore(keychain)
@@ -328,6 +722,27 @@ private func makeStore(_ keychain: InMemoryKeychain) -> CapturedAccountStore {
   CapturedAccountStore(keychain: keychain.store, service: "Test-Capture-\(UUID().uuidString)")
 }
 
+private func captureClaudeTestRow(
+  store: CapturedAccountStore,
+  uuidSuffix: Int,
+  identity: ClaudeAccountIdentity,
+  accessToken: String = "access",
+  refreshToken: String = "refresh"
+) throws -> CapturedAccount {
+  let suffix = String(format: "%012d", uuidSuffix)
+  let uuid = try #require(UUID(uuidString: "00000000-0000-0000-0000-\(suffix)"))
+  let captured = try AccountCaptureService(capturedAccounts: store, makeUUID: { uuid }).captureRawPayload(
+    provider: .claude,
+    origin: .claudeKeychain(service: "Claude"),
+    payload: Data(
+      #"{"claudeAiOauth":{"accessToken":"\#(accessToken)","refreshToken":"\#(refreshToken)"}}"#.utf8
+    ),
+    now: captureNow,
+    claudeAccountIdentity: identity
+  )
+  return try #require(captured)
+}
+
 /// Upkeep of saved copies while their identity is the live CLI login.
 struct AccountCaptureCopyMaintenanceTests {
   @Test func syncKeepsAHiddenSavedCopyTrackingTheLiveRotation() throws {
@@ -359,48 +774,6 @@ struct AccountCaptureCopyMaintenanceTests {
     )
     #expect(credentials.accessToken == "tok-9")
     #expect(credentials.refreshToken == "ref-9")
-  }
-
-  @Test func removeCapturedCopyWorksWithoutARefreshToken() throws {
-    let store = makeStore(InMemoryKeychain())
-    let service = AccountCaptureService(capturedAccounts: store)
-    let savedURL = try codexAuthFile(codexPayload)
-    defer { try? FileManager.default.removeItem(at: savedURL) }
-    _ = try service.capture(ProviderAccount(
-      provider: .codex, displayName: "Codex", detail: "Default",
-      credentialSource: .codexAuthFile(path: savedURL.path)
-    ), now: captureNow)
-
-    // The CLI slot's current payload lost its refresh token; identity alone
-    // must still be enough to delete the saved copy it hides.
-    let bareURL = try codexAuthFile(#"{"tokens":{"access_token":"tok-2","account_id":"acct-1"}}"#)
-    defer { try? FileManager.default.removeItem(at: bareURL) }
-
-    let removed = try service.removeCapturedCopy(of: ProviderAccount(
-      provider: .codex, displayName: "Codex", detail: "Default",
-      credentialSource: .codexAuthFile(path: bareURL.path)
-    ))
-
-    #expect(removed == "codex:acct-1")
-    #expect(store.load().isEmpty)
-  }
-
-  @Test func removeCapturedCopyDeletesTheSavedCopyOfALiveIdentity() throws {
-    let store = makeStore(InMemoryKeychain())
-    let service = AccountCaptureService(capturedAccounts: store)
-    let url = try codexAuthFile(codexPayload)
-    defer { try? FileManager.default.removeItem(at: url) }
-    let account = ProviderAccount(
-      provider: .codex, displayName: "Codex", detail: "Default",
-      credentialSource: .codexAuthFile(path: url.path)
-    )
-    _ = try service.capture(account, now: captureNow)
-    #expect(store.load().count == 1)
-
-    let removed = try service.removeCapturedCopy(of: account)
-
-    #expect(removed == "codex:acct-1")
-    #expect(store.load().isEmpty)
   }
 
   @Test func syncNeverLetsAStaleSlotClobberAFresherSavedPair() throws {
