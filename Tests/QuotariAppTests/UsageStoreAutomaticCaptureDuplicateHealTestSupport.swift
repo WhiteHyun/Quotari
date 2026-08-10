@@ -18,7 +18,8 @@ struct DuplicateHealReloadFixture {
 func makeDuplicateHealReloadFixture(
   canonicalAlreadyLive: Bool,
   allowsCanonicalRefresh: Bool = true,
-  usesPersistedIdentityWithoutProfileCache: Bool = false
+  usesPersistedIdentityWithoutProfileCache: Bool = false,
+  hasMalformedSelectionConfiguration: Bool = false
 ) throws -> DuplicateHealReloadFixture {
   let options = DuplicateHealReloadOptions(
     canonicalAlreadyLive: canonicalAlreadyLive,
@@ -33,7 +34,11 @@ func makeDuplicateHealReloadFixture(
   let monitoringStore = ProviderAccountMonitoringStore(
     url: state.directory.url.appendingPathComponent("monitoring.json")
   )
-  try selectionStore.save([.claude: state.redundant.providerAccount])
+  if hasMalformedSelectionConfiguration {
+    try Data("not-json".utf8).write(to: selectionStore.url)
+  } else {
+    try selectionStore.save([.claude: state.redundant.providerAccount])
+  }
   try monitoringStore.save([.claude: [state.redundant.providerAccount]])
   let store = duplicateHealReloadUsageStore(
     state: state,

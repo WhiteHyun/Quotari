@@ -301,3 +301,21 @@ struct AutomaticCaptureDuplicateHealTests {
     try FileManager.default.removeItem(at: url)
   }
 }
+
+extension AutomaticCaptureDuplicateHealTests {
+  @Test func malformedSelectionConfigurationIsNeverOverwrittenByCleanup() async throws {
+    let fixture = try makeDuplicateHealReloadFixture(
+      canonicalAlreadyLive: false,
+      hasMalformedSelectionConfiguration: true
+    )
+    let malformed = try Data(contentsOf: fixture.selectionStore.url)
+
+    await fixture.store.reloadAccounts()
+    expectDuplicateRows(fixture)
+    await fixture.store.reloadAccounts()
+
+    expectDuplicateRows(fixture)
+    #expect(!fixture.store.isSelectionConfigurationLoaded)
+    #expect(try Data(contentsOf: fixture.selectionStore.url) == malformed)
+  }
+}

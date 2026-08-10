@@ -161,7 +161,7 @@ extension ClaudeAccountSwitchLiveE2ESafetyTests {
   }
 
   @Test
-  func cleanupPreservesBackupWithoutOrganizationUUID() throws {
+  func cleanupRemovesExactBackupWithoutStrongCachedIdentity() throws {
     let fixture = try cleanupFixture(identity: ClaudeAccountIdentity(
       accountID: original.accountID
     ))
@@ -172,7 +172,34 @@ extension ClaudeAccountSwitchLiveE2ESafetyTests {
       original: fixture.original
     )
 
-    #expect(fixture.registry.account(id: fixture.backupID) != nil)
+    #expect(fixture.registry.account(id: fixture.backupID) == nil)
+  }
+
+  @Test
+  func restorationAcceptsExactBackupWithoutCachedIdentity() throws {
+    let fixture = try cleanupFixture(identity: nil)
+
+    let restorable = restorableOriginalCapture(
+      from: fixture.registry.load(),
+      original: fixture.original
+    )
+
+    #expect(restorable?.id == fixture.backupID)
+  }
+
+  @Test
+  func restorationRejectsExactBackupWithConflictingStrongIdentity() throws {
+    let fixture = try cleanupFixture(identity: ClaudeAccountIdentity(
+      accountID: original.accountID,
+      organizationID: "other-organization"
+    ))
+
+    let restorable = restorableOriginalCapture(
+      from: fixture.registry.load(),
+      original: fixture.original
+    )
+
+    #expect(restorable == nil)
   }
 }
 
@@ -283,7 +310,7 @@ private extension ClaudeAccountSwitchLiveE2ESafetyTests {
   }
 
   private func cleanupFixture(
-    identity: ClaudeAccountIdentity
+    identity: ClaudeAccountIdentity?
   ) throws -> ClaudeSwitchCleanupFixture {
     let payload = Data(
       #"{"claudeAiOauth":{"accessToken":"test-access","refreshToken":"test-refresh"}}"#.utf8

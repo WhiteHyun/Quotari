@@ -85,7 +85,8 @@ Claude account: it switches the shared Claude Code credential, performs the
 immediate Anthropic usage fetch, starts a new `claude auth status` process to
 verify that the target is still logged in, switches back, verifies the restored
 login in another fresh process, and removes a newly created original-login
-backup only when its account identity proves that the round trip created it.
+backup only when its exact credential generation and any strong account
+identity do not conflict with the verified original login.
 
 Quit the Quotari app and every Claude Code session first. The target must already
 be saved in Quotari, have verified account and organization UUIDs that agree

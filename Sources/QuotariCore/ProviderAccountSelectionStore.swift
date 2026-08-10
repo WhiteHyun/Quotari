@@ -19,10 +19,25 @@ public struct ProviderAccountSelectionStore: Sendable {
   }
 
   public func load() -> [UsageProvider: ProviderAccount] {
-    guard let data = try? Data(contentsOf: url),
-          let payload = try? JSONDecoder().decode(Payload.self, from: data)
-    else { return [:] }
-    return Dictionary(uniqueKeysWithValues: payload.selections.map { ($0.provider, $0.account) })
+    (try? loadValidated()) ?? [:]
+  }
+
+  /// A missing file is a valid first-launch state. Existing data that cannot
+  /// be read or decoded is surfaced so callers performing destructive
+  /// migrations never replace an unknown durable selection with an empty map.
+  public func loadValidated() throws -> [UsageProvider: ProviderAccount] {
+    guard FileManager.default.fileExists(atPath: url.path) else { return [:] }
+    let data = try Data(contentsOf: url)
+    let payload = try JSONDecoder().decode(Payload.self, from: data)
+    return try payload.selections.reduce(into: [:]) { selections, selection in
+      guard selections[selection.provider] == nil else {
+        throw DecodingError.dataCorrupted(.init(
+          codingPath: [],
+          debugDescription: "Duplicate account selection for \(selection.provider.rawValue)"
+        ))
+      }
+      selections[selection.provider] = selection.account
+    }
   }
 
   public func save(_ selections: [UsageProvider: ProviderAccount]) throws {

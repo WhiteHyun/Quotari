@@ -205,10 +205,10 @@ struct ClaudeAccountSwitchLiveE2ETests {
     }
 
     let registered = try context.registry.registeredAccounts(for: .claude)
-    guard let originalCapture = registered.first(where: {
-      $0.claudeAccountIdentity.map { stronglyMatches($0, profile: original.profile) } == true
-        && ProviderCredentialIdentity.key(provider: .claude, payload: $0.payload) == original.identity
-    }) else {
+    guard let originalCapture = restorableOriginalCapture(
+      from: registered,
+      original: original
+    ) else {
       throw ClaudeSwitchLiveE2EError.originalBackupUnavailable
     }
     await store.reloadAccounts()

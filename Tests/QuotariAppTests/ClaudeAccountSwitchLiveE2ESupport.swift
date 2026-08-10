@@ -216,17 +216,28 @@ func removeTestCreatedOriginalBackup(
   original: ClaudeOriginalAccountState
 ) throws {
   let candidates = try registry.registeredAccounts(for: .claude).filter { !ids.contains($0.id) }
-  for candidate in candidates {
-    let matchesAccountIdentity = candidate.claudeAccountIdentity.map {
-      stronglyMatches($0, profile: original.profile)
-    } == true
-    let matchesCredential = ProviderCredentialIdentity.key(
-      provider: .claude,
-      payload: candidate.payload
-    ) == original.identity
-    guard matchesAccountIdentity, matchesCredential else { continue }
+  for candidate in candidates where isRestorableOriginalCapture(candidate, original: original) {
     try registry.remove(id: candidate.id)
   }
+}
+
+func restorableOriginalCapture(
+  from accounts: [CapturedAccount],
+  original: ClaudeOriginalAccountState
+) -> CapturedAccount? {
+  let exactGeneration = accounts.filter {
+    ProviderCredentialIdentity.key(provider: .claude, payload: $0.payload) == original.identity
+  }
+  return exactGeneration.first(where: {
+    $0.claudeAccountIdentity.map { stronglyMatches($0, profile: original.profile) } == true
+  }) ?? exactGeneration.first(where: { $0.claudeAccountIdentity?.isStrong != true })
+}
+
+private func isRestorableOriginalCapture(
+  _ account: CapturedAccount,
+  original: ClaudeOriginalAccountState
+) -> Bool {
+  restorableOriginalCapture(from: [account], original: original) != nil
 }
 
 func stronglyMatches(_ identity: ClaudeAccountIdentity, profile: ClaudeProfile) -> Bool {

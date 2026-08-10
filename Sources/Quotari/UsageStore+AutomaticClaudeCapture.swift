@@ -134,9 +134,7 @@ extension UsageStore {
     from redundant: ProviderAccount,
     to canonical: ProviderAccount
   ) throws {
-    guard isMonitoringConfigurationLoaded else {
-      throw ClaudeRegistryReferenceMigrationError.monitoringConfigurationUnavailable
-    }
+    try requireLoadedClaudeRegistryReferenceConfigurations()
 
     var selections = persistableSelections()
     if selections[.claude]?.id == redundant.id {
@@ -191,6 +189,15 @@ extension UsageStore {
     accountUsage[.claude]?[redundant.id] = nil
     notificationScopeIDsByAccountID[redundant.id] = nil
     accountRevisions[.claude, default: 0] &+= 1
+  }
+
+  private func requireLoadedClaudeRegistryReferenceConfigurations() throws {
+    guard isSelectionConfigurationLoaded else {
+      throw ClaudeRegistryReferenceMigrationError.selectionConfigurationUnavailable
+    }
+    guard isMonitoringConfigurationLoaded else {
+      throw ClaudeRegistryReferenceMigrationError.monitoringConfigurationUnavailable
+    }
   }
 
   private func replacingAccount(
@@ -369,5 +376,6 @@ extension UsageStore {
 }
 
 private enum ClaudeRegistryReferenceMigrationError: Error {
+  case selectionConfigurationUnavailable
   case monitoringConfigurationUnavailable
 }
