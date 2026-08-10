@@ -11,7 +11,7 @@ struct ProviderAccountPopoverPresentationTests {
   @Test func longProcessListKeepsTheConfirmationHeightBounded() {
     _ = NSApplication.shared
     let state = ConfirmationState()
-    state.confirmation = .switchCLI(
+    state.confirmation = .switchBlocked(
       popoverAccount(source: .quotariRegistry(id: "claude:saved")),
       CLIActivitySnapshot(
         provider: .claude,
@@ -62,10 +62,10 @@ struct ProviderAccountPopoverPresentationTests {
     #expect(fixture.contentWindow === originalWindow)
   }
 
-  @Test func confirmationButtonRemainsInsideTheTransientPopover() throws {
+  @Test func retryButtonRemainsInsideTheTransientPopoverWithoutDismissingTheBlocker() throws {
     _ = NSApplication.shared
     let state = ConfirmationState()
-    let confirmation = ProviderAccountPopoverConfirmation.switchCLI(
+    let confirmation = ProviderAccountPopoverConfirmation.switchBlocked(
       popoverAccount(source: .quotariRegistry(id: "claude:saved")),
       CLIActivitySnapshot(provider: .claude, processes: ["claude (PID 42)"])
     )
@@ -93,7 +93,7 @@ struct ProviderAccountPopoverPresentationTests {
     #expect(fixture.contentWindow === originalWindow)
     expectNoDifference(state.confirmCount, 1)
     expectNoDifference(state.confirmedID, confirmation.id)
-    #expect(state.confirmation == nil)
+    expectNoDifference(state.confirmation?.id, confirmation.id)
   }
 
   @Test func cancellingClearsTheConfirmationWithoutRunningTheOperation() throws {

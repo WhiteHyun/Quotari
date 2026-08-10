@@ -58,7 +58,9 @@ struct ProviderAccountPopoverConfirmationView: View {
   }
 
   private func confirm(_ confirmation: ProviderAccountPopoverConfirmation) {
-    self.confirmation = nil
+    if confirmation.dismissesBeforeConfirming {
+      self.confirmation = nil
+    }
     onConfirm(confirmation)
   }
 }

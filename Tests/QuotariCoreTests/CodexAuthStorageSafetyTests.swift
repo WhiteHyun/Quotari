@@ -134,7 +134,7 @@ extension CodexAuthStorageTests {
       now: Date(timeIntervalSince1970: 200)
     )
 
-    #expect(written.credentialSource == storage.keychainSource)
+    #expect(written == storage.keychainSource)
     #expect(try Data(contentsOf: storage.authFileURL) == fallback)
     #expect(try CodexCredentialsStore.parse(#require(slot.value)).accountID == "acct-saved")
   }

@@ -5,30 +5,6 @@ import Testing
 
 @MainActor
 struct UsageStoreClaudeSwitchIdentityTests {
-  @Test func resumeWarningKeepsTheCompletedSwitchAndRediscoveredSelection() async throws {
-    let fixture = try ClaudeSwitchIdentityFixture(resumeFails: true)
-    await fixture.store.reloadAccounts()
-    fixture.store.claudeProfiles[fixture.savedAccount.id] = ClaudeProfile(
-      accountID: "saved",
-      email: "saved@example.com",
-      fingerprint: ProviderCredentialIdentity.fingerprint(of: "s")
-    )
-    fixture.publishLiveAccounts()
-    let snapshot = try await fixture.store.cliActivitySnapshot(for: .claude)
-
-    await fixture.store.switchCLIAccount(
-      to: fixture.savedAccount,
-      allowingActiveSessions: snapshot
-    )
-
-    #expect(fixture.store.selectedAccounts[.claude]?.credentialSource == .claudeKeychain(
-      service: ClaudeCredentialsStore.keychainService
-    ))
-    #expect(fixture.store.captureErrors[.claude] ==
-      "The CLI account switched, but Quotari couldn't resume every paused Claude session: resume failed")
-    await fixture.delay.resumeAll()
-  }
-
   @Test func organizationOnlyCacheDoesNotReplaceAnExactSavedIdentity() async throws {
     let fixture = try ClaudeSwitchIdentityFixture()
     await fixture.store.reloadAccounts()
@@ -119,7 +95,6 @@ private final class ClaudeSwitchIdentityFixture {
   let liveKeychain: ProviderAccount
   let liveFile: ProviderAccount
   let discovery: MutableAccountDiscovery
-  let resumeFails: Bool
   lazy var store = claudeSwitchIdentityStore(
     context: ClaudeSwitchIdentityStoreContext(
       registry: registry,
@@ -129,11 +104,10 @@ private final class ClaudeSwitchIdentityFixture {
       discovery: discovery
     ),
     descriptor: countingClaudeDescriptor(strategy: strategy),
-    postCredentialRefreshSleep: delay.sleep,
-    resumeFails: resumeFails
+    postCredentialRefreshSleep: delay.sleep
   )
 
-  init(resumeFails: Bool = false) throws {
+  init() throws {
     directory = try TemporaryDirectory()
     home = directory.url
     registry = CapturedAccountStore.inMemoryForTesting()
@@ -153,7 +127,6 @@ private final class ClaudeSwitchIdentityFixture {
     discovery = MutableAccountDiscovery(StaticAccountDiscovery(
       accounts: [.claude: [savedAccount]]
     ))
-    self.resumeFails = resumeFails
   }
 
   func publishLiveAccounts() {
@@ -188,15 +161,9 @@ private func savedClaudeSwitchTarget(
 private func claudeSwitchIdentityStore(
   context: ClaudeSwitchIdentityStoreContext,
   descriptor: ProviderDescriptor,
-  postCredentialRefreshSleep: @escaping @Sendable (Duration) async throws -> Void,
-  resumeFails: Bool
+  postCredentialRefreshSleep: @escaping @Sendable (Duration) async throws -> Void
 ) -> UsageStore {
-  let active = CLIActivityProcess(
-    pid: 42,
-    displayName: "claude (PID 42)",
-    generation: .process(startTimeSeconds: 100, startTimeMicroseconds: 1)
-  )
-  return UsageStore.isolatedForTesting(
+  UsageStore.isolatedForTesting(
     providers: [descriptor],
     costEstimator: EmptyCostEstimator(),
     accountDiscovery: context.discovery,
@@ -204,22 +171,7 @@ private func claudeSwitchIdentityStore(
       capturedAccounts: context.registry,
       home: context.home,
       keychainRead: { _ in context.keychain.value },
-      keychainWrite: { payload, _ in context.keychain.value = payload },
-      activeCLIProcessRecords: { _ in resumeFails ? [active] : [] },
-      processResumeLease: { _ in
-        CLIProcessResumeLease(
-          suspend: {},
-          resume: {
-            if resumeFails {
-              throw NSError(
-                domain: "CLIProcessResumeTest",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "resume failed"]
-              )
-            }
-          }
-        )
-      }
+      keychainWrite: { payload, _ in context.keychain.value = payload }
     ),
     claudeCredentialLoader: { source in
       let payload: Data? = switch source {

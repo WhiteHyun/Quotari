@@ -11,9 +11,9 @@ enum CLIActivityWarningPresentation {
     )
   }
 
-  static func switchMessage(for activitySnapshot: CLIActivitySnapshot) -> String {
-    let key = "Running Claude Code sessions: %@. Quotari will briefly pause them while switching credentials, "
-      + "then resume them. They may use the new account on later requests."
+  static func switchBlockedMessage(for activitySnapshot: CLIActivitySnapshot) -> String {
+    let key = "Running Claude Code sessions: %@. Quit all of them, then try again. "
+      + "Quotari will not switch the CLI account while a session is running."
     return String.localizedStringWithFormat(
       L10n.string(key: key),
       activitySnapshot.processes.joined(separator: ", ")
