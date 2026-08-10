@@ -15,45 +15,22 @@ extension UsageStore {
     var profiles: [ResolvedSavedClaudeProfile] = []
     var hasUnresolvedProfile = false
     for captured in accounts {
-      guard let resolution = await resolvedClaudeCaptureProfile(for: captured.providerAccount) else {
+      guard let resolution = await resolvedClaudeCaptureProfile(
+        for: captured.providerAccount,
+        persistedIdentity: captured.claudeAccountIdentity
+      ) else {
         if await unresolvedSavedClaudeProfileShouldBlock(captured.providerAccount) {
           hasUnresolvedProfile = true
         }
         continue
       }
-      if let profile = resolution.profile, let identity = profile.accountIdentity {
-        let identified: CapturedAccount
-        if captured.claudeAccountIdentity == identity {
-          identified = captured
-        } else {
-          let capture = accountCapture
-          guard let persisted = try? await Task.detached(operation: {
-            try capture.recordClaudeAccountIdentity(id: captured.id, identity: identity)
-          }).value else {
-            hasUnresolvedProfile = true
-            continue
-          }
-          identified = persisted
-        }
-        profiles.append(ResolvedSavedClaudeProfile(
-          captured: identified,
-          profile: profileApplyingPersistedIdentity(
-            profile,
-            identity: identified.claudeAccountIdentity ?? identity
-          ),
-          requiresReauthentication: resolution.requiresReauthentication
-        ))
-      } else if let identity = captured.claudeAccountIdentity, identity.isStrong {
-        profiles.append(ResolvedSavedClaudeProfile(
-          captured: captured,
-          profile: profileApplyingPersistedIdentity(
-            ClaudeProfile(fingerprint: resolution.accessTokenFingerprint),
-            identity: identity
-          ),
-          requiresReauthentication: resolution.requiresReauthentication
-        ))
-      } else if await unresolvedSavedClaudeProfileShouldBlock(captured.providerAccount) {
+      switch await resolvedSavedClaudeProfileOutcome(captured, resolution: resolution) {
+      case let .resolved(profile):
+        profiles.append(profile)
+      case .unresolved:
         hasUnresolvedProfile = true
+      case .ignored:
+        break
       }
     }
     return SavedClaudeProfileResolution(
@@ -62,20 +39,43 @@ extension UsageStore {
     )
   }
 
-  /// Persisted row identity is monotonic, while an older profile cache may
-  /// contain only email or account UUID. Never let that weaker cache hide a
-  /// strong account-and-organization identity already bound to the row.
-  func profileApplyingPersistedIdentity(
-    _ profile: ClaudeProfile,
-    identity: ClaudeAccountIdentity
-  ) -> ClaudeProfile {
-    ClaudeProfile(
-      accountID: identity.accountID,
-      email: identity.email ?? profile.email,
-      organizationID: identity.organizationID,
-      organizationName: profile.organizationName,
-      fingerprint: profile.fingerprint
-    )
+  private func resolvedSavedClaudeProfileOutcome(
+    _ captured: CapturedAccount,
+    resolution: ClaudeCaptureProfileResolution
+  ) async -> ResolvedSavedClaudeProfileOutcome {
+    if let profile = resolution.profile, let identity = profile.accountIdentity {
+      let identified: CapturedAccount
+      if captured.claudeAccountIdentity == identity {
+        identified = captured
+      } else {
+        let capture = accountCapture
+        guard let persisted = try? await Task.detached(operation: {
+          try capture.recordClaudeAccountIdentity(id: captured.id, identity: identity)
+        }).value else { return .unresolved }
+        identified = persisted
+      }
+      return .resolved(ResolvedSavedClaudeProfile(
+        captured: identified,
+        profile: profileApplyingPersistedIdentity(
+          profile,
+          identity: identified.claudeAccountIdentity ?? identity
+        ),
+        requiresReauthentication: resolution.requiresReauthentication
+      ))
+    }
+    if let identity = captured.claudeAccountIdentity, identity.isStrong {
+      return .resolved(ResolvedSavedClaudeProfile(
+        captured: captured,
+        profile: profileApplyingPersistedIdentity(
+          ClaudeProfile(fingerprint: resolution.accessTokenFingerprint),
+          identity: identity
+        ),
+        requiresReauthentication: resolution.requiresReauthentication
+      ))
+    }
+    return await unresolvedSavedClaudeProfileShouldBlock(captured.providerAccount)
+      ? .unresolved
+      : .ignored
   }
 
   func resolvedLiveClaudeProfiles(
@@ -119,7 +119,8 @@ extension UsageStore {
 
   private func resolvedClaudeCaptureProfile(
     for account: ProviderAccount,
-    capturedRegistryID: String? = nil
+    capturedRegistryID: String? = nil,
+    persistedIdentity: ClaudeAccountIdentity? = nil
   ) async -> ClaudeCaptureProfileResolution? {
     let loader = claudeCredentialLoader
     guard var credentials = await Task.detached(operation: {
@@ -135,9 +136,16 @@ extension UsageStore {
     credentials = credentialResolution.credentials
     let fingerprint = ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
     if let cached = claudeProfiles[account.id],
-       cached.fingerprint == fingerprint,
-       cached.hasStableAccountIdentity {
-      return captureProfileResolution(cached, credential: credentialResolution)
+       cached.fingerprint == fingerprint {
+      if let persistedIdentity, persistedIdentity.isStrong {
+        return captureProfileResolution(
+          profileApplyingPersistedIdentity(cached, identity: persistedIdentity),
+          credential: credentialResolution
+        )
+      }
+      if cached.hasStrongAccountIdentity {
+        return captureProfileResolution(cached, credential: credentialResolution)
+      }
     }
     // Stable profile identity outlives an access token. If refreshing an
     // expired saved row fails because the CLI already rotated the account,
@@ -263,10 +271,8 @@ extension UsageStore {
     )
   }
 
-  /// An invalid-grant verdict applies only to the refresh token that was
-  /// actually exchanged. Another writer may have installed a different,
-  /// still-expired pair before the re-read; expiry alone cannot bind the old
-  /// response to that replacement generation.
+  /// An invalid grant applies only to the exchanged refresh token; expiry
+  /// cannot bind that verdict to a concurrently replaced credential pair.
   private func claudeCredentialRequiresReauthentication(
     _ result: Result<ProviderFetchResult, Error>?,
     attempted: ClaudeCredentials,
@@ -327,6 +333,12 @@ private extension ProviderCredentialSource {
     guard case let .quotariRegistry(id) = self else { return nil }
     return id
   }
+}
+
+private enum ResolvedSavedClaudeProfileOutcome {
+  case resolved(ResolvedSavedClaudeProfile)
+  case unresolved
+  case ignored
 }
 
 struct ResolvedSavedClaudeProfile {

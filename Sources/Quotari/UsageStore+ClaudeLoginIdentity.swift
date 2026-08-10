@@ -2,6 +2,22 @@ import Foundation
 import QuotariCore
 
 extension UsageStore {
+  /// Persisted row identity is monotonic, while an older profile cache may
+  /// contain only email or account UUID. Never let that weaker cache hide a
+  /// strong account-and-organization identity already bound to the row.
+  func profileApplyingPersistedIdentity(
+    _ profile: ClaudeProfile,
+    identity: ClaudeAccountIdentity
+  ) -> ClaudeProfile {
+    ClaudeProfile(
+      accountID: identity.accountID,
+      email: identity.email ?? profile.email,
+      organizationID: identity.organizationID,
+      organizationName: profile.organizationName,
+      fingerprint: profile.fingerprint
+    )
+  }
+
   func matchingSavedClaudeAccount(
     for profile: ClaudeProfile,
     previousClaudeLogin: PreservedClaudeLogin?,
@@ -144,12 +160,13 @@ extension UsageStore {
     let fingerprint = ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
     let persistedIdentity = await persistedClaudeAccountIdentity(for: saved)
     if let cached = claudeProfiles[saved.id],
-       cached.hasStableAccountIdentity,
        cached.fingerprint == fingerprint {
       if let persistedIdentity, persistedIdentity.isStrong {
         return profileApplyingPersistedIdentity(cached, identity: persistedIdentity)
       }
-      return cached
+      if cached.hasStrongAccountIdentity {
+        return cached
+      }
     }
     if let persistedIdentity, persistedIdentity.isStrong {
       return profileApplyingPersistedIdentity(
