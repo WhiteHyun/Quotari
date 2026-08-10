@@ -4,6 +4,41 @@ import Foundation
 import Testing
 
 extension UsageStoreNotificationTests {
+  @Test func sameClaudeAccountInDifferentOrganizationsUsesSeparateNotificationScopes() async throws {
+    let firstSource = ProviderCredentialSource.claudeKeychain(service: "notification-org-a")
+    let secondSource = ProviderCredentialSource.claudeKeychain(service: "notification-org-b")
+    let first = claudeAccount(name: "Organization A", identity: "token-a", source: firstSource)
+    let second = claudeAccount(name: "Organization B", identity: "token-b", source: secondSource)
+    let harness = try await makeStore(
+      "claude-notification-organization-scope",
+      claudeCredentialLoader: { source in
+        switch source {
+        case firstSource:
+          ClaudeCredentials(accessToken: "token-a")
+        case secondSource:
+          ClaudeCredentials(accessToken: "token-b")
+        default:
+          nil
+        }
+      }
+    )
+    harness.store.claudeProfiles[first.id] = ClaudeProfile(
+      accountID: "shared-account",
+      organizationID: "org-a",
+      fingerprint: ProviderCredentialIdentity.fingerprint(of: "token-a")
+    )
+    harness.store.claudeProfiles[second.id] = ClaudeProfile(
+      accountID: "shared-account",
+      organizationID: "org-b",
+      fingerprint: ProviderCredentialIdentity.fingerprint(of: "token-b")
+    )
+
+    let firstScope = try #require(harness.store.notificationScopeID(for: first))
+    let secondScope = try #require(harness.store.notificationScopeID(for: second))
+
+    #expect(firstScope != secondScope)
+  }
+
   @Test func automaticClaudeResultRejectsAProfileFromAPostDiscoveryReplacement() async throws {
     let discovered = claudeAccount(name: "Discovered Claude login", identity: "claude-token-discovered")
     let replacement = claudeAccount(name: "Replacement Claude login", identity: "claude-token-replacement")

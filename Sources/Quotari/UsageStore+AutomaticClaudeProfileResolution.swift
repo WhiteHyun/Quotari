@@ -232,25 +232,58 @@ extension UsageStore {
       credentialSource: account.credentialSource,
       credentialIdentity: refreshed.accessToken
     )
-    let transition: ClaudeCredentialScopeTransition? = if let evidence = result?.credentialTransitionEvidence,
-                                                          evidence.sourceScopeIDs.contains(initialScopeID),
-                                                          evidence.targetScopeID == refreshedAccount.credentialScopeID {
-      ClaudeCredentialScopeTransition(
-        sourceScopeID: initialScopeID,
-        targetScopeID: evidence.targetScopeID
-      )
-    } else {
-      nil
-    }
     return ClaudeCredentialResolution(
       credentials: refreshed,
-      transition: transition,
-      // The endpoint's invalid-grant verdict alone is not enough: the CLI may
-      // have installed a fresh pair between the failed exchange and this
-      // re-read, in which case the row just recovered through rotation.
-      requiresReauthentication: result?.indicatesClaudeReauthenticationRequired == true
-        && refreshed.isExpired(now: now)
+      transition: claudeCredentialTransition(
+        from: result,
+        initialScopeID: initialScopeID,
+        refreshedScopeID: refreshedAccount.credentialScopeID
+      ),
+      requiresReauthentication: claudeCredentialRequiresReauthentication(
+        result,
+        attempted: credentials,
+        current: refreshed,
+        now: now
+      )
     )
+  }
+
+  private func claudeCredentialTransition(
+    from result: Result<ProviderFetchResult, Error>?,
+    initialScopeID: String,
+    refreshedScopeID: String
+  ) -> ClaudeCredentialScopeTransition? {
+    guard let evidence = result?.credentialTransitionEvidence,
+          evidence.sourceScopeIDs.contains(initialScopeID),
+          evidence.targetScopeID == refreshedScopeID
+    else { return nil }
+    return ClaudeCredentialScopeTransition(
+      sourceScopeID: initialScopeID,
+      targetScopeID: evidence.targetScopeID
+    )
+  }
+
+  /// An invalid-grant verdict applies only to the refresh token that was
+  /// actually exchanged. Another writer may have installed a different,
+  /// still-expired pair before the re-read; expiry alone cannot bind the old
+  /// response to that replacement generation.
+  private func claudeCredentialRequiresReauthentication(
+    _ result: Result<ProviderFetchResult, Error>?,
+    attempted: ClaudeCredentials,
+    current: ClaudeCredentials,
+    now: Date
+  ) -> Bool {
+    guard result?.indicatesClaudeReauthenticationRequired == true,
+          let attemptedGeneration = ProviderCredentialIdentity.claudeIdentity(
+            refreshToken: attempted.refreshToken,
+            accessToken: attempted.accessToken
+          )
+    else { return false }
+    let currentGeneration = ProviderCredentialIdentity.claudeIdentity(
+      refreshToken: current.refreshToken,
+      accessToken: current.accessToken
+    )
+    return attemptedGeneration == currentGeneration && current.isExpired(now: now)
   }
 
   private func refreshClaudeCredential(

@@ -138,12 +138,26 @@ func capturedClaudeAccount(
 func expectClaudeIdentity(
   _ identity: Data?,
   accountID: String,
-  email: String
+  email: String,
+  organizationID: String? = nil
 ) throws {
   #expect(try ClaudeCodeAccountState.matches(
     #require(identity),
-    profile: ClaudeProfile(accountID: accountID, email: email)
+    profile: ClaudeProfile(
+      accountID: accountID,
+      email: email,
+      organizationID: organizationID
+    )
   ))
+}
+
+func expectStrongClaudeIdentity(_ identity: Data?, stem: String) throws {
+  try expectClaudeIdentity(
+    identity,
+    accountID: "\(stem)-id",
+    email: "\(stem)@example.com",
+    organizationID: "\(stem)-org"
+  )
 }
 
 func makeClaudeBackupSwitchService(

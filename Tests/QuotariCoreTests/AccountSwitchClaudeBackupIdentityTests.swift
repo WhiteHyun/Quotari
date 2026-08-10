@@ -19,7 +19,8 @@ struct AccountSwitchClaudeBackupIdentityTests {
     try livePayload.write(to: fileURL)
     let stateURL = home.appendingPathComponent(".claude.json")
     try Data(
-      #"{"oauthAccount":{"accountUuid":"live-id","emailAddress":"live@example.com"}}"#.utf8
+      #"{"oauthAccount":{"accountUuid":"live-id","emailAddress":"live@example.com","organizationUuid":"live-org"}}"#
+        .utf8
     ).write(to: stateURL)
     let keychain = KeychainSlot(livePayload)
     let profile = strongClaudeProfile("live")
@@ -46,15 +47,14 @@ struct AccountSwitchClaudeBackupIdentityTests {
     )
     #expect(backedUp.id.hasPrefix("claude:"))
     #expect(backedUp.claudeAccountIdentity == profile.accountIdentity)
-    try expectClaudeIdentity(backedUp.claudeOAuthAccount, accountID: "live-id", email: "live@example.com")
+    try expectStrongClaudeIdentity(backedUp.claudeOAuthAccount, stem: "live")
 
     // No profile is supplied for the reverse switch: the exact identity must
     // survive with the credential so a profile endpoint outage cannot strand it.
     try service.switchCLI(toRegistryAccount: backedUp.id, now: Date(timeIntervalSince1970: 6000))
-    try expectClaudeIdentity(
+    try expectStrongClaudeIdentity(
       ClaudeCodeAccountState.oauthAccount(from: Data(contentsOf: stateURL)),
-      accountID: "live-id",
-      email: "live@example.com"
+      stem: "live"
     )
   }
 
@@ -74,7 +74,8 @@ struct AccountSwitchClaudeBackupIdentityTests {
     try livePayload.write(to: fileURL)
     let stateURL = home.appendingPathComponent(".claude.json")
     try Data(
-      #"{"oauthAccount":{"accountUuid":"file-id","emailAddress":"file@example.com"}}"#.utf8
+      #"{"oauthAccount":{"accountUuid":"file-id","emailAddress":"file@example.com","organizationUuid":"file-org"}}"#
+        .utf8
     ).write(to: stateURL)
     let keychain = KeychainSlot(Data(#"{"notClaudeOAuth":true}"#.utf8))
     let profile = strongClaudeProfile("file")
@@ -101,13 +102,12 @@ struct AccountSwitchClaudeBackupIdentityTests {
     )
     #expect(backedUp.id.hasPrefix("claude:"))
     #expect(backedUp.claudeAccountIdentity == profile.accountIdentity)
-    try expectClaudeIdentity(backedUp.claudeOAuthAccount, accountID: "file-id", email: "file@example.com")
+    try expectStrongClaudeIdentity(backedUp.claudeOAuthAccount, stem: "file")
 
     try service.switchCLI(toRegistryAccount: backedUp.id, now: Date(timeIntervalSince1970: 6000))
-    try expectClaudeIdentity(
+    try expectStrongClaudeIdentity(
       ClaudeCodeAccountState.oauthAccount(from: Data(contentsOf: stateURL)),
-      accountID: "file-id",
-      email: "file@example.com"
+      stem: "file"
     )
   }
 
@@ -229,7 +229,8 @@ struct AccountSwitchClaudeBackupStateTests {
     let otherProfile = strongClaudeProfile("other")
     let stateURL = home.appendingPathComponent(".claude.json")
     try Data(
-      #"{"oauthAccount":{"accountUuid":"other-id","emailAddress":"other@example.com"}}"#.utf8
+      #"{"oauthAccount":{"accountUuid":"other-id","emailAddress":"other@example.com","organizationUuid":"other-org"}}"#
+        .utf8
     ).write(to: stateURL)
     let keychain = KeychainSlot(otherPayload)
     let service = makeClaudeBackupSwitchService(registry: registry, home: home, keychain: keychain)
@@ -253,16 +254,11 @@ struct AccountSwitchClaudeBackupStateTests {
 
     let other = try capturedClaudeAccount(registry: registry, refreshToken: "other-ref")
     #expect(other.claudeAccountIdentity == otherProfile.accountIdentity)
-    try expectClaudeIdentity(
-      other.claudeOAuthAccount,
-      accountID: "other-id",
-      email: "other@example.com"
-    )
+    try expectStrongClaudeIdentity(other.claudeOAuthAccount, stem: "other")
     try service.switchCLI(toRegistryAccount: other.id, now: Date(timeIntervalSince1970: 6000))
-    try expectClaudeIdentity(
+    try expectStrongClaudeIdentity(
       ClaudeCodeAccountState.oauthAccount(from: Data(contentsOf: stateURL)),
-      accountID: "other-id",
-      email: "other@example.com"
+      stem: "other"
     )
   }
 }
