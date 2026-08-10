@@ -1,4 +1,3 @@
-import CustomDump
 import Foundation
 @testable import Quotari
 @testable import QuotariCore
@@ -11,14 +10,14 @@ struct AutomaticCaptureIdentitySafetyTests {
 
     await fixture.store.reloadAccounts()
 
-    expectNoDifference(fixture.registry.load().map(\.id).sorted(), fixture.expectedIDs)
-    expectNoDifference(
-      fixture.registry.load().compactMap(\.claudeAccountIdentity),
-      [fixture.weakIdentity, fixture.weakIdentity]
+    #expect(fixture.registry.load().map(\.id).sorted() == fixture.expectedIDs)
+    #expect(
+      fixture.registry.load().compactMap(\.claudeAccountIdentity)
+        == [fixture.weakIdentity, fixture.weakIdentity]
     )
-    expectNoDifference(
-      fixture.store.captureWarnings[.claude],
-      UsageStore.weakClaudeIdentityDuplicateMessage
+    #expect(
+      fixture.store.captureWarnings[.claude]
+        == UsageStore.weakClaudeIdentityDuplicateMessage
     )
     #expect(fixture.store.captureErrors[.claude] == nil)
 
@@ -26,10 +25,10 @@ struct AutomaticCaptureIdentitySafetyTests {
     // the warning without creating another row for the same token generation.
     await fixture.store.reloadAccounts()
 
-    expectNoDifference(fixture.registry.load().map(\.id).sorted(), fixture.expectedIDs)
-    expectNoDifference(
-      fixture.store.captureWarnings[.claude],
-      UsageStore.weakClaudeIdentityDuplicateMessage
+    #expect(fixture.registry.load().map(\.id).sorted() == fixture.expectedIDs)
+    #expect(
+      fixture.store.captureWarnings[.claude]
+        == UsageStore.weakClaudeIdentityDuplicateMessage
     )
     #expect(fixture.store.captureErrors[.claude] == nil)
   }

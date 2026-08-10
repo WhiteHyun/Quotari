@@ -1,4 +1,3 @@
-import CustomDump
 import Foundation
 @testable import QuotariCore
 import Testing
@@ -82,9 +81,8 @@ extension ClaudeAccountSwitchLiveE2ESafetyTests {
 
     let identity = try requiredStrongTargetIdentity(for: target)
 
-    expectNoDifference(
-      identity,
-      ClaudeAccountIdentity(
+    #expect(
+      identity == ClaudeAccountIdentity(
         accountID: "target-account",
         email: "target@example.com",
         organizationID: "target-organization"
