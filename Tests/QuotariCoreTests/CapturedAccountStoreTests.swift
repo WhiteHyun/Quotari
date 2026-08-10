@@ -1,6 +1,7 @@
 import Foundation
 @testable import QuotariCore
 import Testing
+
 // swiftlint:disable file_length
 
 extension CapturedAccountStore {

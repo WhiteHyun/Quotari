@@ -268,5 +268,4 @@ extension UsageStore {
     accountLoginErrors[provider] = nil
     accountLoginOutputs[provider] = nil
   }
-
 }

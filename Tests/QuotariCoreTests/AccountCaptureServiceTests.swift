@@ -1,7 +1,8 @@
+import CustomDump
+
 // Capture and maintenance scenarios share the same credential fixtures.
 // swiftlint:disable file_length
 import Foundation
-import CustomDump
 @testable import QuotariCore
 import Testing
 
@@ -268,14 +269,22 @@ struct AccountCaptureStableIdentityTests {
       origin: .claudeKeychain(service: "first"),
       payload: Data(#"{"claudeAiOauth":{"accessToken":"a","refreshToken":"ra"}}"#.utf8),
       now: captureNow,
-      claudeAccountIdentity: ClaudeAccountIdentity(accountID: "acct", email: "same@example.com", organizationID: "org-a")
+      claudeAccountIdentity: ClaudeAccountIdentity(
+        accountID: "acct",
+        email: "same@example.com",
+        organizationID: "org-a"
+      )
     )
     _ = try AccountCaptureService(capturedAccounts: store, makeUUID: { secondUUID }).captureRawPayload(
       provider: .claude,
       origin: .claudeKeychain(service: "second"),
       payload: Data(#"{"claudeAiOauth":{"accessToken":"b","refreshToken":"rb"}}"#.utf8),
       now: captureNow,
-      claudeAccountIdentity: ClaudeAccountIdentity(accountID: "acct", email: "same@example.com", organizationID: "org-b")
+      claudeAccountIdentity: ClaudeAccountIdentity(
+        accountID: "acct",
+        email: "same@example.com",
+        organizationID: "org-b"
+      )
     )
 
     expectNoDifference(
@@ -353,8 +362,8 @@ struct AccountCaptureStableIdentityTests {
     expectNoDifference(store.load().map(\.id), ["claude:00000000-0000-0000-0000-000000000402"])
     let indexData = try #require(try keychain.read("\(prefix)-Index"))
     let index = try #require(JSONSerialization.jsonObject(with: indexData) as? [String: Any])
-    expectNoDifference(
-      try #require(index["ids"] as? [String]),
+    try expectNoDifference(
+      #require(index["ids"] as? [String]),
       ["claude:00000000-0000-0000-0000-000000000402"]
     )
   }

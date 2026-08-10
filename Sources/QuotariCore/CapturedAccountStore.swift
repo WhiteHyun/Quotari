@@ -164,7 +164,9 @@ public struct CapturedAccountStore: Sendable {
   ) throws -> CapturedAccount {
     try Self.mutationLock.withLock {
       let candidates = try registeredAccountsUnlocked(for: candidate.provider).filter {
-        if $0.id == candidate.id { return true }
+        if $0.id == candidate.id {
+          return true
+        }
         return try matches($0, candidate)
       }
       guard candidates.count <= 1 else {
