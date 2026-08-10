@@ -276,11 +276,11 @@ struct SavedRowSpec {
   var expiresAt = Date(timeIntervalSince1970: 0)
 
   var accessToken: String {
-    "\(token)-access"
+    token + "-access"
   }
 
   var refreshToken: String {
-    "\(token)-refresh"
+    token + "-refresh"
   }
 }
 

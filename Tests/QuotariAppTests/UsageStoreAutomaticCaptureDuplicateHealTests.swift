@@ -1,4 +1,3 @@
-import CustomDump
 import Foundation
 @testable import Quotari
 @testable import QuotariCore
@@ -17,7 +16,7 @@ struct AutomaticCaptureDuplicateHealTests {
     await fixture.store.reloadAccounts()
 
     let saved = try #require(fixture.registry.account(id: fixture.canonicalID))
-    expectNoDifference(fixture.registry.load().map(\.id), [fixture.canonicalID])
+    #expect(fixture.registry.load().map(\.id) == [fixture.canonicalID])
     #expect(try ClaudeCredentialsStore.parse(saved.payload).accessToken == "live-access")
     #expect(saved.claudeAccountIdentity?.isStrong == true)
     #expect(fixture.store.selectedAccounts[.claude]?.credentialSource == .claudeKeychain(
@@ -29,14 +28,13 @@ struct AutomaticCaptureDuplicateHealTests {
     #expect(fixture.selectionStore.load()[.claude]?.credentialSource == .quotariRegistry(
       id: fixture.canonicalID
     ))
-    try expectNoDifference(
-      fixture.monitoringStore.load()[.claude]?.map(\.credentialSource),
-      [.quotariRegistry(id: fixture.canonicalID)]
-    )
+    #expect(try fixture.monitoringStore.load()[.claude]?.map(\.credentialSource) == [
+      .quotariRegistry(id: fixture.canonicalID),
+    ])
     #expect(fixture.store.accounts[.claude]?.contains(where: { $0.id == fixture.redundantProviderID }) == false)
 
     await fixture.store.reloadAccounts()
-    expectNoDifference(fixture.registry.load().map(\.id), [fixture.canonicalID])
+    #expect(fixture.registry.load().map(\.id) == [fixture.canonicalID])
   }
 
   @Test func candidateEmptyReloadStillConsolidatesDeadDuplicate() async throws {
@@ -44,14 +42,13 @@ struct AutomaticCaptureDuplicateHealTests {
 
     await fixture.store.reloadAccounts()
 
-    expectNoDifference(fixture.registry.load().map(\.id), [fixture.canonicalID])
+    #expect(fixture.registry.load().map(\.id) == [fixture.canonicalID])
     #expect(fixture.selectionStore.load()[.claude]?.credentialSource == .quotariRegistry(
       id: fixture.canonicalID
     ))
-    try expectNoDifference(
-      fixture.monitoringStore.load()[.claude]?.map(\.credentialSource),
-      [.quotariRegistry(id: fixture.canonicalID)]
-    )
+    #expect(try fixture.monitoringStore.load()[.claude]?.map(\.credentialSource) == [
+      .quotariRegistry(id: fixture.canonicalID),
+    ])
     #expect(fixture.store.reconciledSelectionOrigins[.claude]?.credentialSource == .quotariRegistry(
       id: fixture.canonicalID
     ))
@@ -69,7 +66,7 @@ struct AutomaticCaptureDuplicateHealTests {
     try restoreDuplicateHealPersistenceWrites(at: fixture.selectionStore.url)
     await fixture.store.reloadAccounts()
 
-    expectNoDifference(fixture.registry.load().map(\.id), [fixture.canonicalID])
+    #expect(fixture.registry.load().map(\.id) == [fixture.canonicalID])
     #expect(fixture.selectionStore.load()[.claude]?.credentialSource == .quotariRegistry(
       id: fixture.canonicalID
     ))
@@ -93,11 +90,10 @@ struct AutomaticCaptureDuplicateHealTests {
     #expect(fixture.store.isMonitoringConfigurationLoaded)
     await fixture.store.reloadAccounts()
 
-    expectNoDifference(fixture.registry.load().map(\.id), [fixture.canonicalID])
-    try expectNoDifference(
-      fixture.monitoringStore.load()[.claude]?.map(\.credentialSource),
-      [.quotariRegistry(id: fixture.canonicalID)]
-    )
+    #expect(fixture.registry.load().map(\.id) == [fixture.canonicalID])
+    #expect(try fixture.monitoringStore.load()[.claude]?.map(\.credentialSource) == [
+      .quotariRegistry(id: fixture.canonicalID),
+    ])
   }
 
   @Test func persistedStrongIdentityHealsDuplicatesWithoutProfileCache() async throws {
@@ -108,12 +104,11 @@ struct AutomaticCaptureDuplicateHealTests {
 
     await fixture.store.reloadAccounts()
 
-    expectNoDifference(fixture.registry.load().map(\.id), [fixture.canonicalID])
+    #expect(fixture.registry.load().map(\.id) == [fixture.canonicalID])
     let canonical = try #require(fixture.registry.account(id: fixture.canonicalID))
     #expect(try ClaudeCredentialsStore.parse(canonical.payload).accessToken == "live-access")
-    expectNoDifference(
-      canonical.claudeAccountIdentity,
-      ClaudeAccountIdentity(
+    #expect(
+      canonical.claudeAccountIdentity == ClaudeAccountIdentity(
         accountID: "account",
         email: "same@example.com",
         organizationID: "organization"
@@ -282,10 +277,7 @@ struct AutomaticCaptureDuplicateHealTests {
   }
 
   private func expectDuplicateRows(_ fixture: DuplicateHealReloadFixture) {
-    expectNoDifference(
-      fixture.registry.load().map(\.id).sorted(),
-      [fixture.canonicalID, fixture.redundantID].sorted()
-    )
+    #expect(fixture.registry.load().map(\.id).sorted() == [fixture.canonicalID, fixture.redundantID].sorted())
   }
 
   private func blockDuplicateHealPersistenceWrites(at url: URL) throws {
