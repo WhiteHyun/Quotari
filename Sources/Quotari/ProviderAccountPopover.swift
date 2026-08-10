@@ -13,6 +13,16 @@ struct ProviderAccountPopover: View {
   @State var confirmation: ProviderAccountPopoverConfirmation?
   @State var cliActivityInspection = CLIActivityInspectionState()
 
+  init(
+    descriptor: ProviderDescriptor,
+    showSettings: @escaping () -> Void = {},
+    initialConfirmation: ProviderAccountPopoverConfirmation? = nil
+  ) {
+    self.descriptor = descriptor
+    self.showSettings = showSettings
+    _confirmation = State(initialValue: initialConfirmation)
+  }
+
   private var accent: Color {
     Color(
       red: descriptor.metadata.accent.r,
@@ -26,6 +36,22 @@ struct ProviderAccountPopover: View {
   }
 
   var body: some View {
+    Group {
+      if confirmation != nil {
+        ProviderAccountPopoverConfirmationView(confirmation: $confirmation) {
+          performConfirmedOperation($0)
+        }
+      } else {
+        accountList
+      }
+    }
+    .frame(width: 330)
+    .task {
+      await store.refreshAccountUsage(for: descriptor.id)
+    }
+  }
+
+  private var accountList: some View {
     VStack(alignment: .leading, spacing: 12) {
       header
       VStack(spacing: 8) {
@@ -50,11 +76,6 @@ struct ProviderAccountPopover: View {
       footer
     }
     .padding(12)
-    .frame(width: 330)
-    .task {
-      await store.refreshAccountUsage(for: descriptor.id)
-    }
-    .alert(item: $confirmation) { confirmationAlert(for: $0) }
   }
 
   private var header: some View {

@@ -77,25 +77,7 @@ extension ProviderAccountPopover {
     }
   }
 
-  func confirmationAlert(for confirmation: ProviderAccountPopoverConfirmation) -> Alert {
-    let activitySnapshot = confirmation.activitySnapshot
-    let message = switch confirmation {
-    case .addClaudeAccount:
-      CLIActivityWarningPresentation.message(for: activitySnapshot)
-    case .switchCLI:
-      CLIActivityWarningPresentation.switchMessage(for: activitySnapshot)
-    }
-    return Alert(
-      title: Text(L10n.string(key: confirmation.title)),
-      message: Text(message),
-      primaryButton: .default(Text(L10n.string(key: confirmation.confirmButtonTitle))) {
-        performConfirmedOperation(confirmation)
-      },
-      secondaryButton: .cancel()
-    )
-  }
-
-  private func performConfirmedOperation(_ confirmation: ProviderAccountPopoverConfirmation) {
+  func performConfirmedOperation(_ confirmation: ProviderAccountPopoverConfirmation) {
     switch confirmation {
     case let .addClaudeAccount(activitySnapshot):
       store.startAddingAccount(
@@ -130,6 +112,15 @@ enum ProviderAccountPopoverConfirmation: Identifiable {
     switch self {
     case .addClaudeAccount: "Continue Login"
     case .switchCLI: "Switch Account"
+    }
+  }
+
+  var message: String {
+    switch self {
+    case .addClaudeAccount:
+      CLIActivityWarningPresentation.message(for: activitySnapshot)
+    case .switchCLI:
+      CLIActivityWarningPresentation.switchMessage(for: activitySnapshot)
     }
   }
 
