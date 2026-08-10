@@ -1,5 +1,4 @@
 import AppKit
-import CustomDump
 @testable import Quotari
 @testable import QuotariCore
 import SwiftUI
@@ -91,9 +90,9 @@ struct ProviderAccountPopoverPresentationTests {
 
     #expect(fixture.popover.isShown)
     #expect(fixture.contentWindow === originalWindow)
-    expectNoDifference(state.confirmCount, 1)
-    expectNoDifference(state.confirmedID, confirmation.id)
-    expectNoDifference(state.confirmation?.id, confirmation.id)
+    #expect(state.confirmCount == 1)
+    #expect(state.confirmedID == confirmation.id)
+    #expect(state.confirmation?.id == confirmation.id)
   }
 
   @Test func cancellingClearsTheConfirmationWithoutRunningTheOperation() throws {
@@ -121,7 +120,7 @@ struct ProviderAccountPopoverPresentationTests {
 
     #expect(fixture.popover.isShown)
     #expect(fixture.contentWindow === originalWindow)
-    expectNoDifference(state.confirmCount, 0)
+    #expect(state.confirmCount == 0)
     #expect(state.confirmation == nil)
   }
 }
