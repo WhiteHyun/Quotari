@@ -295,7 +295,7 @@ extension UsageStore {
     )
     guard selectedAccounts[provider] != account else {
       if originChanged {
-        try? accountSelectionStore.save(persistableSelections())
+        saveSelectionConfigurationIfPossible()
       }
       return
     }
@@ -306,7 +306,7 @@ extension UsageStore {
       selectedAccounts[provider] = nil
     }
     accountRevisions[provider, default: 0] &+= 1
-    try? accountSelectionStore.save(persistableSelections())
+    saveSelectionConfigurationIfPossible()
     applyCachedAccountUsage(cachedUsage, account: account, provider: provider)
     cancelCostRefresh(for: provider)
     lastCostScans[provider] = nil
@@ -320,6 +320,18 @@ extension UsageStore {
       cancelsDelayedCredentialRefresh: cancelsDelayedCredentialRefresh,
       waitsForDelayedCredentialRefresh: waitsForDelayedCredentialRefresh
     )
+  }
+
+  private func saveSelectionConfigurationIfPossible() {
+    do {
+      try accountSelectionStore.save(persistableSelections())
+      // A successful full-map write repairs a configuration that failed to
+      // decode at launch, so duplicate cleanup can safely resume.
+      isSelectionConfigurationLoaded = true
+    } catch {
+      // Preserve the last known load state. Callers intentionally keep the
+      // in-memory selection even when the best-effort durable write fails.
+    }
   }
 }
 
