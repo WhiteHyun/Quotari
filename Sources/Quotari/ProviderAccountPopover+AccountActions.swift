@@ -23,11 +23,13 @@ extension ProviderAccountPopover {
       do {
         let activitySnapshot = try await store.cliActivitySnapshot(for: account.provider)
         if activitySnapshot.isActive {
-          confirmation = .switchCLI(account, activitySnapshot)
+          confirmation = .switchBlocked(account, activitySnapshot)
         } else {
+          confirmation = nil
           startSwitchingCLI(to: account)
         }
       } catch {
+        confirmation = nil
         store.captureErrors[account.provider] = AccountSwitchError.cliActivityCheckFailed(
           underlying: error.localizedDescription
         ).localizedDescription
@@ -35,16 +37,10 @@ extension ProviderAccountPopover {
     }
   }
 
-  func startSwitchingCLI(
-    to account: ProviderAccount,
-    allowingActiveSessions activitySnapshot: CLIActivitySnapshot? = nil
-  ) {
+  func startSwitchingCLI(to account: ProviderAccount) {
     Task {
       let shouldDismiss = await switchCoordinator.switchCLI(to: account) {
-        await store.switchCLIAccount(
-          to: account,
-          allowingActiveSessions: activitySnapshot
-        )
+        await store.switchCLIAccount(to: account)
         return store.captureErrors[account.provider] == nil
       }
       if shouldDismiss {
@@ -80,56 +76,55 @@ extension ProviderAccountPopover {
   func performConfirmedOperation(_ confirmation: ProviderAccountPopoverConfirmation) {
     switch confirmation {
     case let .addClaudeAccount(activitySnapshot):
+      self.confirmation = nil
       store.startAddingAccount(
         for: .claude,
         allowingActiveSessions: activitySnapshot
       )
-    case let .switchCLI(account, activitySnapshot):
-      startSwitchingCLI(to: account, allowingActiveSessions: activitySnapshot)
+    case let .switchBlocked(account, _):
+      requestSwitchingCLI(to: account)
     }
   }
 }
 
 enum ProviderAccountPopoverConfirmation: Identifiable {
   case addClaudeAccount(CLIActivitySnapshot)
-  case switchCLI(ProviderAccount, CLIActivitySnapshot)
+  case switchBlocked(ProviderAccount, CLIActivitySnapshot)
 
   var id: String {
     switch self {
     case .addClaudeAccount: "add-claude-account"
-    case let .switchCLI(account, _): "switch-\(account.id)"
+    case let .switchBlocked(account, _): "switch-blocked-\(account.id)"
     }
   }
 
   var title: String {
     switch self {
     case .addClaudeAccount: "Keep running Claude Code sessions?"
-    case .switchCLI: "Switch CLI account?"
+    case .switchBlocked: "Quit Claude Code before switching"
     }
   }
 
   var confirmButtonTitle: String {
     switch self {
     case .addClaudeAccount: "Continue Login"
-    case .switchCLI: "Switch Account"
+    case .switchBlocked: "Try Again"
     }
   }
 
   var message: String {
     switch self {
-    case .addClaudeAccount:
+    case let .addClaudeAccount(activitySnapshot):
       CLIActivityWarningPresentation.message(for: activitySnapshot)
-    case .switchCLI:
-      CLIActivityWarningPresentation.switchMessage(for: activitySnapshot)
+    case let .switchBlocked(_, activitySnapshot):
+      CLIActivityWarningPresentation.switchBlockedMessage(for: activitySnapshot)
     }
   }
 
-  var activitySnapshot: CLIActivitySnapshot {
+  var dismissesBeforeConfirming: Bool {
     switch self {
-    case let .addClaudeAccount(activitySnapshot):
-      activitySnapshot
-    case let .switchCLI(_, activitySnapshot):
-      activitySnapshot
+    case .addClaudeAccount: true
+    case .switchBlocked: false
     }
   }
 }

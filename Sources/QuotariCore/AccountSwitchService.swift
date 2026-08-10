@@ -21,10 +21,9 @@ import Foundation
 ///
 /// Production callers pair repeated generation reads with an active-process
 /// check. The CLI remains a separate process and these stores do not offer an
-/// interprocess CAS, so approved Claude sessions are briefly suspended for the
-/// whole synchronous mutation; unapproved provider sessions still stop the
-/// switch. Post-write verification preserves any newer generation it
-/// observes. If only Claude's
+/// interprocess CAS, so any active provider session stops the switch. The
+/// interlock is rechecked at each write boundary, and post-write verification
+/// preserves any newer generation it observes. If only Claude's
 /// lower-precedence file changes, Quotari rolls back
 /// its matching keychain write so a retry can back up both physical stores
 /// safely.
@@ -40,7 +39,6 @@ public struct AccountSwitchService: Sendable {
   let codexKeychainWrite: @Sendable (Data, String, String) throws -> Void
   let codexKeychainDelete: @Sendable (String, String) throws -> Void
   let activeCLIProcessRecords: @Sendable (UsageProvider) throws -> [CLIActivityProcess]
-  let processResumeLease: @Sendable ([CLIActivityProcess]) throws -> CLIProcessResumeLease
   let credentialFileRead: @Sendable (URL) throws -> Data?
   let secureFileWriter: SecureCredentialFileWriter
 
@@ -57,9 +55,6 @@ public struct AccountSwitchService: Sendable {
     codexKeychainDelete: (@Sendable (String, String) throws -> Void)? = nil,
     activeCLIProcesses: (@Sendable (UsageProvider) throws -> [String])? = nil,
     activeCLIProcessRecords: @escaping @Sendable (UsageProvider) throws -> [CLIActivityProcess] = { _ in [] },
-    processResumeLease: @escaping @Sendable ([CLIActivityProcess]) throws -> CLIProcessResumeLease = {
-      try CLIProcessResumeWatchdog.liveLease(for: $0)
-    },
     fileRead: (@Sendable (URL) throws -> Data?)? = nil,
     setOwnerOnlyPermissions: (@Sendable (URL) throws -> Void)? = nil
   ) {
@@ -101,7 +96,6 @@ public struct AccountSwitchService: Sendable {
     } else {
       self.activeCLIProcessRecords = activeCLIProcessRecords
     }
-    self.processResumeLease = processResumeLease
     credentialFileRead = fileRead ?? { url in
       guard FileManager.default.fileExists(atPath: url.path) else { return nil }
       return try Data(contentsOf: url)

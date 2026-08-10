@@ -133,4 +133,24 @@ struct LocalizationTests {
     )
     #expect(message.contains("개인 계정을 공유 CLI 슬롯에 적용합니다"))
   }
+
+  @Test func localizesBlockedClaudeSwitchGuidance() {
+    let korean = Locale(identifier: "ko")
+    let key = "Running Claude Code sessions: %@. Quit all of them, then try again. "
+      + "Quotari will not switch the CLI account while a session is running."
+    let message = String.localizedStringWithFormat(
+      L10n.string(key: key, locale: korean),
+      "claude (PID 42)"
+    )
+
+    #expect(
+      L10n.string("Quit Claude Code before switching", locale: korean)
+        == "계정을 전환하려면 Claude Code를 종료하세요"
+    )
+    #expect(
+      message
+        == "실행 중인 Claude Code 세션: claude (PID 42). 모든 세션을 종료한 다음 다시 시도하세요. "
+        + "세션이 실행 중인 동안에는 Quotari가 CLI 계정을 전환하지 않습니다."
+    )
+  }
 }

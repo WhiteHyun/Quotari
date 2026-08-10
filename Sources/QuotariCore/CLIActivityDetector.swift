@@ -29,10 +29,10 @@ struct CLIActivityProcessRecord: Sendable {
   let arguments: [String]
 }
 
-/// A point-in-time list of CLI processes shown to the user before a credential
-/// mutation. Passing this snapshot back to a mutation authorizes only these
-/// exact processes for that one operation; a process launched afterwards still
-/// fails the interlock.
+/// A point-in-time list of CLI processes shown before Claude account login.
+/// Passing this snapshot back authorizes only these exact processes for that
+/// login and its recovery writes; a process launched afterwards still fails
+/// the interlock. CLI account switching never accepts this approval.
 public struct CLIActivitySnapshot: Equatable, Sendable {
   public let provider: UsageProvider
   public let processes: [String]
@@ -62,14 +62,6 @@ public struct CLIActivitySnapshot: Equatable, Sendable {
     return activeProcesses
       .filter { !approvedProcesses.contains($0) }
       .map(\.displayName)
-  }
-
-  func approvedProcesses(
-    for provider: UsageProvider,
-    activeProcesses: [CLIActivityProcess]
-  ) -> [CLIActivityProcess] {
-    guard self.provider == provider else { return [] }
-    return activeProcesses.filter(approvedProcesses.contains)
   }
 
   func unapprovedProcesses(for provider: UsageProvider, activeProcesses: [String]) -> [String] {

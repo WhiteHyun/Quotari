@@ -165,10 +165,7 @@ extension AccountSwitchService {
       .appendingPathComponent("quotari-switch-\(UUID().uuidString)"),
     keychainRead: (@Sendable (String) -> Data?)? = nil,
     keychainWrite: (@Sendable (Data, String) throws -> Void)? = nil,
-    activeCLIProcessRecords: @escaping @Sendable (UsageProvider) throws -> [CLIActivityProcess] = { _ in [] },
-    processResumeLease: @escaping @Sendable ([CLIActivityProcess]) throws -> CLIProcessResumeLease = {
-      try CLIProcessResumeWatchdog.liveLease(for: $0)
-    }
+    activeCLIProcessRecords: @escaping @Sendable (UsageProvider) throws -> [CLIActivityProcess] = { _ in [] }
   ) -> AccountSwitchService {
     AccountSwitchService(
       capturedAccounts: capturedAccounts,
@@ -177,8 +174,7 @@ extension AccountSwitchService {
       home: home,
       keychainRead: keychainRead ?? { _ in nil },
       keychainWrite: keychainWrite ?? { _, _ in throw KeychainItemStore.KeychainError.commandFailed(status: 1) },
-      activeCLIProcessRecords: activeCLIProcessRecords,
-      processResumeLease: processResumeLease
+      activeCLIProcessRecords: activeCLIProcessRecords
     )
   }
 }

@@ -96,10 +96,7 @@ extension UsageStore {
   /// captured first), then discovery re-runs — the
   /// switched-in account becomes the live login with the saved row hidden —
   /// and the selection lands on it, anchored to the saved account.
-  func switchCLIAccount(
-    to account: ProviderAccount,
-    allowingActiveSessions activitySnapshot: CLIActivitySnapshot? = nil
-  ) async {
+  func switchCLIAccount(to account: ProviderAccount) async {
     guard case let .quotariRegistry(id) = account.credentialSource else { return }
     let provider = account.provider
     guard !isSwitching else {
@@ -143,21 +140,19 @@ extension UsageStore {
       }
       // The write runs detached (off the main actor), and `isSwitching`
       // suppresses Quotari refreshes for the window. The switch service also
-      // checks separate CLI processes; the confirmation explains its residual
-      // non-cooperative launch window.
-      let switchResult = try await Task.detached {
+      // rechecks separate CLI processes at every credential-write boundary.
+      let writtenSource = try await Task.detached {
         try switcher.switchCLI(
           toRegistryAccount: id,
           now: now,
           knownLiveTarget: knownLiveTarget,
           targetClaudeProfile: targetClaudeProfile,
-          verifiedLiveClaudeIdentity: verifiedLiveIdentity,
-          allowingActiveSessions: activitySnapshot
+          verifiedLiveClaudeIdentity: verifiedLiveIdentity
         )
       }.value
       guard await finishSuccessfulCLISwitch(
         saved: account,
-        result: switchResult,
+        writtenSource: writtenSource,
         provider: provider
       ) else { return }
       shouldRefresh = true
@@ -168,13 +163,13 @@ extension UsageStore {
 
   private func finishSuccessfulCLISwitch(
     saved account: ProviderAccount,
-    result: AccountSwitchResult,
+    writtenSource: ProviderCredentialSource,
     provider: UsageProvider
   ) async -> Bool {
     await reloadAccountsDuringSwitch()
     guard selectSwitchedInAccount(
       saved: account,
-      writtenSource: result.credentialSource,
+      writtenSource: writtenSource,
       provider: provider
     ) else {
       // The write succeeded but discovery didn't surface the switched-in
@@ -184,9 +179,7 @@ extension UsageStore {
       )
       return false
     }
-    // A resume warning does not hide a completed credential switch. Reflect
-    // the live account first, then report session recovery separately.
-    captureErrors[provider] = result.warning?.message
+    captureErrors[provider] = nil
     return true
   }
 

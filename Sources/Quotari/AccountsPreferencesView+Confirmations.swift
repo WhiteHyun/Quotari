@@ -6,8 +6,10 @@ extension AccountsPreferencesView {
     switch confirmation {
     case let .addClaudeAccount(activitySnapshot):
       addClaudeAccountAlert(activitySnapshot)
-    case let .switchCLI(account, activitySnapshot):
-      switchCLIAlert(account, allowingActiveSessions: activitySnapshot)
+    case let .switchCLI(account):
+      switchCLIAlert(account)
+    case let .switchBlocked(account, activitySnapshot):
+      switchBlockedAlert(account, activitySnapshot: activitySnapshot)
     case let .remove(account):
       removeAccountAlert(account)
     }
@@ -39,7 +41,7 @@ extension AccountsPreferencesView {
 
   func switchButtonTapped(_ account: ProviderAccount) {
     guard account.provider == .claude else {
-      confirmation = .switchCLI(account, nil)
+      confirmation = .switchCLI(account)
       return
     }
     guard cliActivityInspection.begin() else { return }
@@ -48,9 +50,9 @@ extension AccountsPreferencesView {
       do {
         let activitySnapshot = try await store.cliActivitySnapshot(for: account.provider)
         if activitySnapshot.isActive {
-          confirmation = .switchCLI(account, activitySnapshot)
+          confirmation = .switchBlocked(account, activitySnapshot)
         } else {
-          confirmation = .switchCLI(account, nil)
+          confirmation = .switchCLI(account)
         }
       } catch {
         store.captureErrors[account.provider] = AccountSwitchError.cliActivityCheckFailed(
@@ -74,27 +76,26 @@ extension AccountsPreferencesView {
     )
   }
 
-  private func switchCLIAlert(
-    _ account: ProviderAccount,
-    allowingActiveSessions activitySnapshot: CLIActivitySnapshot?
-  ) -> Alert {
-    let message = if let activitySnapshot {
-      switchConfirmationMessage(for: account)
-        + "\n\n"
-        + CLIActivityWarningPresentation.switchMessage(for: activitySnapshot)
-    } else {
-      switchConfirmationMessage(for: account)
-    }
-    return Alert(
+  private func switchCLIAlert(_ account: ProviderAccount) -> Alert {
+    Alert(
       title: Text(L10n.string("Switch CLI account?")),
-      message: Text(message),
+      message: Text(switchConfirmationMessage(for: account)),
       primaryButton: .default(Text(L10n.string("Switch Account"))) {
-        Task {
-          await store.switchCLIAccount(
-            to: account,
-            allowingActiveSessions: activitySnapshot
-          )
-        }
+        Task { await store.switchCLIAccount(to: account) }
+      },
+      secondaryButton: .cancel()
+    )
+  }
+
+  private func switchBlockedAlert(
+    _ account: ProviderAccount,
+    activitySnapshot: CLIActivitySnapshot
+  ) -> Alert {
+    Alert(
+      title: Text(L10n.string("Quit Claude Code before switching")),
+      message: Text(CLIActivityWarningPresentation.switchBlockedMessage(for: activitySnapshot)),
+      primaryButton: .default(Text(L10n.string("Try Again"))) {
+        switchButtonTapped(account)
       },
       secondaryButton: .cancel()
     )
@@ -129,13 +130,15 @@ extension AccountsPreferencesView {
 
 enum AccountManagementConfirmation: Identifiable {
   case addClaudeAccount(CLIActivitySnapshot)
-  case switchCLI(ProviderAccount, CLIActivitySnapshot?)
+  case switchCLI(ProviderAccount)
+  case switchBlocked(ProviderAccount, CLIActivitySnapshot)
   case remove(ProviderAccount)
 
   var id: String {
     switch self {
     case .addClaudeAccount: "add-claude-account"
-    case let .switchCLI(account, _): "switch-\(account.id)"
+    case let .switchCLI(account): "switch-\(account.id)"
+    case let .switchBlocked(account, _): "switch-blocked-\(account.id)"
     case let .remove(account): "remove-\(account.id)"
     }
   }

@@ -64,11 +64,7 @@ let package = Package(
     // macOS-only: renders the SwiftUI dashboard to PNGs for visual review.
     .testTarget(
       name: "QuotariAppTests",
-      dependencies: [
-        "Quotari",
-        "QuotariCore",
-        .product(name: "CustomDump", package: "swift-custom-dump"),
-      ],
+      dependencies: ["Quotari", "QuotariCore"],
       plugins: [
         .plugin(name: "SwiftLintBuildToolPlugin", package: "SwiftLintPlugins"),
       ]

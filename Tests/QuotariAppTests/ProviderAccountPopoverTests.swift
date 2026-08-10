@@ -66,6 +66,21 @@ struct ProviderAccountPopoverTests {
     #expect(!failureShouldDismiss)
     #expect(coordinator.switchingAccountID == nil)
   }
+
+  @Test func activeSessionConfirmationBlocksSwitchingUntilRetry() {
+    let account = popoverAccount(source: .quotariRegistry(id: "claude:saved"))
+    let confirmation = ProviderAccountPopoverConfirmation.switchBlocked(
+      account,
+      CLIActivitySnapshot(provider: .claude, processes: ["claude (PID 42)"])
+    )
+
+    #expect(confirmation.title == "Quit Claude Code before switching")
+    #expect(confirmation.confirmButtonTitle == "Try Again")
+    #expect(!confirmation.dismissesBeforeConfirming)
+    #expect(confirmation.message.contains("claude (PID 42)"))
+    #expect(!confirmation.message.contains("pause"))
+    #expect(!confirmation.message.contains("resume"))
+  }
 }
 
 @MainActor
