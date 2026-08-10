@@ -5,6 +5,34 @@ import Testing
 
 @MainActor
 struct AutomaticCaptureIdentitySafetyTests {
+  @Test func externalWeakIdentityRotationRemainsSeparateAndVisible() async throws {
+    let fixture = try makeWeakIdentityRotationFixture()
+
+    await fixture.store.reloadAccounts()
+
+    #expect(fixture.registry.load().map(\.id).sorted() == fixture.expectedIDs)
+    #expect(
+      fixture.registry.load().compactMap(\.claudeAccountIdentity)
+        == [fixture.weakIdentity, fixture.weakIdentity]
+    )
+    #expect(
+      fixture.store.captureWarnings[.claude]
+        == UsageStore.weakClaudeIdentityDuplicateMessage
+    )
+    #expect(fixture.store.captureErrors[.claude] == nil)
+
+    // The bounded post-capture discovery and a later full reload both retain
+    // the warning without creating another row for the same token generation.
+    await fixture.store.reloadAccounts()
+
+    #expect(fixture.registry.load().map(\.id).sorted() == fixture.expectedIDs)
+    #expect(
+      fixture.store.captureWarnings[.claude]
+        == UsageStore.weakClaudeIdentityDuplicateMessage
+    )
+    #expect(fixture.store.captureErrors[.claude] == nil)
+  }
+
   @Test func externalClaudeReloginDuringFetchDoesNotInheritThePreviousSelection() async throws {
     let fixture = try await makeReloginSafetyFixture()
 

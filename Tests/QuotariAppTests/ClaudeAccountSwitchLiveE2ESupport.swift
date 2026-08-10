@@ -6,7 +6,7 @@ struct ClaudeSwitchLiveE2EContext {
   var registry: CapturedAccountStore
   var idsBefore: Set<String>
   var target: CapturedAccount
-  var targetOAuthAccount: Data
+  var targetIdentity: ClaudeAccountIdentity
   var originalCredentials: ResolvedClaudeCredentials
   var claudeExecutable: URL
   var detector: CLIActivityDetector
@@ -34,7 +34,7 @@ struct ClaudeLiveAuthenticationEvidence {
 
   func matches(original: ClaudeProfile) -> Bool {
     guard let credentialProfile,
-          sameClaudeAccount(credentialProfile, original),
+          credentialProfile.stronglyIdentifiesSameAccount(as: original),
           let cliStatus
     else { return false }
     return cliStatus.matches(profile: credentialProfile)
@@ -76,10 +76,12 @@ enum ClaudeSwitchLiveE2EError: LocalizedError {
     case .claudeIsRunning: "Quit every Claude Code session before running the live E2E test."
     case .environmentCredentialUnsupported: "Unset QUOTARI_CLAUDE_OAUTH_TOKEN before the live E2E test."
     case .targetNotFound: "The requested saved Claude account was not found."
-    case .targetIdentityUnavailable: "The target account has no verified Claude identity snapshot."
+    case .targetIdentityUnavailable:
+      "The target account needs matching account and organization UUIDs before the live E2E test."
     case .targetIsCurrentAccount: "Choose a saved Claude account different from the current CLI login."
     case .targetNotSwitchable: "The target is not available as a saved, switchable account."
-    case .originalIdentityUnavailable: "The current Claude login has no stable, renewable identity."
+    case .originalIdentityUnavailable:
+      "The current Claude login has no verified account and organization UUIDs."
     case .initialCLIIdentityMismatch: "Claude Code auth status does not match the current OAuth credential."
     case .switchFailed: "Quotari did not complete the Claude account switch."
     case let .postSwitchSelectionInvalid(reason): reason
@@ -111,12 +113,15 @@ func selectedTarget(id: String, from accounts: [CapturedAccount]) throws -> Capt
   return target
 }
 
-func requiredOAuthAccount(for account: CapturedAccount) throws -> Data {
-  guard let oauthAccount = account.claudeOAuthAccount,
-        let object = try? JSONSerialization.jsonObject(with: oauthAccount) as? [String: Any],
-        object["emailAddress"] is String
+func requiredStrongTargetIdentity(for account: CapturedAccount) throws -> ClaudeAccountIdentity {
+  guard let storedIdentity = account.claudeAccountIdentity,
+        storedIdentity.isStrong,
+        let oauthAccount = account.claudeOAuthAccount,
+        let stateIdentity = claudeAccountIdentity(from: oauthAccount),
+        stateIdentity.isStrong,
+        storedIdentity.identifiesSameAccount(as: stateIdentity)
   else { throw ClaudeSwitchLiveE2EError.targetIdentityUnavailable }
-  return oauthAccount
+  return storedIdentity
 }
 
 func claudeExecutableURL(environment: [String: String]) throws -> URL {
@@ -211,31 +216,46 @@ func removeTestCreatedOriginalBackup(
   original: ClaudeOriginalAccountState
 ) throws {
   let candidates = try registry.registeredAccounts(for: .claude).filter { !ids.contains($0.id) }
-  for candidate in candidates {
-    let matchesAccountState = candidate.claudeOAuthAccount.map {
-      ClaudeCodeAccountState.matches($0, profile: original.profile)
-    } == true
-    let matchesCredential = ProviderCredentialIdentity.key(
-      provider: .claude,
-      payload: candidate.payload
-    ) == original.identity
-    guard matchesAccountState || matchesCredential else { continue }
+  for candidate in candidates where isRestorableOriginalCapture(candidate, original: original) {
     try registry.remove(id: candidate.id)
   }
 }
 
-private func sameClaudeAccount(_ candidate: ClaudeProfile, _ original: ClaudeProfile) -> Bool {
-  if let candidateID = nonempty(candidate.accountID),
-     let originalID = nonempty(original.accountID) {
-    return candidateID == originalID
+func restorableOriginalCapture(
+  from accounts: [CapturedAccount],
+  original: ClaudeOriginalAccountState
+) -> CapturedAccount? {
+  let exactGeneration = accounts.filter {
+    ProviderCredentialIdentity.key(provider: .claude, payload: $0.payload) == original.identity
   }
-  guard let candidateEmail = nonempty(candidate.email),
-        let originalEmail = nonempty(original.email)
-  else { return false }
-  return candidateEmail.localizedCaseInsensitiveCompare(originalEmail) == .orderedSame
+  return exactGeneration.first(where: {
+    $0.claudeAccountIdentity.map { stronglyMatches($0, profile: original.profile) } == true
+  }) ?? exactGeneration.first(where: { $0.claudeAccountIdentity?.isStrong != true })
 }
 
-private func nonempty(_ value: String?) -> String? {
-  guard let value, !value.isEmpty else { return nil }
-  return value
+private func isRestorableOriginalCapture(
+  _ account: CapturedAccount,
+  original: ClaudeOriginalAccountState
+) -> Bool {
+  restorableOriginalCapture(from: [account], original: original) != nil
+}
+
+func stronglyMatches(_ identity: ClaudeAccountIdentity, profile: ClaudeProfile) -> Bool {
+  guard identity.isStrong,
+        let profileIdentity = profile.accountIdentity,
+        profileIdentity.isStrong
+  else { return false }
+  return identity.identifiesSameAccount(as: profileIdentity)
+}
+
+private func claudeAccountIdentity(from oauthAccount: Data) -> ClaudeAccountIdentity? {
+  guard let object = try? JSONSerialization.jsonObject(with: oauthAccount) as? [String: Any] else {
+    return nil
+  }
+  let identity = ClaudeAccountIdentity(
+    accountID: object["accountUuid"] as? String,
+    email: object["emailAddress"] as? String,
+    organizationID: object["organizationUuid"] as? String
+  )
+  return identity.isUsable ? identity : nil
 }

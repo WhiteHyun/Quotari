@@ -23,7 +23,7 @@ struct ClaudeAccountSwitchLiveE2ETests {
     let accountsBefore = try registry.registeredAccounts(for: .claude)
     let idsBefore = Set(accountsBefore.map(\.id))
     let target = try selectedTarget(id: targetID, from: accountsBefore)
-    let targetOAuthAccount = try requiredOAuthAccount(for: target)
+    let targetIdentity = try requiredStrongTargetIdentity(for: target)
 
     let originalCredentials = try ClaudeCredentialsStore.loadResolved(environment: environment)
     if case .claudeEnvironment = originalCredentials.source {
@@ -33,7 +33,7 @@ struct ClaudeAccountSwitchLiveE2ETests {
       registry: registry,
       idsBefore: idsBefore,
       target: target,
-      targetOAuthAccount: targetOAuthAccount,
+      targetIdentity: targetIdentity,
       originalCredentials: originalCredentials,
       claudeExecutable: claudeExecutable,
       detector: detector,
@@ -80,10 +80,10 @@ struct ClaudeAccountSwitchLiveE2ETests {
       accessToken: originalCredentials.credentials.accessToken
     )
     originalProfile.fingerprint = originalFingerprint
-    guard originalProfile.hasStableAccountIdentity else {
+    guard originalProfile.hasStrongAccountIdentity else {
       throw ClaudeSwitchLiveE2EError.originalIdentityUnavailable
     }
-    guard !ClaudeCodeAccountState.matches(context.targetOAuthAccount, profile: originalProfile) else {
+    guard !stronglyMatches(context.targetIdentity, profile: originalProfile) else {
       throw ClaudeSwitchLiveE2EError.targetIsCurrentAccount
     }
 
@@ -173,7 +173,7 @@ struct ClaudeAccountSwitchLiveE2ETests {
 
   private func verifyTargetAuthentication(_ context: ClaudeSwitchLiveE2EContext) async throws {
     let liveProfile = try await resolvedLiveProfile(context)
-    guard ClaudeCodeAccountState.matches(context.targetOAuthAccount, profile: liveProfile) else {
+    guard stronglyMatches(context.targetIdentity, profile: liveProfile) else {
       throw ClaudeSwitchLiveE2EError.targetProfileMismatch
     }
     guard try claudeAuthStatus(executable: context.claudeExecutable).matches(profile: liveProfile) else {
@@ -205,9 +205,10 @@ struct ClaudeAccountSwitchLiveE2ETests {
     }
 
     let registered = try context.registry.registeredAccounts(for: .claude)
-    guard let originalCapture = registered.first(where: {
-      ProviderCredentialIdentity.key(provider: .claude, payload: $0.payload) == original.identity
-    }) else {
+    guard let originalCapture = restorableOriginalCapture(
+      from: registered,
+      original: original
+    ) else {
       throw ClaudeSwitchLiveE2EError.originalBackupUnavailable
     }
     await store.reloadAccounts()

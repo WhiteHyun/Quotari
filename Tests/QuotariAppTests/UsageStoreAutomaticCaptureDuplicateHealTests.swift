@@ -1,5 +1,4 @@
 import Foundation
-import CustomDump
 @testable import Quotari
 @testable import QuotariCore
 import Testing
@@ -17,7 +16,7 @@ struct AutomaticCaptureDuplicateHealTests {
     await fixture.store.reloadAccounts()
 
     let saved = try #require(fixture.registry.account(id: fixture.canonicalID))
-    expectNoDifference(fixture.registry.load().map(\.id), [fixture.canonicalID])
+    #expect(fixture.registry.load().map(\.id) == [fixture.canonicalID])
     #expect(try ClaudeCredentialsStore.parse(saved.payload).accessToken == "live-access")
     #expect(saved.claudeAccountIdentity?.isStrong == true)
     #expect(fixture.store.selectedAccounts[.claude]?.credentialSource == .claudeKeychain(
@@ -29,14 +28,13 @@ struct AutomaticCaptureDuplicateHealTests {
     #expect(fixture.selectionStore.load()[.claude]?.credentialSource == .quotariRegistry(
       id: fixture.canonicalID
     ))
-    expectNoDifference(
-      try fixture.monitoringStore.load()[.claude]?.map(\.credentialSource),
-      [.quotariRegistry(id: fixture.canonicalID)]
-    )
+    #expect(try fixture.monitoringStore.load()[.claude]?.map(\.credentialSource) == [
+      .quotariRegistry(id: fixture.canonicalID),
+    ])
     #expect(fixture.store.accounts[.claude]?.contains(where: { $0.id == fixture.redundantProviderID }) == false)
 
     await fixture.store.reloadAccounts()
-    expectNoDifference(fixture.registry.load().map(\.id), [fixture.canonicalID])
+    #expect(fixture.registry.load().map(\.id) == [fixture.canonicalID])
   }
 
   @Test func candidateEmptyReloadStillConsolidatesDeadDuplicate() async throws {
@@ -44,17 +42,58 @@ struct AutomaticCaptureDuplicateHealTests {
 
     await fixture.store.reloadAccounts()
 
-    expectNoDifference(fixture.registry.load().map(\.id), [fixture.canonicalID])
+    #expect(fixture.registry.load().map(\.id) == [fixture.canonicalID])
     #expect(fixture.selectionStore.load()[.claude]?.credentialSource == .quotariRegistry(
       id: fixture.canonicalID
     ))
-    expectNoDifference(
-      try fixture.monitoringStore.load()[.claude]?.map(\.credentialSource),
-      [.quotariRegistry(id: fixture.canonicalID)]
-    )
+    #expect(try fixture.monitoringStore.load()[.claude]?.map(\.credentialSource) == [
+      .quotariRegistry(id: fixture.canonicalID),
+    ])
     #expect(fixture.store.reconciledSelectionOrigins[.claude]?.credentialSource == .quotariRegistry(
       id: fixture.canonicalID
     ))
+  }
+
+  @Test func selectionWriteFailureKeepsRedundantRowAcrossRetriesThenConverges() async throws {
+    let fixture = try makeDuplicateHealReloadFixture(canonicalAlreadyLive: false)
+    try blockDuplicateHealPersistenceWrites(at: fixture.selectionStore.url)
+
+    await fixture.store.reloadAccounts()
+    expectDuplicateRows(fixture)
+    await fixture.store.reloadAccounts()
+    expectDuplicateRows(fixture)
+
+    try restoreDuplicateHealPersistenceWrites(at: fixture.selectionStore.url)
+    await fixture.store.reloadAccounts()
+
+    #expect(fixture.registry.load().map(\.id) == [fixture.canonicalID])
+    #expect(fixture.selectionStore.load()[.claude]?.credentialSource == .quotariRegistry(
+      id: fixture.canonicalID
+    ))
+  }
+
+  @Test func monitoringWriteFailureKeepsRedundantRowAcrossRetriesThenConverges() async throws {
+    let fixture = try makeDuplicateHealReloadFixture(canonicalAlreadyLive: false)
+    try blockDuplicateHealPersistenceWrites(at: fixture.monitoringStore.url)
+
+    await fixture.store.reloadAccounts()
+    expectDuplicateRows(fixture)
+    await fixture.store.reloadAccounts()
+    expectDuplicateRows(fixture)
+    #expect(!fixture.store.isMonitoringConfigurationLoaded)
+
+    try restoreDuplicateHealPersistenceWrites(at: fixture.monitoringStore.url)
+    // The first healthy reload durably recovers the monitoring map. Cleanup is
+    // allowed only on the following scan, once that readable state is known.
+    await fixture.store.reloadAccounts()
+    expectDuplicateRows(fixture)
+    #expect(fixture.store.isMonitoringConfigurationLoaded)
+    await fixture.store.reloadAccounts()
+
+    #expect(fixture.registry.load().map(\.id) == [fixture.canonicalID])
+    #expect(try fixture.monitoringStore.load()[.claude]?.map(\.credentialSource) == [
+      .quotariRegistry(id: fixture.canonicalID),
+    ])
   }
 
   @Test func persistedStrongIdentityHealsDuplicatesWithoutProfileCache() async throws {
@@ -65,12 +104,11 @@ struct AutomaticCaptureDuplicateHealTests {
 
     await fixture.store.reloadAccounts()
 
-    expectNoDifference(fixture.registry.load().map(\.id), [fixture.canonicalID])
+    #expect(fixture.registry.load().map(\.id) == [fixture.canonicalID])
     let canonical = try #require(fixture.registry.account(id: fixture.canonicalID))
     #expect(try ClaudeCredentialsStore.parse(canonical.payload).accessToken == "live-access")
-    expectNoDifference(
-      canonical.claudeAccountIdentity,
-      ClaudeAccountIdentity(
+    #expect(
+      canonical.claudeAccountIdentity == ClaudeAccountIdentity(
         accountID: "account",
         email: "same@example.com",
         organizationID: "organization"
@@ -236,5 +274,40 @@ struct AutomaticCaptureDuplicateHealTests {
     )
 
     #expect(fixture.store.claudeProfiles[removedSavedID] != nil)
+  }
+
+  private func expectDuplicateRows(_ fixture: DuplicateHealReloadFixture) {
+    #expect(fixture.registry.load().map(\.id).sorted() == [fixture.canonicalID, fixture.redundantID].sorted())
+  }
+
+  private func blockDuplicateHealPersistenceWrites(at url: URL) throws {
+    let fileManager = FileManager.default
+    if fileManager.fileExists(atPath: url.path) {
+      try fileManager.removeItem(at: url)
+    }
+    try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
+  }
+
+  private func restoreDuplicateHealPersistenceWrites(at url: URL) throws {
+    guard FileManager.default.fileExists(atPath: url.path) else { return }
+    try FileManager.default.removeItem(at: url)
+  }
+}
+
+extension AutomaticCaptureDuplicateHealTests {
+  @Test func malformedSelectionConfigurationIsNeverOverwrittenByCleanup() async throws {
+    let fixture = try makeDuplicateHealReloadFixture(
+      canonicalAlreadyLive: false,
+      hasMalformedSelectionConfiguration: true
+    )
+    let malformed = try Data(contentsOf: fixture.selectionStore.url)
+
+    await fixture.store.reloadAccounts()
+    expectDuplicateRows(fixture)
+    await fixture.store.reloadAccounts()
+
+    expectDuplicateRows(fixture)
+    #expect(!fixture.store.isSelectionConfigurationLoaded)
+    #expect(try Data(contentsOf: fixture.selectionStore.url) == malformed)
   }
 }

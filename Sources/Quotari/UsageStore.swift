@@ -14,6 +14,10 @@ final class UsageStore {
   var providersWithDiscoveredCredentials = Set<UsageProvider>()
   var credentialDiscoveryCompleted = Set<UsageProvider>()
   private(set) var selectedAccounts: [UsageProvider: ProviderAccount] = [:]
+  /// False when the persisted selection file exists but could not be read.
+  /// Destructive registry migrations must not replace that unknown durable
+  /// state with the incomplete in-memory selection map.
+  var isSelectionConfigurationLoaded = true
   /// The live account each CLI resolves without an explicit Quotari override.
   /// This is discovered from provider configuration rather than row order.
   var activeCLIAccounts: [UsageProvider: ProviderAccount] = [:]
@@ -101,6 +105,7 @@ final class UsageStore {
   let claudeCredentialLoader: @Sendable (ProviderCredentialSource) -> ClaudeCredentials?
   private let defaults: UserDefaults
   var captureErrors: [UsageProvider: String] = [:]
+  var captureWarnings: [UsageProvider: String] = [:]
   /// Fetched Claude account profiles keyed by `ProviderAccount.id`, used to
   /// label accounts by email. Loaded from disk at launch, refreshed lazily.
   var claudeProfiles: [String: ClaudeProfile] = [:]
@@ -220,7 +225,7 @@ final class UsageStore {
     self.postCredentialRefreshDelay = postCredentialRefreshDelay
     self.postCredentialRefreshSleep = postCredentialRefreshSleep
     self.currentDate = currentDate
-    selectedAccounts = accountSelectionStore.load()
+    (selectedAccounts, isSelectionConfigurationLoaded) = Self.restoredSelections(from: accountSelectionStore)
     do {
       persistedMonitoredAccounts = try self.accountMonitoringStore.load()
     } catch {
@@ -253,6 +258,18 @@ final class UsageStore {
 
   deinit {
     usageInsightsChangeMonitor.stop()
+  }
+}
+
+private extension UsageStore {
+  static func restoredSelections(
+    from store: ProviderAccountSelectionStore
+  ) -> ([UsageProvider: ProviderAccount], Bool) {
+    do {
+      return try (store.loadValidated(), true)
+    } catch {
+      return ([:], false)
+    }
   }
 }
 

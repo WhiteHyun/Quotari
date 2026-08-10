@@ -10,6 +10,7 @@ struct DuplicateHealReloadFixture {
   let selectionStore: ProviderAccountSelectionStore
   let monitoringStore: ProviderAccountMonitoringStore
   let canonicalID: String
+  let redundantID: String
   let redundantProviderID: String
 }
 
@@ -17,7 +18,8 @@ struct DuplicateHealReloadFixture {
 func makeDuplicateHealReloadFixture(
   canonicalAlreadyLive: Bool,
   allowsCanonicalRefresh: Bool = true,
-  usesPersistedIdentityWithoutProfileCache: Bool = false
+  usesPersistedIdentityWithoutProfileCache: Bool = false,
+  hasMalformedSelectionConfiguration: Bool = false
 ) throws -> DuplicateHealReloadFixture {
   let options = DuplicateHealReloadOptions(
     canonicalAlreadyLive: canonicalAlreadyLive,
@@ -32,7 +34,11 @@ func makeDuplicateHealReloadFixture(
   let monitoringStore = ProviderAccountMonitoringStore(
     url: state.directory.url.appendingPathComponent("monitoring.json")
   )
-  try selectionStore.save([.claude: state.redundant.providerAccount])
+  if hasMalformedSelectionConfiguration {
+    try Data("not-json".utf8).write(to: selectionStore.url)
+  } else {
+    try selectionStore.save([.claude: state.redundant.providerAccount])
+  }
   try monitoringStore.save([.claude: [state.redundant.providerAccount]])
   let store = duplicateHealReloadUsageStore(
     state: state,
@@ -47,6 +53,7 @@ func makeDuplicateHealReloadFixture(
     selectionStore: selectionStore,
     monitoringStore: monitoringStore,
     canonicalID: state.canonical.id,
+    redundantID: state.redundant.id,
     redundantProviderID: state.redundant.providerAccount.id
   )
 }
@@ -268,8 +275,13 @@ struct SavedRowSpec {
   let capturedAt: Date
   var expiresAt = Date(timeIntervalSince1970: 0)
 
-  var accessToken: String { "\(token)-access" }
-  var refreshToken: String { "\(token)-refresh" }
+  var accessToken: String {
+    token + "-access"
+  }
+
+  var refreshToken: String {
+    token + "-refresh"
+  }
 }
 
 @MainActor

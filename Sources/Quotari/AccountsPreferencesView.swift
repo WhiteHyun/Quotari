@@ -95,6 +95,12 @@ private extension AccountsPreferencesView {
           .foregroundStyle(.red)
           .fixedSize(horizontal: false, vertical: true)
       }
+      if let warning = store.captureWarnings[descriptor.id] {
+        Text(warning)
+          .font(.caption)
+          .foregroundStyle(.orange)
+          .fixedSize(horizontal: false, vertical: true)
+      }
     }
   }
 

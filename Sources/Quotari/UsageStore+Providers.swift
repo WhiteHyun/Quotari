@@ -51,6 +51,7 @@ extension UsageStore {
     errors[provider] = nil
     sourceLabels[provider] = nil
     captureErrors[provider] = nil
+    captureWarnings[provider] = nil
     accountLoginErrors[provider] = nil
     accountLoginOutputs[provider] = nil
     accountUsage[provider] = nil
