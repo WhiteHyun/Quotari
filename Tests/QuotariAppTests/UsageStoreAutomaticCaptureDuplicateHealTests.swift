@@ -310,4 +310,24 @@ extension AutomaticCaptureDuplicateHealTests {
     #expect(!fixture.store.isSelectionConfigurationLoaded)
     #expect(try Data(contentsOf: fixture.selectionStore.url) == malformed)
   }
+
+  @Test func explicitSelectionRepairReenablesDuplicateCleanup() async throws {
+    let fixture = try makeDuplicateHealReloadFixture(
+      canonicalAlreadyLive: false,
+      hasMalformedSelectionConfiguration: true
+    )
+    let canonical = try #require(
+      fixture.registry.account(id: fixture.canonicalID)?.providerAccount
+    )
+
+    fixture.store.selectAccount(canonical, for: .claude)
+
+    #expect(fixture.store.isSelectionConfigurationLoaded)
+    #expect(try fixture.selectionStore.loadValidated()[.claude] == canonical)
+
+    await fixture.store.reloadAccounts()
+
+    #expect(fixture.registry.load().map(\.id) == [fixture.canonicalID])
+    #expect(try fixture.selectionStore.loadValidated()[.claude]?.id == canonical.id)
+  }
 }
