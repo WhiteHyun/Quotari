@@ -60,6 +60,15 @@ extension UsageStore {
       including: request.includingLogicalAccountIDs,
       excluding: request.excludingCredentialScopeIDs
     )
+    credentialLifecycleLogger.record(
+      .monitoringPass,
+      provider: provider,
+      interaction: request.interaction,
+      reason: request.force ? .forced : .scheduled,
+      monitoredAccountCount: monitoredAccounts[provider]?.count ?? 0,
+      eligibleAccountCount: accounts.count,
+      timestamp: now
+    )
     if request.notifiesQuota {
       enqueueCachedAccountUsageNotifications(
         provider: provider,
@@ -118,17 +127,17 @@ extension UsageStore {
     ) { group in
       for account in execution.accounts {
         let capturedRegistryID = capturedRegistryID(for: account)
-        group.addTask {
-          await (
-            account,
-            execution.descriptor.fetch(
-              now: execution.now,
-              account: account,
-              capturedRegistryID: capturedRegistryID,
-              interaction: execution.interaction
-            )
-          )
-        }
+        let lifecycleAccount = capturedEquivalents[account.id] ?? account
+        let fetch = LifecycleLoggedAccountFetch(
+          descriptor: execution.descriptor,
+          account: account,
+          lifecycleAccount: lifecycleAccount,
+          capturedRegistryID: capturedRegistryID,
+          interaction: execution.interaction,
+          now: execution.now,
+          logger: credentialLifecycleLogger
+        )
+        group.addTask { await fetch() }
       }
       var credentialTransitions: [String: Set<String>] = [:]
       var notificationCandidates: [AccountUsageNotificationCandidate] = []
@@ -231,5 +240,49 @@ extension UsageStore {
         credentialScopeID: usage.credentialScopeID
       )
     }
+  }
+}
+
+private struct LifecycleLoggedAccountFetch: Sendable {
+  let descriptor: ProviderDescriptor
+  let account: ProviderAccount
+  let lifecycleAccount: ProviderAccount
+  let capturedRegistryID: String?
+  let interaction: ProviderFetchInteraction
+  let now: Date
+  let logger: CredentialLifecycleLogger
+
+  func callAsFunction() async -> (ProviderAccount, Result<ProviderFetchResult, Error>) {
+    logger.record(
+      .validationStarted,
+      provider: account.provider,
+      account: lifecycleAccount,
+      interaction: interaction,
+      timestamp: now
+    )
+    let result = await descriptor.fetch(
+      now: now,
+      account: account,
+      capturedRegistryID: capturedRegistryID,
+      interaction: interaction
+    )
+    switch result {
+    case .success:
+      logger.record(
+        .validationSucceeded,
+        provider: account.provider,
+        account: lifecycleAccount,
+        interaction: interaction
+      )
+    case let .failure(error):
+      logger.record(
+        .validationFailed,
+        provider: account.provider,
+        account: lifecycleAccount,
+        interaction: interaction,
+        failure: .classify(error)
+      )
+    }
+    return (account, result)
   }
 }

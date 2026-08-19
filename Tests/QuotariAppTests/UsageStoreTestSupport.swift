@@ -243,6 +243,7 @@ extension UsageStore {
     currentDate: @escaping @Sendable () -> Date = {
       Date(timeIntervalSince1970: 1_783_478_400)
     },
+    credentialLifecycleLogger: CredentialLifecycleLogger = CredentialLifecycleLogger(record: { _ in }),
     startsAutomatically: Bool = true
   ) -> UsageStore {
     let isolatedDefaults = defaults ?? ephemeralDefaults()
@@ -276,6 +277,7 @@ extension UsageStore {
       postCredentialRefreshDelay: postCredentialRefreshDelay,
       postCredentialRefreshSleep: postCredentialRefreshSleep,
       currentDate: currentDate,
+      credentialLifecycleLogger: credentialLifecycleLogger,
       startsAutomatically: startsAutomatically
     )
   }

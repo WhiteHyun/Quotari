@@ -19,15 +19,16 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
   public let id = "codex.oauth"
   public let kind: ProviderFetchKind = .oauth
 
-  private static let logger = Logger(subsystem: "com.quotari.QuotariCore", category: "codex-oauth")
+  static let logger = Logger(subsystem: "com.quotari.QuotariCore", category: "codex-oauth")
 
   private let transport: any ProviderHTTPTransport
   private let loadAutomaticCredentials: @Sendable () throws -> LoadedCodexCredentials
   private let usageURL: URL
   private let refresher: (any CodexTokenRefreshing)?
-  private let persister: any CodexCredentialPersisting
+  let persister: any CodexCredentialPersisting
   let capturedAccounts: CapturedAccountStore
   let refreshCoordinator: CodexTokenRefreshCoordinator
+  let credentialLifecycleLogger: CredentialLifecycleLogger
 
   public init(
     transport: any ProviderHTTPTransport = URLSession.shared,
@@ -39,7 +40,8 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
     refresher: (any CodexTokenRefreshing)? = CodexTokenRefresher(),
     persister: (any CodexCredentialPersisting)? = nil,
     capturedAccounts: CapturedAccountStore = CapturedAccountStore(),
-    refreshCoordinator: CodexTokenRefreshCoordinator = .shared
+    refreshCoordinator: CodexTokenRefreshCoordinator = .shared,
+    credentialLifecycleLogger: CredentialLifecycleLogger = .disabled
   ) {
     let keychainRead = codexKeychainRead ?? { service, account in
       try KeychainItemStore(account: account).read(service: service)
@@ -70,6 +72,7 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
     self.persister = persister ?? CodexCredentialsWriter(capturedAccounts: capturedAccounts)
     self.capturedAccounts = capturedAccounts
     self.refreshCoordinator = refreshCoordinator
+    self.credentialLifecycleLogger = credentialLifecycleLogger
   }
 
   public func isAvailable(_ context: ProviderFetchContext) async -> Bool {
@@ -191,7 +194,7 @@ private extension CodexUsageStrategy {
   ) async -> CodexCredentials {
     guard deniedAccessToken != nil || credentials.isExpired(now: now),
           let refreshToken = credentials.refreshToken,
-          let refresher
+          refresher != nil
     else { return credentials }
     let durablePending: CodexPendingGrant?
     do {
@@ -200,8 +203,15 @@ private extension CodexUsageStrategy {
       // A transient keychain failure is not absence. Do not submit a token
       // that may already have been consumed while its replacement is hidden.
       Self.logger.error("Reading a pending Codex grant failed: \(error.localizedDescription, privacy: .public)")
+      recordLifecycle(.pendingGrantReadFailed, registryID: registryID, failure: .inputOutput, timestamp: now)
       return credentials
     }
+    recordRefreshSelection(
+      registryID: registryID,
+      denied: deniedAccessToken != nil,
+      hasPendingGrant: durablePending != nil,
+      timestamp: now
+    )
     return await refreshCoordinator.resolve(key: "\(registryID)#\(refreshToken)") {
       // Double-check inside the transaction: a previous transaction may have
       // persisted a fresh pair while we waited. A pair the endpoint just
@@ -231,7 +241,13 @@ private extension CodexUsageStrategy {
           base = current
         }
       }
-      return await exchanged(base, refreshToken: refreshToken, refresher: refresher, registryID: registryID, now: now)
+      return await exchanged(
+        base,
+        refreshToken: refreshToken,
+        registryID: registryID,
+        reason: deniedAccessToken == nil ? .expired : .unauthorized,
+        now: now
+      )
     }
   }
 
@@ -241,13 +257,16 @@ private extension CodexUsageStrategy {
   private func exchanged(
     _ base: CodexCredentials,
     refreshToken: String,
-    refresher: any CodexTokenRefreshing,
     registryID: String,
+    reason: CredentialLifecycleEvent.Reason,
     now: Date
   ) async -> CodexCredentials {
+    guard let refresher else { return base }
+    recordLifecycle(.refreshStarted, registryID: registryID, reason: reason, timestamp: now)
     do {
       var grant = try await refresher.refresh(refreshToken: refreshToken)
       grant.refreshedAt = now
+      recordLifecycle(.refreshSucceeded, registryID: registryID, reason: reason)
       let pending = CodexPendingGrant(
         grant: grant,
         previousAccessToken: base.accessToken,
@@ -273,6 +292,7 @@ private extension CodexUsageStrategy {
       }
     } catch {
       Self.logger.error("Codex token refresh failed: \(error.localizedDescription, privacy: .public)")
+      recordLifecycle(.refreshFailed, registryID: registryID, reason: reason, failure: .classify(error))
       return reloadedFromRegistry(id: registryID, now: now) ?? base
     }
   }
@@ -284,11 +304,6 @@ private extension CodexUsageStrategy {
     /// the endpoint keeps the token alive. A fresh exchange is safe and
     /// never risks overwriting a newer concurrent write.
     case exchange(CodexCredentials)
-  }
-
-  private struct PersistedGrant {
-    let credentials: CodexCredentials
-    let isDurablyRecoverable: Bool
   }
 
   /// The registry was rewritten while a refreshed pair was in hand (its
@@ -347,45 +362,5 @@ private extension CodexUsageStrategy {
     }
     // Yet another concurrent write landed; at some point theirs is the truth.
     return reloadedFromRegistry(id: registryID, now: now) ?? inMemory(stored, pending.grant)
-  }
-
-  /// Persists the pending grant and returns the credentials to fetch with,
-  /// or nil when the registry holds a different pair than the grant replaces
-  /// (someone re-captured or refreshed concurrently — their pair wins). A
-  /// write failure keeps the grant queued for retry and still returns it:
-  /// the rotation already happened server-side, so the in-memory pair is the
-  /// freshest one there is.
-  private func persisted(
-    _ pending: CodexPendingGrant,
-    credentials: CodexCredentials,
-    registryID: String,
-    now: Date
-  ) async -> PersistedGrant? {
-    do {
-      try persister.persist(
-        pending.grant,
-        replacing: pending.previousAccessToken,
-        toRegistryAccount: registryID
-      )
-      // The registry holds the grant now; any durable copy is obsolete.
-      removePendingIfMatching(pending, registryID: registryID)
-    } catch CodexCredentialPersistError.staleSource {
-      return nil
-    } catch {
-      Self.logger.error("Persisting refreshed Codex tokens failed: \(error.localizedDescription, privacy: .public)")
-      let isDurablyRecoverable = await rememberPending(pending, registryID: registryID)
-      // The write failed, so the registry still holds the old (possibly
-      // denied) pair — the in-memory grant is the only fresh one.
-      return PersistedGrant(
-        credentials: inMemory(credentials, pending.grant),
-        isDurablyRecoverable: isDurablyRecoverable
-      )
-    }
-    // Re-read for the fully derived fields (JWT expiry, id_token email); fall
-    // back to patching in memory when the registry read fails.
-    return PersistedGrant(
-      credentials: reloadedFromRegistry(id: registryID, now: now) ?? inMemory(credentials, pending.grant),
-      isDurablyRecoverable: true
-    )
   }
 }

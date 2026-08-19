@@ -1,3 +1,4 @@
+import CustomDump
 import Foundation
 @testable import Quotari
 @testable import QuotariCore
@@ -17,12 +18,14 @@ struct UsageStoreSwitchTests {
     let discovery = MutableAccountDiscovery(StaticAccountDiscovery(
       accounts: [.codex: [savedAccount]]
     ))
+    let lifecycleRecorder = AppCredentialLifecycleEventRecorder()
     let store = UsageStore.isolatedForTesting(
       providers: [codexDescriptor()],
       costEstimator: EmptyCostEstimator(),
       accountDiscovery: discovery,
       accountSelectionStore: selectionStore,
       accountSwitch: .isolatedForTesting(capturedAccounts: registry, home: home),
+      credentialLifecycleLogger: lifecycleRecorder.logger,
       startsAutomatically: false
     )
     await store.reloadAccounts()
@@ -45,6 +48,16 @@ struct UsageStoreSwitchTests {
     #expect(store.captureErrors[.codex] == nil)
     #expect(store.selectedAccounts[.codex] == liveAfterSwitch)
     #expect(selectionStore.load()[.codex] == savedAccount)
+    expectNoDifference(lifecycleRecorder.events.map(\.kind), [
+      .switchStarted,
+      .switchCredentialsWritten,
+      .switchVerified,
+      .postSwitchRefreshScheduled,
+    ])
+    expectNoDifference(
+      Set(lifecycleRecorder.events.compactMap(\.accountID)),
+      ["opaque:\(savedAccount.id)"]
+    )
   }
 
   @Test func switchingAnIdlessSavedAccountSelectsTheSoleLiveLogin() async throws {

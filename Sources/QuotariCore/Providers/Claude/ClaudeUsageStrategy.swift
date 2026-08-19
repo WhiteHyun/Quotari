@@ -1,10 +1,8 @@
 import Foundation
 import os
 
-/// Fetches Claude usage over OAuth using credentials discovered from the
-/// environment, the Claude Code keychain item, or `~/.claude/.credentials.json`.
-/// Not available when no credentials are found, so the pipeline falls through.
-///
+/// Fetches Claude usage over OAuth from the environment, Claude Code keychain,
+/// or `~/.claude/.credentials.json`; unavailable sources fall through.
 /// Expired access tokens are refreshed against the OAuth token endpoint and
 /// the rotated pair is written back to the source, so Claude Code keeps
 /// working with the same refresh token.
@@ -23,6 +21,7 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
   let capturedAccounts: CapturedAccountStore
   let refreshCoordinator: ClaudeTokenRefreshCoordinator
   let rateLimitGate: ClaudeUsageRateLimitGate
+  let credentialLifecycleLogger: CredentialLifecycleLogger
 
   public init(
     transport: any ProviderHTTPTransport = URLSession.shared,
@@ -36,7 +35,8 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
     capturedAccounts: CapturedAccountStore = CapturedAccountStore(),
     mirroredCredentialsFileURL: URL? = nil,
     refreshCoordinator: ClaudeTokenRefreshCoordinator = .shared,
-    rateLimitGate: ClaudeUsageRateLimitGate = .shared
+    rateLimitGate: ClaudeUsageRateLimitGate = .shared,
+    credentialLifecycleLogger: CredentialLifecycleLogger = .disabled
   ) {
     self.transport = transport
     self.usageURL = usageURL
@@ -52,6 +52,7 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
     self.capturedAccounts = capturedAccounts
     self.refreshCoordinator = refreshCoordinator
     self.rateLimitGate = rateLimitGate
+    self.credentialLifecycleLogger = credentialLifecycleLogger
   }
 
   public func isAvailable(_ context: ProviderFetchContext) async -> Bool {
@@ -193,11 +194,21 @@ private extension ClaudeUsageStrategy {
       // temporarily unreadable, so fail closed and let the API report the
       // old credential as unusable.
       Self.logger.error("Reading a pending Claude grant failed: \(error.localizedDescription, privacy: .public)")
+      recordLifecycle(.pendingGrantReadFailed, source: resolved.source, failure: .inputOutput, timestamp: now)
       return ClaudeRefreshResolution(resolved: resolved)
     }
     guard refreshNeeded || durablePending != nil else {
       return ClaudeRefreshResolution(resolved: resolved)
     }
+    if durablePending != nil {
+      recordLifecycle(.pendingGrantFound, source: resolved.source, reason: .pendingGrant, timestamp: now)
+    }
+    recordRefreshSelection(
+      source: resolved.source,
+      denied: deniedAccessToken != nil,
+      hasPendingGrant: durablePending != nil,
+      timestamp: now
+    )
     let generation = credentials.refreshToken
       ?? durablePending?.consumedRefreshToken
       ?? credentials.accessToken
@@ -269,12 +280,15 @@ private extension ClaudeUsageStrategy {
     deniedAccessToken: String?,
     now: Date
   ) async -> ClaudeRefreshResolution {
+    let reason: CredentialLifecycleEvent.Reason = deniedAccessToken == nil ? .expired : .unauthorized
+    recordLifecycle(.refreshStarted, source: base.source, reason: reason, timestamp: now)
     do {
       let grant = try await refresher.refresh(
         refreshToken: refreshToken,
         scopes: base.credentials.scopes,
         now: now
       )
+      recordLifecycle(.refreshSucceeded, source: base.source, reason: reason)
       let pending = ClaudePendingGrant(
         grant: grant,
         previousAccessToken: base.credentials.accessToken,
@@ -302,6 +316,7 @@ private extension ClaudeUsageStrategy {
       // will already be at the source, so re-read once before giving up.
       // If that doesn't help either, let the API answer 401 as before.
       Self.logger.error("Token refresh failed: \(error.localizedDescription, privacy: .public)")
+      recordLifecycle(.refreshFailed, source: base.source, reason: reason, failure: .classify(error))
       let reloaded = reloadedFromSource(base, now: now)
       if let reloaded,
          !reloaded.credentials.isExpired(now: now),

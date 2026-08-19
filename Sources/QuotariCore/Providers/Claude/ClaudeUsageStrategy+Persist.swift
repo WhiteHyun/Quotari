@@ -56,6 +56,7 @@ extension ClaudeUsageStrategy {
         replacing: pending.previousAccessToken,
         to: resolved.source
       )
+      recordLifecycle(.persistenceSucceeded, source: resolved.source)
       // The source holds the grant now; any durable copy is obsolete.
       removeDurableGrantIfMatching(pending, source: resolved.source)
       if case .claudeKeychain = resolved.source {
@@ -64,16 +65,24 @@ extension ClaudeUsageStrategy {
         acceptedGrant = pending
       }
     } catch ClaudeCredentialPersistError.obsoleteRecoveryCleanupPending {
+      recordLifecycle(.persistenceDeferred, source: resolved.source, reason: .concurrentCredentialChange)
       let authoritative = (try? reloadCredentials(resolved.source)).map {
         ResolvedClaudeCredentials(credentials: $0, source: resolved.source)
       }
       return ClaudeRefreshResolution(resolved: authoritative ?? resolved)
     } catch ClaudeCredentialPersistError.mirrorRecoveryOwnerChanged {
+      recordLifecycle(.persistenceDeferred, source: resolved.source, reason: .concurrentCredentialChange)
       let authoritative = (try? reloadCredentials(resolved.source)).map {
         ResolvedClaudeCredentials(credentials: $0, source: resolved.source)
       }
       return ClaudeRefreshResolution(resolved: authoritative ?? resolved)
     } catch ClaudeCredentialPersistError.staleSource {
+      recordLifecycle(
+        .persistenceDeferred,
+        source: resolved.source,
+        reason: .concurrentCredentialChange,
+        failure: .staleSource
+      )
       return nil
     } catch {
       if let persistError = error as? ClaudeCredentialPersistError,
@@ -85,6 +94,7 @@ extension ClaudeUsageStrategy {
       // wouldn't undo the rotation — continue with the in-memory pair and
       // queue any grant whose consumed refresh token can no longer recover it.
       Self.logger.error("Persisting refreshed tokens failed: \(error.localizedDescription, privacy: .public)")
+      recordLifecycle(.persistenceFailed, source: resolved.source, failure: .persistence)
       await rememberPending(pending, source: resolved.source)
     }
     return ClaudeRefreshResolution(

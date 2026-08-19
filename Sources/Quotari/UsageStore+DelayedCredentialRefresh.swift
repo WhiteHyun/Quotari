@@ -7,27 +7,26 @@ extension UsageStore {
   /// that is still persisting the same credential transition.
   func enqueuePostCredentialRefresh(for provider: UsageProvider) {
     guard provider == .claude else {
+      recordPostSwitchRefresh(.postSwitchRefreshScheduled, provider: provider, reason: .immediateAfterSwitch)
       enqueueSelectionRefresh(for: provider)
       return
     }
-    cancelDelayedCredentialRefresh(for: provider)
-    // Login/switch rediscovery may have selected the new live row while the
-    // credential gate was still closed. Supersede that eager selection task;
-    // the delayed replacement will retain and drain it as its predecessor.
-    selectionRefreshTasks[provider]?.cancel()
-    let delay = postCredentialRefreshDelay
-    let sleep = postCredentialRefreshSleep
+    recordPostSwitchRefresh(.postSwitchRefreshScheduled, provider: provider, reason: .delayedAfterSwitch)
+    preparePostSwitchRefresh(for: provider)
+    let (delay, sleep) = (postCredentialRefreshDelay, postCredentialRefreshSleep)
     let generation = UUID()
     let task = Task { @MainActor [weak self] in
       do {
         try await sleep(delay)
       } catch {
+        self?.recordPostSwitchRefresh(.postSwitchRefreshCancelled, provider: provider, failure: .cancelled)
         return
       }
       guard let self, !Task.isCancelled,
             delayedCredentialRefreshTasks[provider]?.generation == generation
       else { return }
       guard isProviderEnabled(provider) else { return }
+      recordPostSwitchRefresh(.postSwitchRefreshStarted, provider: provider, reason: .delayedAfterSwitch)
       enqueueSelectionRefresh(
         for: provider,
         interaction: .userInitiated,
@@ -50,6 +49,7 @@ extension UsageStore {
       }
       if delayedCredentialRefreshTasks[provider]?.generation == generation {
         delayedCredentialRefreshTasks[provider] = nil
+        recordPostSwitchRefresh(.postSwitchRefreshCompleted, provider: provider, reason: .delayedAfterSwitch)
       }
     }
     delayedCredentialRefreshTasks[provider] = DelayedCredentialRefreshTask(
@@ -58,6 +58,29 @@ extension UsageStore {
       ownedSelectionTask: nil,
       queuedReplacementTask: nil
     )
+  }
+
+  private func recordPostSwitchRefresh(
+    _ kind: CredentialLifecycleEvent.Kind,
+    provider: UsageProvider,
+    reason: CredentialLifecycleEvent.Reason? = nil,
+    failure: CredentialLifecycleEvent.Failure? = nil
+  ) {
+    credentialLifecycleLogger.record(
+      kind,
+      provider: provider,
+      account: reconciledSelectionOrigins[provider] ?? selectedAccounts[provider],
+      interaction: .userInitiated,
+      reason: reason,
+      failure: failure
+    )
+  }
+
+  private func preparePostSwitchRefresh(for provider: UsageProvider) {
+    cancelDelayedCredentialRefresh(for: provider)
+    // Rediscovery may have selected the new live row while the gate was closed.
+    // Supersede that eager task; the delayed replacement retains and drains it.
+    selectionRefreshTasks[provider]?.cancel()
   }
 
   func cancelDelayedCredentialRefresh(for provider: UsageProvider) {

@@ -1,3 +1,5 @@
+import AppKit
+import QuotariCore
 import SwiftUI
 
 struct AboutPreferencesView: View {
@@ -49,6 +51,29 @@ struct AboutPreferencesView: View {
               .frame(maxWidth: .infinity, alignment: .leading)
           }
         }
+      }
+
+      PreferencesCard(
+        L10n.string("Diagnostics"),
+        subtitle: L10n.string("Inspect local credential refresh and account switching history.")
+      ) {
+        VStack(alignment: .leading, spacing: 12) {
+          VStack(alignment: .leading, spacing: 4) {
+            Text(L10n.string("Quotari keeps up to 21 days or 5 MB of lifecycle events on this Mac."))
+            Text(L10n.string(
+              "The log excludes tokens, emails, account identifiers, file paths, and response bodies."
+            ))
+          }
+          .font(.caption)
+          .foregroundStyle(.secondary)
+
+          Button(L10n.string("Reveal Diagnostic Log…")) {
+            NSWorkspace.shared.activateFileViewerSelecting([
+              CredentialLifecycleLogStore.defaultURL(),
+            ])
+          }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
     }
   }
