@@ -274,12 +274,8 @@ public final class CredentialLifecycleLogStore: @unchecked Sendable {
   func record(_ event: CredentialLifecycleEvent) throws {
     lock.lock()
     defer { lock.unlock() }
-    try ensureDirectory()
+    try materializeLogFile()
     let line = try Self.makeEncoder().encode(event) + Data([0x0A])
-    if !fileManager.fileExists(atPath: url.path) {
-      try Data().write(to: url, options: .atomic)
-      try applyOwnerOnlyPermissions(to: url, directory: false)
-    }
     do {
       let handle = try FileHandle(forWritingTo: url)
       defer { try? handle.close() }
@@ -304,6 +300,19 @@ public final class CredentialLifecycleLogStore: @unchecked Sendable {
     lock.lock()
     defer { lock.unlock() }
     guard fileManager.fileExists(atPath: url.path) else { return }
+    try maintainExistingLog()
+  }
+
+  func prepareLogForAccess() throws -> URL {
+    lock.lock()
+    defer { lock.unlock() }
+    try materializeLogFile()
+    try applyOwnerOnlyPermissions(to: url, directory: false)
+    try maintainExistingLog()
+    return url
+  }
+
+  private func maintainExistingLog() throws {
     let fileSize = try fileManager.attributesOfItem(atPath: url.path)[.size] as? NSNumber
     let exceedsMaximum = (fileSize?.intValue ?? 0) > maximumByteCount
     let current = now()
@@ -370,30 +379,17 @@ public final class CredentialLifecycleLogStore: @unchecked Sendable {
     try applyOwnerOnlyPermissions(to: directory, directory: true)
   }
 
+  private func materializeLogFile() throws {
+    try ensureDirectory()
+    guard !fileManager.fileExists(atPath: url.path) else { return }
+    try Data().write(to: url, options: .atomic)
+    try applyOwnerOnlyPermissions(to: url, directory: false)
+  }
+
   private func applyOwnerOnlyPermissions(to target: URL, directory: Bool) throws {
     try fileManager.setAttributes(
       [.posixPermissions: directory ? 0o700 : 0o600],
       ofItemAtPath: target.path
     )
-  }
-
-  private static func makeEncoder() -> JSONEncoder {
-    let encoder = JSONEncoder()
-    encoder.dateEncodingStrategy = .iso8601
-    encoder.outputFormatting = [.sortedKeys]
-    return encoder
-  }
-
-  private static func makeDecoder() -> JSONDecoder {
-    let decoder = JSONDecoder()
-    decoder.dateDecodingStrategy = .iso8601
-    return decoder
-  }
-
-  private static func decodeLines(_ data: Data) -> [CredentialLifecycleEvent] {
-    let decoder = makeDecoder()
-    return data.split(separator: 0x0A).compactMap { line in
-      try? decoder.decode(CredentialLifecycleEvent.self, from: Data(line))
-    }
   }
 }

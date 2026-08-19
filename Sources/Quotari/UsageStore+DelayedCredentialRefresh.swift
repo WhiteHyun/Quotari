@@ -6,51 +6,34 @@ extension UsageStore {
   /// grant. Waiting briefly avoids immediately racing another Claude process
   /// that is still persisting the same credential transition.
   func enqueuePostCredentialRefresh(for provider: UsageProvider) {
+    let lifecycleAccount = postSwitchLifecycleAccount(for: provider)
     guard provider == .claude else {
-      enqueueImmediatePostCredentialRefresh(for: provider)
+      enqueueImmediatePostCredentialRefresh(for: provider, lifecycleAccount: lifecycleAccount)
       return
     }
-    recordPostSwitchRefresh(.postSwitchRefreshScheduled, provider: provider, reason: .delayedAfterSwitch)
+    enqueueDelayedPostCredentialRefresh(for: provider, lifecycleAccount: lifecycleAccount)
+  }
+
+  private func enqueueDelayedPostCredentialRefresh(
+    for provider: UsageProvider,
+    lifecycleAccount: ProviderAccount?
+  ) {
+    recordPostSwitchRefresh(
+      .postSwitchRefreshScheduled,
+      provider: provider,
+      account: lifecycleAccount,
+      reason: .delayedAfterSwitch
+    )
     preparePostSwitchRefresh(for: provider)
     let (delay, sleep) = (postCredentialRefreshDelay, postCredentialRefreshSleep)
     let generation = UUID()
-    let task = Task { @MainActor [weak self] in
-      do {
-        try await sleep(delay)
-      } catch {
-        self?.recordPostSwitchRefresh(.postSwitchRefreshCancelled, provider: provider, failure: .cancelled)
-        return
-      }
-      guard let self, !Task.isCancelled,
-            delayedCredentialRefreshTasks[provider]?.generation == generation
-      else { return }
-      guard isProviderEnabled(provider) else { return }
-      recordPostSwitchRefresh(.postSwitchRefreshStarted, provider: provider, reason: .delayedAfterSwitch)
-      enqueueSelectionRefresh(
-        for: provider,
-        interaction: .userInitiated,
-        cancelsDelayedCredentialRefresh: false,
-        bypassesDelayedCredentialRefresh: true
-      )
-      let refresh = selectionRefreshTasks[provider]
-      if var delayed = delayedCredentialRefreshTasks[provider],
-         delayed.generation == generation {
-        delayed.ownedSelectionTask = refresh
-        delayedCredentialRefreshTasks[provider] = delayed
-      }
-      await refresh?.value
-      // Rediscovery can append a replacement while the owner is fetching.
-      // Keep the gate closed until the latest queued generation also exits.
-      while !Task.isCancelled,
-            delayedCredentialRefreshTasks[provider]?.generation == generation,
-            dashboardBlockingSelectionRefreshes[provider] != nil {
-        await selectionRefreshTasks[provider]?.value
-      }
-      if delayedCredentialRefreshTasks[provider]?.generation == generation {
-        delayedCredentialRefreshTasks[provider] = nil
-        recordPostSwitchRefresh(.postSwitchRefreshCompleted, provider: provider, reason: .delayedAfterSwitch)
-      }
-    }
+    let task = makeDelayedPostCredentialRefreshTask(
+      provider: provider,
+      lifecycleAccount: lifecycleAccount,
+      generation: generation,
+      delay: delay,
+      sleep: sleep
+    )
     delayedCredentialRefreshTasks[provider] = DelayedCredentialRefreshTask(
       generation: generation,
       task: task,
@@ -59,30 +42,124 @@ extension UsageStore {
     )
   }
 
-  private func enqueueImmediatePostCredentialRefresh(for provider: UsageProvider) {
-    recordPostSwitchRefresh(.postSwitchRefreshScheduled, provider: provider, reason: .immediateAfterSwitch)
+  private func makeDelayedPostCredentialRefreshTask(
+    provider: UsageProvider,
+    lifecycleAccount: ProviderAccount?,
+    generation: UUID,
+    delay: Duration,
+    sleep: @escaping @Sendable (Duration) async throws -> Void
+  ) -> Task<Void, Never> {
+    Task { @MainActor [weak self] in
+      do {
+        try await sleep(delay)
+      } catch {
+        self?.recordPostSwitchRefresh(
+          .postSwitchRefreshCancelled,
+          provider: provider,
+          account: lifecycleAccount,
+          reason: .delayedAfterSwitch,
+          failure: .cancelled
+        )
+        return
+      }
+      await self?.runDelayedPostCredentialRefresh(
+        provider: provider,
+        lifecycleAccount: lifecycleAccount,
+        generation: generation
+      )
+    }
+  }
+
+  private func runDelayedPostCredentialRefresh(
+    provider: UsageProvider,
+    lifecycleAccount: ProviderAccount?,
+    generation: UUID
+  ) async {
+    guard !Task.isCancelled,
+          delayedCredentialRefreshTasks[provider]?.generation == generation,
+          isProviderEnabled(provider)
+    else { return }
+    recordPostSwitchRefresh(
+      .postSwitchRefreshStarted,
+      provider: provider,
+      account: lifecycleAccount,
+      reason: .delayedAfterSwitch
+    )
+    enqueueSelectionRefresh(
+      for: provider,
+      interaction: .userInitiated,
+      cancelsDelayedCredentialRefresh: false,
+      bypassesDelayedCredentialRefresh: true
+    )
+    let refresh = selectionRefreshTasks[provider]
+    if var delayed = delayedCredentialRefreshTasks[provider],
+       delayed.generation == generation {
+      delayed.ownedSelectionTask = refresh
+      delayedCredentialRefreshTasks[provider] = delayed
+    }
+    await refresh?.value
+    // Rediscovery can append a replacement while the owner is fetching.
+    // Keep the gate closed until the latest queued generation also exits.
+    while !Task.isCancelled,
+          delayedCredentialRefreshTasks[provider]?.generation == generation,
+          dashboardBlockingSelectionRefreshes[provider] != nil {
+      await selectionRefreshTasks[provider]?.value
+    }
+    if delayedCredentialRefreshTasks[provider]?.generation == generation {
+      delayedCredentialRefreshTasks[provider] = nil
+      recordPostSwitchRefresh(
+        .postSwitchRefreshCompleted,
+        provider: provider,
+        account: lifecycleAccount,
+        reason: .delayedAfterSwitch
+      )
+    }
+  }
+
+  private func enqueueImmediatePostCredentialRefresh(
+    for provider: UsageProvider,
+    lifecycleAccount: ProviderAccount?
+  ) {
+    recordPostSwitchRefresh(
+      .postSwitchRefreshScheduled,
+      provider: provider,
+      account: lifecycleAccount,
+      reason: .immediateAfterSwitch
+    )
     guard let refresh = enqueueSelectionRefresh(for: provider) else {
       recordPostSwitchRefresh(
         .postSwitchRefreshCancelled,
         provider: provider,
+        account: lifecycleAccount,
         reason: .immediateAfterSwitch,
         failure: .cancelled
       )
       return
     }
-    recordPostSwitchRefresh(.postSwitchRefreshStarted, provider: provider, reason: .immediateAfterSwitch)
-    observeImmediatePostSwitchRefresh(refresh, provider: provider)
+    recordPostSwitchRefresh(
+      .postSwitchRefreshStarted,
+      provider: provider,
+      account: lifecycleAccount,
+      reason: .immediateAfterSwitch
+    )
+    observeImmediatePostSwitchRefresh(
+      refresh,
+      provider: provider,
+      lifecycleAccount: lifecycleAccount
+    )
   }
 
   private func observeImmediatePostSwitchRefresh(
     _ refresh: Task<Void, Never>,
-    provider: UsageProvider
+    provider: UsageProvider,
+    lifecycleAccount: ProviderAccount?
   ) {
     Task { @MainActor [weak self] in
       await refresh.value
       self?.recordPostSwitchRefresh(
         refresh.isCancelled ? .postSwitchRefreshCancelled : .postSwitchRefreshCompleted,
         provider: provider,
+        account: lifecycleAccount,
         reason: .immediateAfterSwitch,
         failure: refresh.isCancelled ? .cancelled : nil
       )
@@ -92,17 +169,22 @@ extension UsageStore {
   private func recordPostSwitchRefresh(
     _ kind: CredentialLifecycleEvent.Kind,
     provider: UsageProvider,
+    account: ProviderAccount?,
     reason: CredentialLifecycleEvent.Reason? = nil,
     failure: CredentialLifecycleEvent.Failure? = nil
   ) {
     credentialLifecycleLogger.record(
       kind,
       provider: provider,
-      account: reconciledSelectionOrigins[provider] ?? selectedAccounts[provider],
+      account: account,
       interaction: .userInitiated,
       reason: reason,
       failure: failure
     )
+  }
+
+  private func postSwitchLifecycleAccount(for provider: UsageProvider) -> ProviderAccount? {
+    reconciledSelectionOrigins[provider] ?? selectedAccounts[provider]
   }
 
   private func preparePostSwitchRefresh(for provider: UsageProvider) {

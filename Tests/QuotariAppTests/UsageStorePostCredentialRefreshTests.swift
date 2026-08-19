@@ -8,14 +8,28 @@ struct UsageStorePostCredentialRefreshTests {
   @Test func immediateCodexRefreshRecordsCancellation() async {
     let strategy = GatedPostCredentialUsageStrategy()
     let recorder = AppCredentialLifecycleEventRecorder()
+    let scheduledAccount = ProviderAccount(
+      provider: .codex,
+      displayName: "Scheduled",
+      detail: "Saved in Quotari",
+      credentialSource: .quotariRegistry(id: "codex:scheduled")
+    )
+    let replacementAccount = ProviderAccount(
+      provider: .codex,
+      displayName: "Replacement",
+      detail: "Saved in Quotari",
+      credentialSource: .quotariRegistry(id: "codex:replacement")
+    )
     let store = UsageStore.isolatedForTesting(
       providers: [postCredentialDescriptor(provider: .codex, strategy: strategy)],
       credentialLifecycleLogger: recorder.logger,
       startsAutomatically: false
     )
+    store.reconciledSelectionOrigins[.codex] = scheduledAccount
 
     store.enqueuePostCredentialRefresh(for: .codex)
     await strategy.waitUntilRequestStarts()
+    store.reconciledSelectionOrigins[.codex] = replacementAccount
     store.selectionRefreshTasks[.codex]?.cancel()
     await strategy.resume()
     await store.selectionRefreshTasks[.codex]?.value
@@ -30,6 +44,7 @@ struct UsageStorePostCredentialRefreshTests {
       .postSwitchRefreshStarted,
       .postSwitchRefreshCancelled,
     ])
+    #expect(recorder.events.allSatisfy { $0.accountID == "opaque:\(scheduledAccount.id)" })
   }
 
   @Test func newerClaudeCredentialChangeSupersedesThePendingRefresh() async {

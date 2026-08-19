@@ -257,6 +257,7 @@ private struct LifecycleLoggedAccountFetch: Sendable {
       .validationStarted,
       provider: account.provider,
       account: lifecycleAccount,
+      source: account.credentialSource,
       interaction: interaction,
       timestamp: now
     )
@@ -272,6 +273,7 @@ private struct LifecycleLoggedAccountFetch: Sendable {
         .validationSucceeded,
         provider: account.provider,
         account: lifecycleAccount,
+        source: account.credentialSource,
         interaction: interaction
       )
     case let .failure(error):
@@ -279,6 +281,7 @@ private struct LifecycleLoggedAccountFetch: Sendable {
         .validationFailed,
         provider: account.provider,
         account: lifecycleAccount,
+        source: account.credentialSource,
         interaction: interaction,
         failure: .classify(error)
       )

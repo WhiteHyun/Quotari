@@ -74,20 +74,26 @@ extension ClaudeUsageStrategy {
   }
 
   func mirrorAcceptedGrant(_ pending: ClaudePendingGrant, to id: String) -> LinkedMirrorResult {
-    guard claimLinkedGrant(pending, id: id) else { return .blocked }
-    do {
-      try ClaudeCredentialsWriter(capturedAccounts: capturedAccounts).persist(
-        pending.grant,
-        replacing: pending.previousAccessToken,
-        to: .quotariRegistry(id: id)
-      )
-      removeLinkedGrantIfMatching(pending, id: id)
-      return .ready
-    } catch ClaudeCredentialPersistError.staleSource {
-      return resolveStaleLinkedMirror(pending, id: id)
-    } catch {
-      return .blocked
+    let result: LinkedMirrorResult
+    if claimLinkedGrant(pending, id: id) {
+      do {
+        try ClaudeCredentialsWriter(capturedAccounts: capturedAccounts).persist(
+          pending.grant,
+          replacing: pending.previousAccessToken,
+          to: .quotariRegistry(id: id)
+        )
+        removeLinkedGrantIfMatching(pending, id: id)
+        result = .ready
+      } catch ClaudeCredentialPersistError.staleSource {
+        result = resolveStaleLinkedMirror(pending, id: id)
+      } catch {
+        result = .blocked
+      }
+    } else {
+      result = .blocked
     }
+    recordLinkedMirrorResult(result, registryID: id)
+    return result
   }
 
   private func resolveStaleLinkedMirror(

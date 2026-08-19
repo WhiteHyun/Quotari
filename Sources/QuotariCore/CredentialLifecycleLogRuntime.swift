@@ -38,8 +38,8 @@ final class CredentialLifecycleLogRuntime: @unchecked Sendable {
   func prepareLogForAccess() async -> URL {
     await withCheckedContinuation { continuation in
       queue.async { [store] in
-        try? store.performMaintenance()
-        continuation.resume(returning: store.url)
+        let url = (try? store.prepareLogForAccess()) ?? store.url
+        continuation.resume(returning: url)
       }
     }
   }

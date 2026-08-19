@@ -83,6 +83,20 @@ struct CredentialLifecycleLogStoreTests {
     try expectNoDifference(fixture.store.events(), [])
   }
 
+  @Test func materializesAnOwnerOnlyEmptyLogForAccess() throws {
+    let fixture = try CredentialLifecycleLogFixture()
+    defer { fixture.remove() }
+
+    let url = try fixture.store.prepareLogForAccess()
+
+    #expect(FileManager.default.fileExists(atPath: url.path))
+    #expect(try Data(contentsOf: url).isEmpty)
+    let fileAttributes = try FileManager.default.attributesOfItem(atPath: url.path)
+    let directoryAttributes = try FileManager.default.attributesOfItem(atPath: fixture.directory.path)
+    expectNoDifference((fileAttributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+    expectNoDifference((directoryAttributes[.posixPermissions] as? NSNumber)?.intValue, 0o700)
+  }
+
   @Test func compactsBelowTheLimitSoTheNextEventCanAppendWithoutARewrite() throws {
     let fixture = try CredentialLifecycleLogFixture(maximumByteCount: 2000)
     defer { fixture.remove() }
@@ -232,7 +246,7 @@ private func expectLinkedClaudeCorrelation(_ events: [CredentialLifecycleEvent])
   #expect(events.allSatisfy { $0.source == .claudeFile })
 }
 
-private final class CredentialLifecycleEventRecorder: @unchecked Sendable {
+final class CredentialLifecycleEventRecorder: @unchecked Sendable {
   private let lock = NSLock()
   private var storage: [CredentialLifecycleEvent] = []
   private let opaqueAccountID: @Sendable (String) -> String

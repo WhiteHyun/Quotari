@@ -49,6 +49,36 @@ extension ClaudeUsageStrategy {
     )
   }
 
+  func recordLinkedMirrorResult(
+    _ result: LinkedMirrorResult,
+    registryID: String
+  ) {
+    let source = ProviderCredentialSource.quotariRegistry(id: registryID)
+    switch result {
+    case .ready:
+      recordLifecycle(
+        .persistenceSucceeded,
+        source: source,
+        correlationSource: source
+      )
+    case .unrelated:
+      recordLifecycle(
+        .persistenceDeferred,
+        source: source,
+        correlationSource: source,
+        reason: .concurrentCredentialChange,
+        failure: .staleSource
+      )
+    case .blocked:
+      recordLifecycle(
+        .persistenceDeferred,
+        source: source,
+        correlationSource: source,
+        failure: .persistence
+      )
+    }
+  }
+
   func loadDurablePendingForLifecycle(
     resolved: ResolvedClaudeCredentials,
     correlationSource: ProviderCredentialSource?,

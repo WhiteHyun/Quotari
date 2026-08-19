@@ -109,6 +109,7 @@ final class BlindingClaudePersister: ClaudeCredentialPersisting, @unchecked Send
 struct ClaudeLinkedRegistryRefreshTests {
   // swiftlint:disable:next function_body_length
   @Test func aQueuedCachedBridgeBlocksTheNextLiveRotation() async throws {
+    let lifecycleRecorder = CredentialLifecycleEventRecorder()
     let keychain = InMemoryKeychain()
     let prefix = "Test-BlockedBridge-\(UUID().uuidString)"
     let store = CapturedAccountStore(keychain: keychain.store, service: prefix)
@@ -164,7 +165,8 @@ struct ClaudeLinkedRegistryRefreshTests {
       },
       refresher: refresher,
       capturedAccounts: store,
-      refreshCoordinator: coordinator
+      refreshCoordinator: coordinator,
+      credentialLifecycleLogger: lifecycleRecorder.logger
     )
 
     _ = try await strategy.fetch(ProviderFetchContext(
@@ -179,9 +181,14 @@ struct ClaudeLinkedRegistryRefreshTests {
     )
     #expect(saved.accessToken == "token-a")
     #expect(store.pendingGrantData(id: "claude:fp-1") != nil)
+    let mirrorEvents = lifecycleRecorder.events.filter { $0.source == .quotariRegistry }
+    #expect(mirrorEvents.map(\.kind) == [.persistenceDeferred])
+    #expect(mirrorEvents.map(\.failure) == [.persistence])
   }
 
+  // swiftlint:disable:next function_body_length
   @Test func aLateLinkedFetchMirrorsTheGrantAcceptedByAnEarlierLiveRefresh() async throws {
+    let lifecycleRecorder = CredentialLifecycleEventRecorder()
     let store = try makeClaudeRegistryStore(
       payload: claudePayload(accessToken: "old-tok", refreshToken: "ref-1", expiresAt: 1000)
     )
@@ -213,7 +220,8 @@ struct ClaudeLinkedRegistryRefreshTests {
         capturedAccounts: store
       ),
       capturedAccounts: store,
-      refreshCoordinator: coordinator
+      refreshCoordinator: coordinator,
+      credentialLifecycleLogger: lifecycleRecorder.logger
     )
     let now = Date(timeIntervalSince1970: 2000)
 
@@ -238,6 +246,8 @@ struct ClaudeLinkedRegistryRefreshTests {
     )
     #expect(saved.accessToken == "new-tok")
     #expect(saved.refreshToken == "ref-2")
+    let mirrorEvents = lifecycleRecorder.events.filter { $0.source == .quotariRegistry }
+    #expect(mirrorEvents.map(\.kind) == [.persistenceSucceeded])
   }
 
   @Test func linkedPendingReadFailureAbortsBeforeAnotherLiveRotation() async throws {
