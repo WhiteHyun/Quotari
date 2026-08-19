@@ -38,6 +38,7 @@ struct UsageStoreSwitchTests {
       capturedCopies: [liveAfterSwitch.id: savedAccount]
     ))
     await store.switchCLIAccount(to: savedAccount)
+    await waitForPostSwitchLifecycle(in: store, recorder: lifecycleRecorder)
 
     // The CLI slot now holds the saved account's credentials…
     let slot = try JSONSerialization.jsonObject(
@@ -53,11 +54,25 @@ struct UsageStoreSwitchTests {
       .switchCredentialsWritten,
       .switchVerified,
       .postSwitchRefreshScheduled,
+      .postSwitchRefreshStarted,
+      .postSwitchRefreshCompleted,
     ])
     expectNoDifference(
       Set(lifecycleRecorder.events.compactMap(\.accountID)),
       ["opaque:\(savedAccount.id)"]
     )
+  }
+
+  private func waitForPostSwitchLifecycle(
+    in store: UsageStore,
+    recorder: AppCredentialLifecycleEventRecorder
+  ) async {
+    await store.selectionRefreshTasks[.codex]?.value
+    for _ in 0 ..< 10 where !recorder.events.contains(where: {
+      $0.kind == .postSwitchRefreshCompleted
+    }) {
+      await Task.yield()
+    }
   }
 
   @Test func switchingAnIdlessSavedAccountSelectsTheSoleLiveLogin() async throws {

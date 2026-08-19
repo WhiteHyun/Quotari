@@ -72,6 +72,43 @@ struct CredentialLifecycleLogStoreTests {
     #expect(retained.count < events.count)
   }
 
+  @Test func prunesExpiredEventsWithoutWaitingForAnotherLifecycleEvent() throws {
+    let fixture = try CredentialLifecycleLogFixture()
+    defer { fixture.remove() }
+    try fixture.store.record(fixture.event(at: fixture.now))
+
+    fixture.advance(by: 22 * 24 * 60 * 60)
+    try fixture.store.performMaintenance()
+
+    try expectNoDifference(fixture.store.events(), [])
+  }
+
+  @Test func compactsBelowTheLimitSoTheNextEventCanAppendWithoutARewrite() throws {
+    let fixture = try CredentialLifecycleLogFixture(maximumByteCount: 2000)
+    defer { fixture.remove() }
+    var previousByteCount = 0
+    var observedCompaction = false
+
+    for offset in 0 ..< 100 {
+      try fixture.store.record(fixture.event(at: fixture.now.addingTimeInterval(TimeInterval(offset))))
+      let byteCount = try Data(contentsOf: fixture.url).count
+      if byteCount < previousByteCount {
+        observedCompaction = true
+        let retainedCount = try fixture.store.events().count
+        let sizeAfterCompaction = byteCount
+
+        try fixture.store.record(fixture.event(at: fixture.now.addingTimeInterval(200)))
+
+        #expect(try fixture.store.events().count == retainedCount + 1)
+        #expect(try Data(contentsOf: fixture.url).count > sizeAfterCompaction)
+        break
+      }
+      previousByteCount = byteCount
+    }
+
+    #expect(observedCompaction)
+  }
+
   @Test func opaqueIdentifiersAreStablePerSaltAndDifferentAcrossSalts() throws {
     let first = try CredentialLifecycleLogFixture(identitySalt: Data("first-install".utf8))
     let second = try CredentialLifecycleLogFixture(identitySalt: Data("second-install".utf8))
@@ -132,8 +169,18 @@ struct CredentialLifecycleRefreshTests {
     #expect(recorder.events.allSatisfy { $0.accountID == "opaque-test-account" })
   }
 
-  @Test func claudeInvalidGrantIsClassifiedWithoutRecordingTheErrorText() async throws {
-    let recorder = CredentialLifecycleEventRecorder()
+  @Test func claudeLinkedInvalidGrantUsesTheSavedAccountCorrelationWithoutRecordingErrorText() async throws {
+    let recorder = CredentialLifecycleEventRecorder(opaqueAccountID: { "opaque:\($0)" })
+    let liveDirectory = FileManager.default.temporaryDirectory
+      .appendingPathComponent("quotari-linked-live-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: liveDirectory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: liveDirectory) }
+    let liveURL = liveDirectory.appendingPathComponent(".credentials.json")
+    let expiredCredentials = ClaudeCredentials(
+      accessToken: "expired-access-token",
+      refreshToken: "expired-refresh-token",
+      expiresAt: Date(timeIntervalSince1970: 1000)
+    )
     let capturedAccounts = try makeClaudeRegistryStore(
       payload: claudePayload(
         accessToken: "expired-access-token",
@@ -141,18 +188,20 @@ struct CredentialLifecycleRefreshTests {
         expiresAt: 1000
       )
     )
+    try claudePayload(
+      accessToken: "expired-access-token",
+      refreshToken: "expired-refresh-token",
+      expiresAt: 1000
+    ).write(to: liveURL)
     let strategy = ClaudeUsageStrategy(
       transport: RefreshStubTransport(json: "{}", status: 401),
       resolveCredentials: {
         ResolvedClaudeCredentials(
-          credentials: ClaudeCredentials(
-            accessToken: "expired-access-token",
-            refreshToken: "expired-refresh-token",
-            expiresAt: Date(timeIntervalSince1970: 1000)
-          ),
-          source: .quotariRegistry(id: "claude:fp-1")
+          credentials: expiredCredentials,
+          source: .claudeCredentialsFile(path: liveURL.path)
         )
       },
+      reloadCredentials: { _ in expiredCredentials },
       refresher: StubRefresher(result: .failure(ClaudeTokenRefreshError.reauthenticationRequired)),
       persister: RecordingPersister(),
       capturedAccounts: capturedAccounts,
@@ -163,7 +212,8 @@ struct CredentialLifecycleRefreshTests {
     await #expect(throws: ClaudeTokenRefreshError.self) {
       _ = try await strategy.fetch(ProviderFetchContext(
         provider: .claude,
-        now: Date(timeIntervalSince1970: 2000)
+        now: Date(timeIntervalSince1970: 2000),
+        capturedRegistryID: "claude:fp-1"
       ))
     }
 
@@ -171,13 +221,27 @@ struct CredentialLifecycleRefreshTests {
     expectNoDifference(failures.map(\.failure), [
       .reauthenticationRequired,
     ])
-    #expect(failures.allSatisfy { $0.accountID == "opaque-test-account" })
+    expectLinkedClaudeCorrelation(failures)
   }
+}
+
+private func expectLinkedClaudeCorrelation(_ events: [CredentialLifecycleEvent]) {
+  let savedSource = ProviderCredentialSource.quotariRegistry(id: "claude:fp-1")
+  let savedAccountID = ProviderAccount.id(provider: .claude, source: savedSource)
+  #expect(events.allSatisfy { $0.accountID == "opaque:\(savedAccountID)" })
+  #expect(events.allSatisfy { $0.source == .claudeFile })
 }
 
 private final class CredentialLifecycleEventRecorder: @unchecked Sendable {
   private let lock = NSLock()
   private var storage: [CredentialLifecycleEvent] = []
+  private let opaqueAccountID: @Sendable (String) -> String
+
+  init(
+    opaqueAccountID: @escaping @Sendable (String) -> String = { _ in "opaque-test-account" }
+  ) {
+    self.opaqueAccountID = opaqueAccountID
+  }
 
   var events: [CredentialLifecycleEvent] {
     lock.withLock { storage }
@@ -189,7 +253,7 @@ private final class CredentialLifecycleEventRecorder: @unchecked Sendable {
         guard let self else { return }
         lock.withLock { self.storage.append(event) }
       },
-      opaqueAccountID: { _ in "opaque-test-account" },
+      opaqueAccountID: opaqueAccountID,
       now: { Date(timeIntervalSince1970: 3000) }
     )
   }
@@ -198,22 +262,32 @@ private final class CredentialLifecycleEventRecorder: @unchecked Sendable {
 private final class CredentialLifecycleLogFixture: @unchecked Sendable {
   let directory: URL
   let url: URL
-  let now = Date(timeIntervalSince1970: 2_000_000)
   let store: CredentialLifecycleLogStore
+  private let clock: CredentialLifecycleClock
+
+  var now: Date {
+    clock.value
+  }
 
   init(
     maximumByteCount: Int = CredentialLifecycleLogStore.defaultMaximumByteCount,
     identitySalt: Data? = Data("fixture-salt".utf8)
   ) throws {
+    let clock = CredentialLifecycleClock(value: Date(timeIntervalSince1970: 2_000_000))
+    self.clock = clock
     directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("quotari-credential-log-\(UUID().uuidString)", isDirectory: true)
     url = directory.appendingPathComponent("CredentialLifecycle.jsonl")
     store = CredentialLifecycleLogStore(
       url: url,
       maximumByteCount: maximumByteCount,
-      now: { Date(timeIntervalSince1970: 2_000_000) },
+      now: { clock.value },
       identitySalt: identitySalt
     )
+  }
+
+  func advance(by interval: TimeInterval) {
+    clock.value = clock.value.addingTimeInterval(interval)
   }
 
   func event(at timestamp: Date) -> CredentialLifecycleEvent {
@@ -229,5 +303,19 @@ private final class CredentialLifecycleLogFixture: @unchecked Sendable {
 
   func remove() {
     try? FileManager.default.removeItem(at: directory)
+  }
+}
+
+private final class CredentialLifecycleClock: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage: Date
+
+  init(value: Date) {
+    storage = value
+  }
+
+  var value: Date {
+    get { lock.withLock { storage } }
+    set { lock.withLock { storage = newValue } }
   }
 }

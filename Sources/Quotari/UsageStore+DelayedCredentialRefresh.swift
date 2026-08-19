@@ -7,8 +7,7 @@ extension UsageStore {
   /// that is still persisting the same credential transition.
   func enqueuePostCredentialRefresh(for provider: UsageProvider) {
     guard provider == .claude else {
-      recordPostSwitchRefresh(.postSwitchRefreshScheduled, provider: provider, reason: .immediateAfterSwitch)
-      enqueueSelectionRefresh(for: provider)
+      enqueueImmediatePostCredentialRefresh(for: provider)
       return
     }
     recordPostSwitchRefresh(.postSwitchRefreshScheduled, provider: provider, reason: .delayedAfterSwitch)
@@ -58,6 +57,36 @@ extension UsageStore {
       ownedSelectionTask: nil,
       queuedReplacementTask: nil
     )
+  }
+
+  private func enqueueImmediatePostCredentialRefresh(for provider: UsageProvider) {
+    recordPostSwitchRefresh(.postSwitchRefreshScheduled, provider: provider, reason: .immediateAfterSwitch)
+    guard let refresh = enqueueSelectionRefresh(for: provider) else {
+      recordPostSwitchRefresh(
+        .postSwitchRefreshCancelled,
+        provider: provider,
+        reason: .immediateAfterSwitch,
+        failure: .cancelled
+      )
+      return
+    }
+    recordPostSwitchRefresh(.postSwitchRefreshStarted, provider: provider, reason: .immediateAfterSwitch)
+    observeImmediatePostSwitchRefresh(refresh, provider: provider)
+  }
+
+  private func observeImmediatePostSwitchRefresh(
+    _ refresh: Task<Void, Never>,
+    provider: UsageProvider
+  ) {
+    Task { @MainActor [weak self] in
+      await refresh.value
+      self?.recordPostSwitchRefresh(
+        refresh.isCancelled ? .postSwitchRefreshCancelled : .postSwitchRefreshCompleted,
+        provider: provider,
+        reason: .immediateAfterSwitch,
+        failure: refresh.isCancelled ? .cancelled : nil
+      )
+    }
   }
 
   private func recordPostSwitchRefresh(

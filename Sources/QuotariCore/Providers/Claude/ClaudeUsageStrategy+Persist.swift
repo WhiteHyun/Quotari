@@ -8,10 +8,15 @@ extension ClaudeUsageStrategy {
   func supersede(
     _ pending: ClaudePendingGrant,
     stored: ResolvedClaudeCredentials,
-    now: Date
+    now: Date,
+    correlationSource: ProviderCredentialSource? = nil
   ) async -> ClaudeRefreshResolution {
     let reapplied = pending.rebased(replacing: stored.credentials.accessToken)
-    if let applied = await persisted(reapplied, resolved: stored) {
+    if let applied = await persisted(
+      reapplied,
+      resolved: stored,
+      correlationSource: correlationSource
+    ) {
       guard let installed = try? ClaudeCredentialsStore.load(
         source: stored.source,
         capturedAccounts: capturedAccounts
@@ -47,61 +52,110 @@ extension ClaudeUsageStrategy {
   /// in-memory pair is the freshest one there is.
   func persisted(
     _ pending: ClaudePendingGrant,
-    resolved: ResolvedClaudeCredentials
+    resolved: ResolvedClaudeCredentials,
+    correlationSource: ProviderCredentialSource? = nil
   ) async -> ClaudeRefreshResolution? {
-    var acceptedGrant: ClaudePendingGrant?
     do {
       try persister.persist(
         pending.grant,
         replacing: pending.previousAccessToken,
         to: resolved.source
       )
-      recordLifecycle(.persistenceSucceeded, source: resolved.source)
-      // The source holds the grant now; any durable copy is obsolete.
-      removeDurableGrantIfMatching(pending, source: resolved.source)
-      if case .claudeKeychain = resolved.source {
-        acceptedGrant = pending
-      } else if case .claudeCredentialsFile = resolved.source {
-        acceptedGrant = pending
-      }
+      return successfulPersistenceResolution(
+        pending,
+        resolved: resolved,
+        correlationSource: correlationSource
+      )
     } catch ClaudeCredentialPersistError.obsoleteRecoveryCleanupPending {
-      recordLifecycle(.persistenceDeferred, source: resolved.source, reason: .concurrentCredentialChange)
-      let authoritative = (try? reloadCredentials(resolved.source)).map {
-        ResolvedClaudeCredentials(credentials: $0, source: resolved.source)
-      }
-      return ClaudeRefreshResolution(resolved: authoritative ?? resolved)
+      return deferredPersistenceResolution(resolved, correlationSource: correlationSource)
     } catch ClaudeCredentialPersistError.mirrorRecoveryOwnerChanged {
-      recordLifecycle(.persistenceDeferred, source: resolved.source, reason: .concurrentCredentialChange)
-      let authoritative = (try? reloadCredentials(resolved.source)).map {
-        ResolvedClaudeCredentials(credentials: $0, source: resolved.source)
-      }
-      return ClaudeRefreshResolution(resolved: authoritative ?? resolved)
+      return deferredPersistenceResolution(resolved, correlationSource: correlationSource)
     } catch ClaudeCredentialPersistError.staleSource {
       recordLifecycle(
         .persistenceDeferred,
         source: resolved.source,
+        correlationSource: correlationSource,
         reason: .concurrentCredentialChange,
         failure: .staleSource
       )
       return nil
     } catch {
-      if let persistError = error as? ClaudeCredentialPersistError,
-         case .mirrorRecoveryPending = persistError,
-         !resolved.source.isCaptured {
-        acceptedGrant = pending
-      }
-      // The refresh already happened server-side, so dropping the fetch
-      // wouldn't undo the rotation — continue with the in-memory pair and
-      // queue any grant whose consumed refresh token can no longer recover it.
-      Self.logger.error("Persisting refreshed tokens failed: \(error.localizedDescription, privacy: .public)")
-      recordLifecycle(.persistenceFailed, source: resolved.source, failure: .persistence)
-      await rememberPending(pending, source: resolved.source)
+      return await failedPersistenceResolution(
+        error,
+        pending: pending,
+        resolved: resolved,
+        correlationSource: correlationSource
+      )
     }
-    return ClaudeRefreshResolution(
+  }
+
+  private func successfulPersistenceResolution(
+    _ pending: ClaudePendingGrant,
+    resolved: ResolvedClaudeCredentials,
+    correlationSource: ProviderCredentialSource?
+  ) -> ClaudeRefreshResolution {
+    recordLifecycle(
+      .persistenceSucceeded,
+      source: resolved.source,
+      correlationSource: correlationSource
+    )
+    removeDurableGrantIfMatching(pending, source: resolved.source)
+    let acceptedGrant: ClaudePendingGrant? = switch resolved.source {
+    case .claudeKeychain, .claudeCredentialsFile: pending
+    default: nil
+    }
+    return persistenceResolution(pending, resolved: resolved, acceptedGrant: acceptedGrant)
+  }
+
+  private func deferredPersistenceResolution(
+    _ resolved: ResolvedClaudeCredentials,
+    correlationSource: ProviderCredentialSource?
+  ) -> ClaudeRefreshResolution {
+    recordLifecycle(
+      .persistenceDeferred,
+      source: resolved.source,
+      correlationSource: correlationSource,
+      reason: .concurrentCredentialChange
+    )
+    let authoritative = (try? reloadCredentials(resolved.source)).map {
+      ResolvedClaudeCredentials(credentials: $0, source: resolved.source)
+    }
+    return ClaudeRefreshResolution(resolved: authoritative ?? resolved)
+  }
+
+  private func failedPersistenceResolution(
+    _ error: Error,
+    pending: ClaudePendingGrant,
+    resolved: ResolvedClaudeCredentials,
+    correlationSource: ProviderCredentialSource?
+  ) async -> ClaudeRefreshResolution {
+    let acceptedGrant: ClaudePendingGrant? = if let persistError = error as? ClaudeCredentialPersistError,
+                                                case .mirrorRecoveryPending = persistError,
+                                                !resolved.source.isCaptured {
+      pending
+    } else {
+      nil
+    }
+    Self.logger.error("Persisting refreshed tokens failed: \(error.localizedDescription, privacy: .public)")
+    recordLifecycle(
+      .persistenceFailed,
+      source: resolved.source,
+      correlationSource: correlationSource,
+      failure: .persistence
+    )
+    await rememberPending(pending, source: resolved.source)
+    return persistenceResolution(pending, resolved: resolved, acceptedGrant: acceptedGrant)
+  }
+
+  private func persistenceResolution(
+    _ pending: ClaudePendingGrant,
+    resolved: ResolvedClaudeCredentials,
+    acceptedGrant: ClaudePendingGrant?
+  ) -> ClaudeRefreshResolution {
+    ClaudeRefreshResolution(
       resolved: inMemory(resolved, pending.grant),
-      // The live source's guarded write accepted this exact generation. The
-      // coordinator shares this proof with every joined caller; each verified
-      // saved-account link mirrors it after the transaction returns.
+      // The coordinator shares this accepted-generation proof with joined
+      // callers so every verified saved-account link can mirror it.
       acceptedGrant: acceptedGrant,
       rotatedFromAccessToken: pending.previousAccessToken
     )

@@ -12,7 +12,9 @@ not change when or how tokens are refreshed.
 - Access: Settings → About → Reveal Diagnostic Log…
 
 Every line is an independently decodable JSON event. Malformed and expired lines are discarded during
-compaction, and the oldest complete events are removed first when the size cap is reached.
+startup and daily maintenance, before the log is revealed, and during append-time compaction. When the
+size cap is crossed, the oldest complete events are removed until the file is at most 80% full so normal
+appends do not rewrite the entire log on every event.
 
 ## Privacy boundary
 

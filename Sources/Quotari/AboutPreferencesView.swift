@@ -68,9 +68,10 @@ struct AboutPreferencesView: View {
           .foregroundStyle(.secondary)
 
           Button(L10n.string("Reveal Diagnostic Log…")) {
-            NSWorkspace.shared.activateFileViewerSelecting([
-              CredentialLifecycleLogStore.defaultURL(),
-            ])
+            Task {
+              let url = await CredentialLifecycleLogger.shared.prepareLogForAccess()
+              NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
           }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

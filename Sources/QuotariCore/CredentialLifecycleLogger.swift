@@ -136,10 +136,7 @@ public struct CredentialLifecycleLogger: Sendable {
 
   public static let shared: Self = {
     let store = CredentialLifecycleLogStore()
-    let writeQueue = DispatchQueue(
-      label: "com.quotari.QuotariCore.credential-lifecycle",
-      qos: .utility
-    )
+    let runtime = CredentialLifecycleLogRuntime(store: store)
     return Self(
       record: { event in
         let provider = event.provider.rawValue
@@ -147,12 +144,13 @@ public struct CredentialLifecycleLogger: Sendable {
         osLogger.info(
           "Credential lifecycle event provider=\(provider, privacy: .public) kind=\(kind, privacy: .public)"
         )
-        writeQueue.async {
-          try? store.record(event)
-        }
+        runtime.record(event)
       },
       opaqueAccountID: { rawIdentifier in
         store.opaqueIdentifier(for: rawIdentifier)
+      },
+      prepareLogForAccess: {
+        await runtime.prepareLogForAccess()
       }
     )
   }()
@@ -162,15 +160,20 @@ public struct CredentialLifecycleLogger: Sendable {
   private let recordValue: @Sendable (CredentialLifecycleEvent) -> Void
   private let opaqueAccountIDValue: @Sendable (String) -> String
   private let nowValue: @Sendable () -> Date
+  private let prepareLogForAccessValue: @Sendable () async -> URL
 
   init(
     record: @escaping @Sendable (CredentialLifecycleEvent) -> Void,
     opaqueAccountID: @escaping @Sendable (String) -> String = { _ in "test-account" },
-    now: @escaping @Sendable () -> Date = Date.init
+    now: @escaping @Sendable () -> Date = Date.init,
+    prepareLogForAccess: @escaping @Sendable () async -> URL = {
+      CredentialLifecycleLogStore.defaultURL()
+    }
   ) {
     recordValue = record
     opaqueAccountIDValue = opaqueAccountID
     nowValue = now
+    prepareLogForAccessValue = prepareLogForAccess
   }
 
   public func record(
@@ -178,6 +181,7 @@ public struct CredentialLifecycleLogger: Sendable {
     provider: UsageProvider,
     account: ProviderAccount? = nil,
     source: ProviderCredentialSource? = nil,
+    correlationSource: ProviderCredentialSource? = nil,
     interaction: ProviderFetchInteraction? = nil,
     reason: CredentialLifecycleEvent.Reason? = nil,
     failure: CredentialLifecycleEvent.Failure? = nil,
@@ -186,7 +190,7 @@ public struct CredentialLifecycleLogger: Sendable {
     timestamp: Date? = nil
   ) {
     let resolvedSource = source ?? account?.credentialSource
-    let rawIdentifier = account?.id ?? resolvedSource.map {
+    let rawIdentifier = account?.id ?? (correlationSource ?? resolvedSource).map {
       ProviderAccount.id(provider: provider, source: $0)
     }
     recordValue(CredentialLifecycleEvent(
@@ -202,6 +206,10 @@ public struct CredentialLifecycleLogger: Sendable {
       eligibleAccountCount: eligibleAccountCount
     ))
   }
+
+  public func prepareLogForAccess() async -> URL {
+    await prepareLogForAccessValue()
+  }
 }
 
 public final class CredentialLifecycleLogStore: @unchecked Sendable {
@@ -213,6 +221,7 @@ public final class CredentialLifecycleLogStore: @unchecked Sendable {
 
   private let retention: TimeInterval
   private let maximumByteCount: Int
+  let compactionTargetByteCount: Int
   private let now: @Sendable () -> Date
   private let fileManager: FileManager
   private let injectedSalt: Data?
@@ -235,6 +244,7 @@ public final class CredentialLifecycleLogStore: @unchecked Sendable {
     saltURL = url.deletingPathExtension().appendingPathExtension("salt")
     self.retention = retention
     self.maximumByteCount = maximumByteCount
+    compactionTargetByteCount = max(1, maximumByteCount * 4 / 5)
     self.now = now
     self.fileManager = fileManager
     injectedSalt = identitySalt
@@ -280,10 +290,28 @@ public final class CredentialLifecycleLogStore: @unchecked Sendable {
     let current = now()
     let fileSize = try fileManager.attributesOfItem(atPath: url.path)[.size] as? NSNumber
     let compactionDue = lastCompactionAt.map { current.timeIntervalSince($0) >= 24 * 60 * 60 } ?? true
-    if compactionDue || (fileSize?.intValue ?? 0) > maximumByteCount {
-      try compact(at: current)
+    let exceedsMaximum = (fileSize?.intValue ?? 0) > maximumByteCount
+    if exceedsMaximum || compactionDue {
+      try compact(
+        at: current,
+        targetByteCount: exceedsMaximum ? compactionTargetByteCount : maximumByteCount
+      )
       lastCompactionAt = current
     }
+  }
+
+  func performMaintenance() throws {
+    lock.lock()
+    defer { lock.unlock() }
+    guard fileManager.fileExists(atPath: url.path) else { return }
+    let fileSize = try fileManager.attributesOfItem(atPath: url.path)[.size] as? NSNumber
+    let exceedsMaximum = (fileSize?.intValue ?? 0) > maximumByteCount
+    let current = now()
+    try compact(
+      at: current,
+      targetByteCount: exceedsMaximum ? compactionTargetByteCount : maximumByteCount
+    )
+    lastCompactionAt = current
   }
 
   func events() throws -> [CredentialLifecycleEvent] {
@@ -318,14 +346,14 @@ public final class CredentialLifecycleLogStore: @unchecked Sendable {
     }
   }
 
-  private func compact(at current: Date) throws {
+  private func compact(at current: Date, targetByteCount: Int) throws {
     let cutoff = current.addingTimeInterval(-retention)
     let encoder = Self.makeEncoder()
     var lines = try Self.decodeLines(Data(contentsOf: url))
       .filter { $0.timestamp >= cutoff }
       .map { try encoder.encode($0) + Data([0x0A]) }
     var byteCount = lines.reduce(0) { $0 + $1.count }
-    while byteCount > maximumByteCount, !lines.isEmpty {
+    while byteCount > targetByteCount, !lines.isEmpty {
       byteCount -= lines.removeFirst().count
     }
     var compacted = Data(capacity: byteCount)
