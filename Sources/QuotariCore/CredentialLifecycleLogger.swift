@@ -276,12 +276,7 @@ public final class CredentialLifecycleLogStore: @unchecked Sendable {
     defer { lock.unlock() }
     try materializeLogFile()
     let line = try Self.makeEncoder().encode(event) + Data([0x0A])
-    do {
-      let handle = try FileHandle(forWritingTo: url)
-      defer { try? handle.close() }
-      try handle.seekToEnd()
-      try handle.write(contentsOf: line)
-    }
+    try Self.appendCompleteLine(line, to: url)
 
     let current = now()
     let fileSize = try fileManager.attributesOfItem(atPath: url.path)[.size] as? NSNumber

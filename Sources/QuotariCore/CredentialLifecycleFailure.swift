@@ -3,7 +3,8 @@ import Foundation
 public extension CredentialLifecycleEvent.Failure {
   static func classify(_ error: Error) -> Self {
     let error = (error as? ProviderFetchTransitionError)?.underlying ?? error
-    if error is CancellationError {
+    if error is CancellationError
+      || (error as? URLError)?.code == .cancelled {
       return .cancelled
     }
     if let failure = classifyRefresh(error) {

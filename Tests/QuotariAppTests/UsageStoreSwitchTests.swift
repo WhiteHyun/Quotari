@@ -55,6 +55,8 @@ struct UsageStoreSwitchTests {
       .switchVerified,
       .postSwitchRefreshScheduled,
       .postSwitchRefreshStarted,
+      .validationStarted,
+      .validationSucceeded,
       .postSwitchRefreshCompleted,
     ])
     expectNoDifference(

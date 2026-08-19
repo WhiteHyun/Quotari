@@ -42,6 +42,8 @@ struct UsageStorePostCredentialRefreshTests {
     #expect(recorder.events.map(\.kind) == [
       .postSwitchRefreshScheduled,
       .postSwitchRefreshStarted,
+      .validationStarted,
+      .validationSucceeded,
       .postSwitchRefreshCancelled,
     ])
     #expect(recorder.events.allSatisfy { $0.accountID == "opaque:\(scheduledAccount.id)" })

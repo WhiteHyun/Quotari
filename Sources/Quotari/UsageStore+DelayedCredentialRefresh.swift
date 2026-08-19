@@ -105,15 +105,18 @@ extension UsageStore {
           dashboardBlockingSelectionRefreshes[provider] != nil {
       await selectionRefreshTasks[provider]?.value
     }
-    if delayedCredentialRefreshTasks[provider]?.generation == generation {
+    let ownsGeneration = delayedCredentialRefreshTasks[provider]?.generation == generation
+    if ownsGeneration {
       delayedCredentialRefreshTasks[provider] = nil
-      recordPostSwitchRefresh(
-        .postSwitchRefreshCompleted,
-        provider: provider,
-        account: lifecycleAccount,
-        reason: .delayedAfterSwitch
-      )
     }
+    let wasCancelled = Task.isCancelled || !ownsGeneration || refresh?.isCancelled == true
+    recordPostSwitchRefresh(
+      wasCancelled ? .postSwitchRefreshCancelled : .postSwitchRefreshCompleted,
+      provider: provider,
+      account: lifecycleAccount,
+      reason: .delayedAfterSwitch,
+      failure: wasCancelled ? .cancelled : nil
+    )
   }
 
   private func enqueueImmediatePostCredentialRefresh(

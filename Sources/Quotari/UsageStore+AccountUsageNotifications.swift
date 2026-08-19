@@ -128,7 +128,7 @@ extension UsageStore {
       for account in execution.accounts {
         let capturedRegistryID = capturedRegistryID(for: account)
         let lifecycleAccount = capturedEquivalents[account.id] ?? account
-        let fetch = LifecycleLoggedAccountFetch(
+        let fetch = LifecycleLoggedProviderFetch(
           descriptor: execution.descriptor,
           account: account,
           lifecycleAccount: lifecycleAccount,
@@ -137,7 +137,7 @@ extension UsageStore {
           now: execution.now,
           logger: credentialLifecycleLogger
         )
-        group.addTask { await fetch() }
+        group.addTask { await (account, fetch()) }
       }
       var credentialTransitions: [String: Set<String>] = [:]
       var notificationCandidates: [AccountUsageNotificationCandidate] = []
@@ -240,52 +240,5 @@ extension UsageStore {
         credentialScopeID: usage.credentialScopeID
       )
     }
-  }
-}
-
-private struct LifecycleLoggedAccountFetch: Sendable {
-  let descriptor: ProviderDescriptor
-  let account: ProviderAccount
-  let lifecycleAccount: ProviderAccount
-  let capturedRegistryID: String?
-  let interaction: ProviderFetchInteraction
-  let now: Date
-  let logger: CredentialLifecycleLogger
-
-  func callAsFunction() async -> (ProviderAccount, Result<ProviderFetchResult, Error>) {
-    logger.record(
-      .validationStarted,
-      provider: account.provider,
-      account: lifecycleAccount,
-      source: account.credentialSource,
-      interaction: interaction,
-      timestamp: now
-    )
-    let result = await descriptor.fetch(
-      now: now,
-      account: account,
-      capturedRegistryID: capturedRegistryID,
-      interaction: interaction
-    )
-    switch result {
-    case .success:
-      logger.record(
-        .validationSucceeded,
-        provider: account.provider,
-        account: lifecycleAccount,
-        source: account.credentialSource,
-        interaction: interaction
-      )
-    case let .failure(error):
-      logger.record(
-        .validationFailed,
-        provider: account.provider,
-        account: lifecycleAccount,
-        source: account.credentialSource,
-        interaction: interaction,
-        failure: .classify(error)
-      )
-    }
-    return (account, result)
   }
 }

@@ -53,6 +53,19 @@ struct CredentialLifecycleLogStoreTests {
     try expectNoDifference(fixture.store.events(), [current])
   }
 
+  @Test func preservesANewEventAfterAPartialTrailingRecord() throws {
+    let fixture = try CredentialLifecycleLogFixture()
+    defer { fixture.remove() }
+    let current = fixture.event(at: fixture.now)
+    let url = try fixture.store.prepareLogForAccess()
+    try Data(#"{"schemaVersion":"#.utf8).write(to: url)
+
+    try fixture.store.record(current)
+
+    try expectNoDifference(fixture.store.events(), [current])
+    #expect(try Data(contentsOf: url).split(separator: 0x0A).count == 2)
+  }
+
   @Test func boundsTheFileByDroppingTheOldestCompleteEvents() throws {
     let fixture = try CredentialLifecycleLogFixture(maximumByteCount: 700)
     defer { fixture.remove() }
@@ -147,6 +160,15 @@ struct CredentialLifecycleLogStoreTests {
     let directoryAttributes = try FileManager.default.attributesOfItem(atPath: fixture.directory.path)
     expectNoDifference((saltAttributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
     expectNoDifference((directoryAttributes[.posixPermissions] as? NSNumber)?.intValue, 0o700)
+  }
+}
+
+struct CredentialLifecycleFailureTests {
+  @Test func classifiesURLSessionCancellationAsCancelled() {
+    expectNoDifference(
+      CredentialLifecycleEvent.Failure.classify(URLError(.cancelled)),
+      .cancelled
+    )
   }
 }
 
