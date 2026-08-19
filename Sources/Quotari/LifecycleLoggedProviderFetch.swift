@@ -16,8 +16,7 @@ struct LifecycleLoggedProviderFetch: Sendable {
       provider: descriptor.id,
       account: lifecycleAccount,
       source: account?.credentialSource,
-      interaction: interaction,
-      timestamp: now
+      interaction: interaction
     )
     let result = await descriptor.fetch(
       now: now,

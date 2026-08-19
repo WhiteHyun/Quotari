@@ -94,6 +94,8 @@ struct PostCredentialLifecycleTests {
     let strategy = GatedPostCredentialUsageStrategy()
     let recorder = AppCredentialLifecycleEventRecorder()
     let descriptor = postCredentialDescriptor(provider: .codex, strategy: strategy)
+    let requestNow = Date(timeIntervalSince1970: 1_700_000_000)
+    let invocationNow = Date(timeIntervalSince1970: 1_783_478_400)
     let liveAccount = liveCodexAccount(identity: "acct-live")
     let savedAccount = savedCodexAccount()
     let selectionStore = ProviderAccountSelectionStore.temporaryForTesting()
@@ -109,13 +111,14 @@ struct PostCredentialLifecycleTests {
     let fetch = Task {
       await store.coordinatedProviderFetch(
         descriptor: descriptor,
-        now: Date(timeIntervalSince1970: 1_783_478_400),
+        now: requestNow,
         interaction: .background
       )
     }
     await strategy.waitUntilRequestStarts()
     await strategy.resume()
-    _ = await fetch.value
+    let completion = await fetch.value
+    let result = try completion.result.get()
 
     #expect(recorder.events.map(\.kind) == [
       .validationStarted,
@@ -123,5 +126,7 @@ struct PostCredentialLifecycleTests {
     ])
     #expect(recorder.events.map(\.source) == [.codexFile, .codexFile])
     #expect(recorder.events.allSatisfy { $0.accountID == "opaque:\(savedAccount.id)" })
+    #expect(recorder.events.allSatisfy { $0.timestamp == invocationNow })
+    #expect(result.usage.updatedAt == requestNow)
   }
 }

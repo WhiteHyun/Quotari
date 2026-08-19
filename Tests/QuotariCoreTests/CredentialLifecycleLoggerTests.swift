@@ -83,6 +83,7 @@ struct CredentialLifecycleLogStoreTests {
     #expect(!retained.isEmpty)
     expectNoDifference(retained.last, events.last)
     #expect(retained.count < events.count)
+    expectNoDifference(retained, Array(events.suffix(retained.count)))
   }
 
   @Test func prunesExpiredEventsWithoutWaitingForAnotherLifecycleEvent() throws {

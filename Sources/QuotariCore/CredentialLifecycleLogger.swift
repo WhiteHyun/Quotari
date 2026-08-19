@@ -353,15 +353,17 @@ public final class CredentialLifecycleLogStore: @unchecked Sendable {
   private func compact(at current: Date, targetByteCount: Int) throws {
     let cutoff = current.addingTimeInterval(-retention)
     let encoder = Self.makeEncoder()
-    var lines = try Self.decodeLines(Data(contentsOf: url))
+    let lines = try Self.decodeLines(Data(contentsOf: url))
       .filter { $0.timestamp >= cutoff }
       .map { try encoder.encode($0) + Data([0x0A]) }
     var byteCount = lines.reduce(0) { $0 + $1.count }
-    while byteCount > targetByteCount, !lines.isEmpty {
-      byteCount -= lines.removeFirst().count
+    var firstRetainedIndex = lines.startIndex
+    while byteCount > targetByteCount, firstRetainedIndex != lines.endIndex {
+      byteCount -= lines[firstRetainedIndex].count
+      lines.formIndex(after: &firstRetainedIndex)
     }
     var compacted = Data(capacity: byteCount)
-    for line in lines {
+    for line in lines[firstRetainedIndex...] {
       compacted.append(line)
     }
     try compacted.write(to: url, options: .atomic)
