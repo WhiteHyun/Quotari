@@ -6,6 +6,7 @@ extension UsageStore {
   /// cooperative: an older OAuth exchange can still rotate its credential,
   /// so the newest handle must represent every superseded generation that an
   /// account switch needs to drain before touching the CLI slot.
+  @discardableResult
   func enqueueSelectionRefresh(
     for provider: UsageProvider,
     waitingForProviderActivity: Bool = false,
@@ -13,7 +14,7 @@ extension UsageStore {
     cancelsDelayedCredentialRefresh: Bool = true,
     bypassesDelayedCredentialRefresh: Bool = false,
     waitsForDelayedCredentialRefresh: Bool = false
-  ) {
+  ) -> Task<Void, Never>? {
     if cancelsDelayedCredentialRefresh {
       cancelDelayedCredentialRefresh(for: provider)
     }
@@ -31,7 +32,7 @@ extension UsageStore {
     guard shouldEnqueueSelectionRefresh(
       waitsForDelayedCredentialRefresh: waitsForDelayedCredentialRefresh,
       delayedRefresh: delayedRefresh
-    ) else { return }
+    ) else { return nil }
 
     let generation = UUID()
     prepareSelectionRefresh(
@@ -65,6 +66,7 @@ extension UsageStore {
       delayedRefresh: delayedRefresh,
       bypassesOwnedDelayedRefresh: bypassesOwnedDelayedRefresh
     )
+    return task
   }
 
   private func queueCredentialRefreshDrainReplacementIfNeeded(

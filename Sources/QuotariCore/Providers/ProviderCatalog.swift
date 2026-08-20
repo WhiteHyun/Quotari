@@ -16,7 +16,8 @@ public enum ProviderCatalog {
         [
           ClaudeUsageStrategy(
             mirroredCredentialsFileURL: FileManager.default.homeDirectoryForCurrentUser
-              .appendingPathComponent(".claude/.credentials.json")
+              .appendingPathComponent(".claude/.credentials.json"),
+            credentialLifecycleLogger: .shared
           ),
         ]
       }
@@ -28,7 +29,9 @@ public enum ProviderCatalog {
         accent: .init(0.063, 0.639, 0.498),
         supportsWeekly: true
       ), // OpenAI #10A37F
-      pipeline: ProviderFetchPipeline { _ in [CodexUsageStrategy()] }
+      pipeline: ProviderFetchPipeline { _ in
+        [CodexUsageStrategy(credentialLifecycleLogger: .shared)]
+      }
     ),
   ]
 }

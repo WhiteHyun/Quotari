@@ -101,6 +101,7 @@ final class UsageStore {
   let providerActivation: ProviderActivationController
   let menuBarPreferences: MenuBarPreferencesController
   let quotaNotifications: QuotaNotificationController
+  let credentialLifecycleLogger: CredentialLifecycleLogger
   let codexCredentialLoader: @Sendable (ProviderCredentialSource) -> CodexCredentials?
   let claudeCredentialLoader: @Sendable (ProviderCredentialSource) -> ClaudeCredentials?
   private let defaults: UserDefaults
@@ -195,6 +196,7 @@ final class UsageStore {
       try await Task.sleep(for: $0)
     },
     currentDate: @escaping @Sendable () -> Date = Date.init,
+    credentialLifecycleLogger: CredentialLifecycleLogger = .shared,
     startsAutomatically: Bool = true
   ) {
     assert(ProviderRegistry.isComplete, "Every UsageProvider case needs a descriptor")
@@ -224,7 +226,7 @@ final class UsageStore {
     self.quotaNotifications = quotaNotifications ?? QuotaNotificationController(defaults: defaults)
     self.postCredentialRefreshDelay = postCredentialRefreshDelay
     self.postCredentialRefreshSleep = postCredentialRefreshSleep
-    self.currentDate = currentDate
+    (self.currentDate, self.credentialLifecycleLogger) = (currentDate, credentialLifecycleLogger)
     (selectedAccounts, isSelectionConfigurationLoaded) = Self.restoredSelections(from: accountSelectionStore)
     do {
       persistedMonitoredAccounts = try self.accountMonitoringStore.load()

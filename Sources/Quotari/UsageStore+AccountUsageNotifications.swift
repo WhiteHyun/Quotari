@@ -60,6 +60,15 @@ extension UsageStore {
       including: request.includingLogicalAccountIDs,
       excluding: request.excludingCredentialScopeIDs
     )
+    credentialLifecycleLogger.record(
+      .monitoringPass,
+      provider: provider,
+      interaction: request.interaction,
+      reason: request.force ? .forced : .scheduled,
+      monitoredAccountCount: monitoredAccounts[provider]?.count ?? 0,
+      eligibleAccountCount: accounts.count,
+      timestamp: now
+    )
     if request.notifiesQuota {
       enqueueCachedAccountUsageNotifications(
         provider: provider,
@@ -118,17 +127,17 @@ extension UsageStore {
     ) { group in
       for account in execution.accounts {
         let capturedRegistryID = capturedRegistryID(for: account)
-        group.addTask {
-          await (
-            account,
-            execution.descriptor.fetch(
-              now: execution.now,
-              account: account,
-              capturedRegistryID: capturedRegistryID,
-              interaction: execution.interaction
-            )
-          )
-        }
+        let lifecycleAccount = capturedEquivalents[account.id] ?? account
+        let fetch = LifecycleLoggedProviderFetch(
+          descriptor: execution.descriptor,
+          account: account,
+          lifecycleAccount: lifecycleAccount,
+          capturedRegistryID: capturedRegistryID,
+          interaction: execution.interaction,
+          now: execution.now,
+          logger: credentialLifecycleLogger
+        )
+        group.addTask { await (account, fetch()) }
       }
       var credentialTransitions: [String: Set<String>] = [:]
       var notificationCandidates: [AccountUsageNotificationCandidate] = []

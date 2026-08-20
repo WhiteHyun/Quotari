@@ -25,6 +25,13 @@ extension UsageStore {
     }
     let previous = providerFetchTasks[provider]?.task
     let generation = UUID()
+    let fetch = lifecycleLoggedProviderFetch(
+      descriptor: descriptor,
+      now: now,
+      account: account,
+      capturedRegistryID: capturedRegistryID,
+      interaction: interaction
+    )
     let task = Task<Result<ProviderFetchResult, Error>, Never> { @MainActor [weak self] in
       _ = await previous?.value
       guard let self,
@@ -34,12 +41,7 @@ extension UsageStore {
       else {
         return Result.failure(CancellationError())
       }
-      let result = await descriptor.fetch(
-        now: now,
-        account: account,
-        capturedRegistryID: capturedRegistryID,
-        interaction: interaction
-      )
+      let result = await fetch()
       recordCompletedCredentialTransition(result, provider: provider)
       return result
     }
@@ -172,13 +174,15 @@ extension UsageStore {
       )
     }
     let generation = UUID()
+    let fetch = lifecycleLoggedProviderFetch(
+      descriptor: descriptor,
+      now: now,
+      account: account,
+      capturedRegistryID: capturedRegistryID,
+      interaction: interaction
+    )
     let task = Task<Result<ProviderFetchResult, Error>, Never> { @MainActor [weak self] in
-      let result = await descriptor.fetch(
-        now: now,
-        account: account,
-        capturedRegistryID: capturedRegistryID,
-        interaction: interaction
-      )
+      let result = await fetch()
       self?.recordCompletedCredentialTransition(result, provider: provider)
       return result
     }
@@ -187,6 +191,19 @@ extension UsageStore {
       credentialScopeID: account?.credentialScopeID,
       task: task
     )
+    let result = await waitForSelectionProviderFetch(
+      task,
+      provider: provider,
+      generation: generation
+    )
+    return ProviderFetchCompletion(account: account, revision: revision, result: result)
+  }
+
+  private func waitForSelectionProviderFetch(
+    _ task: Task<Result<ProviderFetchResult, Error>, Never>,
+    provider: UsageProvider,
+    generation: UUID
+  ) async -> Result<ProviderFetchResult, Error> {
     let result = await withTaskCancellationHandler {
       await task.value
     } onCancel: {
@@ -199,7 +216,7 @@ extension UsageStore {
     if selectionProviderFetchTasks[provider]?.generation == generation {
       selectionProviderFetchTasks[provider] = nil
     }
-    return ProviderFetchCompletion(account: account, revision: revision, result: result)
+    return result
   }
 
   func recordCompletedCredentialTransition(
@@ -214,6 +231,32 @@ extension UsageStore {
       completedCredentialTransitions[provider, default: [:]][sourceScopeID, default: []]
         .insert(transition.targetScopeID)
     }
+  }
+
+  private func lifecycleAccountForValidation(
+    _ account: ProviderAccount?,
+    provider: UsageProvider
+  ) -> ProviderAccount? {
+    guard let account else { return reconciledSelectionOrigins[provider] }
+    return capturedEquivalents[account.id] ?? reconciledSelectionOrigins[provider] ?? account
+  }
+
+  private func lifecycleLoggedProviderFetch(
+    descriptor: ProviderDescriptor,
+    now: Date,
+    account: ProviderAccount?,
+    capturedRegistryID: String?,
+    interaction: ProviderFetchInteraction
+  ) -> LifecycleLoggedProviderFetch {
+    LifecycleLoggedProviderFetch(
+      descriptor: descriptor,
+      account: account,
+      lifecycleAccount: lifecycleAccountForValidation(account, provider: descriptor.id),
+      capturedRegistryID: capturedRegistryID,
+      interaction: interaction,
+      now: now,
+      logger: credentialLifecycleLogger
+    )
   }
 
   func recordCompletedCredentialTransitions(

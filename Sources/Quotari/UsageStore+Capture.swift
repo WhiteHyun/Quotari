@@ -99,7 +99,9 @@ extension UsageStore {
   func switchCLIAccount(to account: ProviderAccount) async {
     guard case let .quotariRegistry(id) = account.credentialSource else { return }
     let provider = account.provider
+    recordCLISwitch(.switchStarted, account: account)
     guard !isSwitching else {
+      recordCLISwitch(.switchFailed, account: account, failure: .concurrentCredentialChange)
       captureErrors[provider] = L10n.string("Another account switch is already in progress.")
       return
     }
@@ -110,17 +112,7 @@ extension UsageStore {
     // refreshAccountUsage) checks this flag.
     isSwitching = true
     var shouldRefresh = false
-    defer {
-      isSwitching = false
-      startQueuedAccountRediscoveryIfNeeded()
-      if shouldRefresh {
-        // A selection refresh created during reload can observe the closed
-        // gate and exit. Replace it after opening the gate; Claude receives a
-        // stabilization window before its one serialized fetch of the live
-        // slot, while other providers retain their immediate behavior.
-        enqueuePostCredentialRefresh(for: provider)
-      }
-    }
+    defer { finishCLISwitchGate(provider: provider, shouldRefresh: shouldRefresh) }
     // Drain whatever was already running when the gate closed.
     await inFlightRefresh?.value
     await inFlightAccountReload?.value
@@ -150,13 +142,16 @@ extension UsageStore {
           verifiedLiveClaudeIdentity: verifiedLiveIdentity
         )
       }.value
+      recordCLISwitch(.switchCredentialsWritten, account: account, source: writtenSource)
       guard await finishSuccessfulCLISwitch(
         saved: account,
         writtenSource: writtenSource,
         provider: provider
       ) else { return }
+      recordCLISwitch(.switchVerified, account: account, source: writtenSource)
       shouldRefresh = true
     } catch {
+      recordCLISwitch(.switchFailed, account: account, failure: .classify(error))
       captureErrors[provider] = error.localizedDescription
     }
   }
@@ -177,10 +172,37 @@ extension UsageStore {
       captureErrors[provider] = L10n.string(
         "Switched the CLI login, but Quotari couldn't confirm it yet. Reload accounts."
       )
+      recordCLISwitch(.switchFailed, account: account, source: writtenSource, failure: .verification)
       return false
     }
     captureErrors[provider] = nil
     return true
+  }
+
+  private func recordCLISwitch(
+    _ kind: CredentialLifecycleEvent.Kind,
+    account: ProviderAccount,
+    source: ProviderCredentialSource? = nil,
+    failure: CredentialLifecycleEvent.Failure? = nil
+  ) {
+    credentialLifecycleLogger.record(
+      kind,
+      provider: account.provider,
+      account: account,
+      source: source,
+      interaction: .userInitiated,
+      failure: failure
+    )
+  }
+
+  private func finishCLISwitchGate(provider: UsageProvider, shouldRefresh: Bool) {
+    isSwitching = false
+    startQueuedAccountRediscoveryIfNeeded()
+    if shouldRefresh {
+      // A selection refresh created during reload can observe the closed gate
+      // and exit. Replace it after opening, preserving Claude's stabilization.
+      enqueuePostCredentialRefresh(for: provider)
+    }
   }
 
   /// Claude's refresh token rotates, so its credential fingerprint cannot by

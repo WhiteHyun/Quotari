@@ -61,6 +61,33 @@ struct UsageStoreMonitoringSelectionTests {
     #expect(try fixture.monitoringStore.load()[.codex] == [saved, MonitoringFixture.work])
   }
 
+  @Test func linkedLiveValidationPreservesItsSourceAndUsesTheSavedCorrelation() async throws {
+    let live = MonitoringFixture.personal
+    let saved = ProviderAccount(
+      provider: .codex,
+      displayName: "Personal",
+      detail: "Saved in Quotari",
+      credentialSource: .quotariRegistry(id: "codex:personal")
+    )
+    let lifecycleRecorder = AppCredentialLifecycleEventRecorder()
+    let fixture = try MonitoringFixture(
+      accounts: [live],
+      capturedCopies: [live.id: saved],
+      monitored: [.codex: [live]],
+      credentialLifecycleLogger: lifecycleRecorder.logger
+    )
+    defer { fixture.remove() }
+    await fixture.store.reloadAccounts()
+
+    await fixture.store.refreshAccountUsage(for: .codex, force: true)
+
+    let validations = lifecycleRecorder.events.filter {
+      $0.kind == .validationStarted || $0.kind == .validationSucceeded
+    }
+    #expect(validations.map(\.source) == [.codexFile, .codexFile])
+    #expect(validations.allSatisfy { $0.accountID == "opaque:\(saved.id)" })
+  }
+
   @Test func emptyFirstScanPersistsEmptyUntilAnAccountAppears() async throws {
     let discovery = MutableAccountDiscovery(StaticAccountDiscovery())
     let fixture = try MonitoringFixture(
@@ -288,7 +315,8 @@ final class MonitoringFixture {
     explicitCredentialScopeID: String? = nil,
     automaticFailureTransitionTargetScopeID: String? = nil,
     automaticTransitionSourceScopeIDs: Set<String> = [],
-    strategyGate: MonitoringUsageGate? = nil
+    strategyGate: MonitoringUsageGate? = nil,
+    credentialLifecycleLogger: CredentialLifecycleLogger = .disabled
   ) throws {
     directory = FileManager.default.temporaryDirectory
       .appendingPathComponent("quotari-monitoring-\(UUID().uuidString)", isDirectory: true)
@@ -333,6 +361,7 @@ final class MonitoringFixture {
       ),
       accountSelectionStore: selectionStore,
       accountMonitoringStore: monitoringStore,
+      credentialLifecycleLogger: credentialLifecycleLogger,
       startsAutomatically: false
     )
   }

@@ -1,3 +1,4 @@
+import CustomDump
 import Foundation
 @testable import Quotari
 @testable import QuotariCore
@@ -17,12 +18,14 @@ struct UsageStoreSwitchTests {
     let discovery = MutableAccountDiscovery(StaticAccountDiscovery(
       accounts: [.codex: [savedAccount]]
     ))
+    let lifecycleRecorder = AppCredentialLifecycleEventRecorder()
     let store = UsageStore.isolatedForTesting(
       providers: [codexDescriptor()],
       costEstimator: EmptyCostEstimator(),
       accountDiscovery: discovery,
       accountSelectionStore: selectionStore,
       accountSwitch: .isolatedForTesting(capturedAccounts: registry, home: home),
+      credentialLifecycleLogger: lifecycleRecorder.logger,
       startsAutomatically: false
     )
     await store.reloadAccounts()
@@ -35,6 +38,7 @@ struct UsageStoreSwitchTests {
       capturedCopies: [liveAfterSwitch.id: savedAccount]
     ))
     await store.switchCLIAccount(to: savedAccount)
+    await waitForPostSwitchLifecycle(in: store, recorder: lifecycleRecorder)
 
     // The CLI slot now holds the saved account's credentials…
     let slot = try JSONSerialization.jsonObject(
@@ -45,6 +49,32 @@ struct UsageStoreSwitchTests {
     #expect(store.captureErrors[.codex] == nil)
     #expect(store.selectedAccounts[.codex] == liveAfterSwitch)
     #expect(selectionStore.load()[.codex] == savedAccount)
+    expectNoDifference(lifecycleRecorder.events.map(\.kind), [
+      .switchStarted,
+      .switchCredentialsWritten,
+      .switchVerified,
+      .postSwitchRefreshScheduled,
+      .postSwitchRefreshStarted,
+      .validationStarted,
+      .validationSucceeded,
+      .postSwitchRefreshCompleted,
+    ])
+    expectNoDifference(
+      Set(lifecycleRecorder.events.compactMap(\.accountID)),
+      ["opaque:\(savedAccount.id)"]
+    )
+  }
+
+  private func waitForPostSwitchLifecycle(
+    in store: UsageStore,
+    recorder: AppCredentialLifecycleEventRecorder
+  ) async {
+    await store.selectionRefreshTasks[.codex]?.value
+    for _ in 0 ..< 10 where !recorder.events.contains(where: {
+      $0.kind == .postSwitchRefreshCompleted
+    }) {
+      await Task.yield()
+    }
   }
 
   @Test func switchingAnIdlessSavedAccountSelectsTheSoleLiveLogin() async throws {

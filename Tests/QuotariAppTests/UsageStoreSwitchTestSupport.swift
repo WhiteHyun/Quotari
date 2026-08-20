@@ -1,6 +1,26 @@
 import Foundation
 @testable import QuotariCore
 
+final class AppCredentialLifecycleEventRecorder: @unchecked Sendable {
+  private let lock = NSLock()
+  private var storage: [CredentialLifecycleEvent] = []
+
+  var events: [CredentialLifecycleEvent] {
+    lock.withLock { storage }
+  }
+
+  var logger: CredentialLifecycleLogger {
+    CredentialLifecycleLogger(
+      record: { [weak self] event in
+        guard let self else { return }
+        lock.withLock { self.storage.append(event) }
+      },
+      opaqueAccountID: { "opaque:\($0)" },
+      now: { Date(timeIntervalSince1970: 1_783_478_400) }
+    )
+  }
+}
+
 actor GatedSwitchDiscovery: ProviderAccountDiscovering {
   private let beforeSwitch: StaticAccountDiscovery
   private let afterSwitch: StaticAccountDiscovery
