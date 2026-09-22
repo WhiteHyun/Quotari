@@ -37,5 +37,23 @@ For a long-unused saved account, follow its opaque `accountID` through:
 4. `switchStarted`, `switchCredentialsWritten`, and `switchVerified`
 5. `postSwitchRefreshScheduled`, `postSwitchRefreshStarted`, and `postSwitchRefreshCompleted`
 
-`reauthenticationRequired` is the diagnostic equivalent of an invalid or revoked refresh grant. Quotari
-cannot repair that state; the affected CLI account must be logged in and saved again.
+`reauthenticationRequired` is the diagnostic equivalent of an invalid or revoked refresh grant. A usable
+saved credential for the same account can restore an expired CLI slot; if every copy is rejected, the
+account must be logged in and saved again.
+
+## Automatic Claude CLI recovery
+
+While Claude monitoring is enabled, account reloads check for expired or empty CLI credentials before
+normal usage requests. Recovery requires exactly one unexpired, renewable saved account with verified
+account and organization IDs matching Claude's existing `oauthAccount`. Nonempty live credentials also
+require a cached profile bound to their exact access token; terminal labels alone cannot prove ownership.
+
+Recovery waits until Claude exits, drains Quotari's credential requests, and reuses the switch installer's
+process checks, slot verification, and rollback. It preserves unrelated credential fields and does not
+follow the dashboard selection. Healthy credentials, ambiguous saved accounts, pending token grants,
+unreadable stores, and logout with a removed terminal identity are left unchanged. Saved-only monitoring
+continues checking on later refreshes so recovery can resume after Claude exits or the saved token renews.
+
+`automaticCLIRecoverySucceeded` identifies a completed local installation, correlated with the saved
+account. It does not establish server acceptance or a successful Claude launch. `automaticCLIRecoveryFailed`
+records typed read/write/concurrency failures; an active CLI is silently deferred until a later pass.

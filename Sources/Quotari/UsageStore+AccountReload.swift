@@ -218,13 +218,14 @@ extension UsageStore {
     for provider: UsageProvider,
     capturesWhileDisabled: Bool
   ) async -> ProviderAccountReload {
+    let recoveryTransitions = await prepareClaudeCLIRecoveryForReload(provider)
+    var credentialTransitions = recoveryTransitions ?? [:]
+    var keepsCaptureGate = recoveryTransitions != nil
     var accounts = await accountDiscovery.accounts(for: provider)
     var capturedCopies = await accountDiscovery.capturedCopies(among: accounts)
     var selectionOrigins: [String: ProviderAccount] = [:]
     var managedCopies: [String: ProviderAccount] = [:]
-    var credentialTransitions: [String: String] = [:]
     var verifiedDuplicateCredentialScopeIDs = Set<String>()
-    var keepsCaptureGate = false
 
     // A source can be replaced between capture and the verification read. Two
     // bounded passes manage both observations without letting a continuously
