@@ -36,6 +36,20 @@ extension UsageStore {
         timestamp: now
       )
       return recovery.credentialTransitions
+    } catch let failure as ClaudeCLIRecoveryFailure {
+      // Keep proof for a stale hidden mirror before profile refresh advances
+      // the canonical slot's cache. Never replace a profile updated meanwhile.
+      for (id, profile) in failure.verifiedProfiles where claudeProfiles[id] == profiles[id] {
+        claudeProfiles[id] = profile
+      }
+      try? profileStore.save(claudeProfiles)
+      credentialLifecycleLogger.record(
+        .automaticCLIRecoveryFailed,
+        provider: .claude,
+        interaction: .background,
+        failure: .classify(failure.underlying),
+        timestamp: now
+      )
     } catch AccountSwitchError.cliStillRunning {
       // The next timer pass retries after Claude exits.
     } catch {

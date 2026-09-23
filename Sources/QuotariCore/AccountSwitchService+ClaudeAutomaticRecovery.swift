@@ -9,6 +9,13 @@ public struct ClaudeCLIRecovery: Sendable {
   public let credentialTransitions: [String: String]
 }
 
+/// A partial installation must retain the token-bound identity evidence for
+/// hidden mirrors, even after the canonical slot advances to the new token.
+public struct ClaudeCLIRecoveryFailure: Error, Sendable {
+  public let underlying: AccountSwitchError
+  public let verifiedProfiles: [String: ClaudeProfile]
+}
+
 extension AccountSwitchService {
   /// Restores only the account Claude already identifies as its login. A
   /// dashboard selection is never permission to replace a different CLI login.
@@ -48,8 +55,9 @@ extension AccountSwitchService {
 
     let slots = [(keychainSource, previous.keychain), (fileSource, previous.file)]
     let verifiedProfiles = verifiedClaudeRecoveryProfiles(in: slots, profiles: profiles)
+    guard needsClaudeRecovery(in: slots, target: target.credentials) else { return nil }
     guard slots.allSatisfy({ _, payload in
-      canAutomaticallyRestoreClaudeSlot(payload, target: target.profile, profiles: verifiedProfiles, now: now)
+      canAutomaticallyRestoreClaudeSlot(payload, target: target, profiles: verifiedProfiles, now: now)
     }) else { return nil }
     guard try capturedAccounts.loadPendingGrantData(id: target.saved.id) == nil else { return nil }
 
@@ -68,13 +76,13 @@ extension AccountSwitchService {
             try loadClaudeLivePendingGrants(sources: sources).isEmpty,
             try readFile(stateURL) == state
       else { throw AccountSwitchError.concurrentCredentialChange }
-      try installClaudeCredentials(ClaudeCredentialInstallation(
+      try installClaudeRecovery(ClaudeCredentialInstallation(
         service: service,
         fileURL: fileURL,
         previous: previous,
         replacement: replacement,
         accountState: ClaudeAccountStateInstallation(url: stateURL, previous: state, replacement: state)
-      ))
+      ), preserving: claudeRecoveryProfileCopies(in: slots, profiles: verifiedProfiles + [target.profile]))
     }
     return ClaudeCLIRecovery(
       registryID: target.saved.id,
@@ -88,7 +96,7 @@ extension AccountSwitchService {
     _ saved: [CapturedAccount],
     oauthAccount: Data,
     now: Date
-  ) -> (saved: CapturedAccount, profile: ClaudeProfile)? {
+  ) -> ClaudeAutomaticRecoveryTarget? {
     guard let fields = try? JSONSerialization.jsonObject(with: oauthAccount) as? [String: Any] else { return nil }
     let terminalIdentity = ClaudeAccountIdentity(
       accountID: fields["accountUuid"] as? String,
@@ -106,12 +114,12 @@ extension AccountSwitchService {
           credentials.expiresAt != nil,
           !credentials.isExpired(now: now)
     else { return nil }
-    return (account, ClaudeProfile(
+    return ClaudeAutomaticRecoveryTarget(saved: account, profile: ClaudeProfile(
       accountID: identity.accountID,
       email: identity.email,
       organizationID: identity.organizationID,
       fingerprint: ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
-    ))
+    ), credentials: credentials)
   }
 
   private func verifiedClaudeRecoveryProfiles(
@@ -129,12 +137,17 @@ extension AccountSwitchService {
 
   private func canAutomaticallyRestoreClaudeSlot(
     _ payload: Data?,
-    target: ClaudeProfile,
+    target: ClaudeAutomaticRecoveryTarget,
     profiles: [ClaudeProfile],
     now: Date
   ) -> Bool {
     guard let payload else { return true }
     if let credentials = try? ClaudeCredentialsStore.parse(payload) {
+      // A previous attempt may have installed this exact target in one store
+      // before the CLI started. Permit finishing the remaining mirror.
+      if credentials == target.credentials {
+        return true
+      }
       // Terminal metadata can lag an external login. Require profile evidence
       // bound to the actual token before replacing any nonempty credential.
       // Discovery hides identical mirrors, so they share the canonical slot's
@@ -142,7 +155,7 @@ extension AccountSwitchService {
       let fingerprint = ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
       let matchingProfiles = profiles.filter { $0.fingerprint == fingerprint }
       return credentials.isExpired(now: now) && !matchingProfiles.isEmpty
-        && matchingProfiles.allSatisfy { $0.stronglyIdentifiesSameAccount(as: target) }
+        && matchingProfiles.allSatisfy { $0.stronglyIdentifiesSameAccount(as: target.profile) }
     }
     // A recognized empty OAuth slot is recoverable; unknown/corrupt data is
     // not evidence of logout or permission to overwrite another credential.
@@ -151,6 +164,39 @@ extension AccountSwitchService {
     else { return false }
     return ["accessToken", "refreshToken"].allSatisfy { key in
       oauth[key] == nil || (oauth[key] as? String)?.isEmpty == true
+    }
+  }
+
+  private func needsClaudeRecovery(
+    in slots: [(ProviderCredentialSource, Data?)],
+    target: ClaudeCredentials
+  ) -> Bool {
+    let payloads = slots.compactMap(\.1)
+    return payloads.isEmpty || payloads.contains { (try? ClaudeCredentialsStore.parse($0)) != target }
+  }
+
+  private func claudeRecoveryProfileCopies(
+    in slots: [(ProviderCredentialSource, Data?)],
+    profiles: [ClaudeProfile]
+  ) -> [String: ClaudeProfile] {
+    slots.reduce(into: [:]) { copies, slot in
+      guard let payload = slot.1, let credentials = try? ClaudeCredentialsStore.parse(payload),
+            let profile = profiles.first(where: {
+              $0.fingerprint == ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
+            }) else { return }
+      copies[ProviderAccount.id(provider: .claude, source: slot.0)] = profile
+    }
+  }
+
+  private func installClaudeRecovery(
+    _ installation: ClaudeCredentialInstallation,
+    preserving profiles: [String: ClaudeProfile]
+  ) throws {
+    do {
+      try installClaudeCredentials(installation)
+    } catch let error as AccountSwitchError {
+      guard case .partialSwitch = error else { throw error }
+      throw ClaudeCLIRecoveryFailure(underlying: error, verifiedProfiles: profiles)
     }
   }
 
@@ -170,7 +216,16 @@ extension AccountSwitchService {
         provider: .claude, displayName: "Claude Code", detail: nil,
         credentialSource: slot.0, credentialIdentity: credentials.accessToken
       )
+      // An already-installed canonical slot must not create a self-cycle
+      // that invalidates the stale mirror's transition during reconciliation.
+      guard previous.credentialScopeID != target.credentialScopeID else { return }
       transitions[previous.credentialScopeID] = target.credentialScopeID
     }
   }
+}
+
+private struct ClaudeAutomaticRecoveryTarget {
+  let saved: CapturedAccount
+  let profile: ClaudeProfile
+  let credentials: ClaudeCredentials
 }

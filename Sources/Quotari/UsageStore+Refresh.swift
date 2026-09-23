@@ -118,10 +118,9 @@ extension UsageStore {
     let hasMutableMonitoredAccount = monitoredAccounts.contains { provider, accounts in
       isProviderEnabled(provider) && accounts.contains { !$0.credentialSource.isCaptured }
     }
-    // Once an empty CLI slot disappears from discovery, saved-only monitoring
-    // must still revisit it so a later healthy saved refresh can repair it.
+    // A transient Keychain failure can hide both live and saved accounts.
+    // Retry while monitoring is enabled, independently of the last discovery.
     let maintainsClaudeCLI = automaticallyCapturesDiscoveredAccounts && isProviderEnabled(.claude)
-      && !(accounts[.claude]?.isEmpty ?? true)
     guard !reconciledSelectionOrigins.isEmpty || hasMutableMonitoredAccount || maintainsClaudeCLI else { return true }
     guard !isSwitching else {
       // The switch already owes a post-write discovery. Queue this request

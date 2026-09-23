@@ -51,8 +51,15 @@ require a cached profile bound to their exact access token; terminal labels alon
 Recovery waits until Claude exits, drains Quotari's credential requests, and reuses the switch installer's
 process checks, slot verification, and rollback. It preserves unrelated credential fields and does not
 follow the dashboard selection. Healthy credentials, ambiguous saved accounts, pending token grants,
-unreadable stores, and logout with a removed terminal identity are left unchanged. Saved-only monitoring
-continues checking on later refreshes so recovery can resume after Claude exits or the saved token renews.
+unreadable stores, and logout with a removed terminal identity are left unchanged. Monitoring continues
+checking on later refreshes even when a transient read failure hides every account, so recovery can resume
+after Keychain becomes readable, Claude exits, or the saved token renews.
+
+If Claude starts between the Keychain and file writes, recovery preserves verified profiles for the original
+tokens, including a mirror previously hidden by discovery. A later attempt accepts a slot that already holds
+the exact saved credential generation and repairs the remaining stale mirror. Other healthy generations
+remain protected, and a fully restored set of stores is a no-op. Only changed credential scopes are returned
+for selection reconciliation, so the already-installed slot does not create a transition back to itself.
 
 `automaticCLIRecoverySucceeded` identifies a completed local installation, correlated with the saved
 account. It does not establish server acceptance or a successful Claude launch. `automaticCLIRecoveryFailed`

@@ -137,6 +137,76 @@ struct ClaudeAutomaticCLIRecoveryTests {
     #expect(try fixture.service().recoverClaudeCLIIfNeeded(profiles: fixture.profiles, now: fixture.now) != nil)
   }
 
+  @Test func resumesAMirrorAfterClaudeStartsBetweenCredentialWrites() throws {
+    let fixture = try ClaudeAutomaticRecoveryFixture()
+    let original = try #require(fixture.slot.value)
+    try FileManager.default.createDirectory(
+      at: fixture.fileURL.deletingLastPathComponent(), withIntermediateDirectories: true
+    )
+    try original.write(to: fixture.fileURL)
+    let slot = fixture.slot
+    let interrupted = fixture.service(active: { _ in
+      let credentials = slot.value.flatMap { try? ClaudeCredentialsStore.parse($0) }
+      return credentials?.accessToken == "saved-access" ? ["claude"] : []
+    })
+
+    var retryProfiles: [String: ClaudeProfile] = [:]
+    do {
+      _ = try interrupted.recoverClaudeCLIIfNeeded(profiles: fixture.profiles, now: fixture.now)
+      Issue.record("Expected a partial installation")
+    } catch let failure as ClaudeCLIRecoveryFailure {
+      guard case .partialSwitch = failure.underlying else {
+        Issue.record("Expected partialSwitch")
+        return
+      }
+      retryProfiles = failure.verifiedProfiles
+    }
+    #expect(try ClaudeCredentialsStore.parse(#require(slot.value)).accessToken == "saved-access")
+    #expect(try Data(contentsOf: fixture.fileURL) == original)
+
+    // The ordinary profile refresh may already have advanced the canonical
+    // cache; the formerly hidden mirror still needs its old token's proof.
+    retryProfiles[fixture.liveID] = fixture.profile
+      .verified(for: ProviderCredentialIdentity.fingerprint(of: "saved-access"))
+    let result = try fixture.service().recoverClaudeCLIIfNeeded(profiles: retryProfiles, now: fixture.now)
+
+    #expect(result != nil)
+    let installed = ProviderAccount(
+      provider: .claude, displayName: "Claude Code", detail: nil,
+      credentialSource: fixture.source, credentialIdentity: "saved-access"
+    )
+    #expect(result?.credentialTransitions[installed.credentialScopeID] == nil)
+    #expect(result?.credentialTransitions.values.first == installed.credentialScopeID)
+    #expect(try ClaudeCredentialsStore.parse(Data(contentsOf: fixture.fileURL)).accessToken == "saved-access")
+    #expect(try fixture.service().recoverClaudeCLIIfNeeded(profiles: fixture.profiles, now: fixture.now) == nil)
+  }
+
+  @Test(arguments: ["access", "refresh", "expiry"])
+  func refusesReplacingADifferentHealthyGenerationToRepairAMirror(changedField: String) throws {
+    let fixture = try ClaudeAutomaticRecoveryFixture()
+    let mirror = try #require(fixture.slot.value)
+    var root = try #require(JSONSerialization.jsonObject(with: fixture.saved.payload) as? [String: Any])
+    var oauth = try #require(root["claudeAiOauth"] as? [String: Any])
+    switch changedField {
+    case "access": oauth["accessToken"] = "different-access"
+    case "refresh": oauth["refreshToken"] = "different-refresh"
+    default: oauth["expiresAt"] = 10_000_000_000_999 as Double
+    }
+    root["claudeAiOauth"] = oauth
+    let healthy = try JSONSerialization.data(withJSONObject: root)
+    fixture.slot.value = healthy
+    try FileManager.default.createDirectory(
+      at: fixture.fileURL.deletingLastPathComponent(), withIntermediateDirectories: true
+    )
+    try mirror.write(to: fixture.fileURL)
+    var profiles = fixture.profiles
+    profiles[ProviderAccount.id(provider: .claude, source: fixture.fileSource)] = profiles[fixture.liveID]
+
+    #expect(try fixture.service().recoverClaudeCLIIfNeeded(profiles: profiles, now: fixture.now) == nil)
+    #expect(fixture.slot.value == healthy)
+    #expect(try Data(contentsOf: fixture.fileURL) == mirror)
+  }
+
   @Test func preservesALoginReplacedAtTheWriteBoundary() throws {
     let fixture = try ClaudeAutomaticRecoveryFixture()
     let slot = fixture.slot

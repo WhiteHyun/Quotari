@@ -38,6 +38,45 @@ struct UsageStoreClaudeAutomaticRecoveryTests {
   }
 
   @Test(arguments: [false, true])
+  func periodicRecoveryRetriesAfterKeychainReadsBecomeAvailable(discoveredBeforeLock: Bool) async throws {
+    let fixture = try AutomaticCLIRecoveryAppFixture(empty: true)
+    fixture.store.selectAccount(nil, for: .claude)
+    if discoveredBeforeLock {
+      await fixture.store.reloadAccounts()
+      #expect(fixture.store.accounts[.claude]?.isEmpty == false)
+    }
+    fixture.keychain.isLocked = true
+    await fixture.store.reloadAccounts()
+    #expect(fixture.store.accounts[.claude]?.isEmpty == true)
+    #expect(fixture.store.monitoredAccounts[.claude]?.isEmpty == true)
+    #expect(fixture.store.reconciledSelectionOrigins.isEmpty)
+
+    fixture.keychain.isLocked = false
+    fixture.store.beginRefresh(interaction: .background)
+    await fixture.store.inFlightRefresh?.value
+
+    #expect(try ClaudeCredentialsStore.parse(fixture.slot.value).accessToken == "saved-access")
+    #expect(fixture.store.accounts[.claude]?.count == 1)
+    #expect(fixture.store.monitoredAccounts[.claude]?.count == 1)
+  }
+
+  @Test func emptyDiscoveryDoesNotRecoverWhileClaudeMonitoringIsDisabled() async throws {
+    let fixture = try AutomaticCLIRecoveryAppFixture(empty: true)
+    fixture.store.selectAccount(nil, for: .claude)
+    fixture.keychain.isLocked = true
+    await fixture.store.reloadAccounts()
+    fixture.store.setProviderEnabled(.claude, enabled: false)
+    let original = fixture.slot.value
+
+    fixture.keychain.isLocked = false
+    fixture.store.beginRefresh(interaction: .background)
+    await fixture.store.inFlightRefresh?.value
+
+    #expect(fixture.slot.value == original)
+    #expect(fixture.store.accounts[.claude]?.isEmpty == true)
+  }
+
+  @Test(arguments: [false, true])
   func reloadKeepsTheSelectedLiveAccountAfterRecovery(selectMirror: Bool) async throws {
     let fixture = try AutomaticCLIRecoveryAppFixture(selection: selectMirror ? .mirror : .live)
     let previousScope = try #require(fixture.store.selectedAccounts[.claude]?.credentialScopeID)
@@ -51,6 +90,31 @@ struct UsageStoreClaudeAutomaticRecoveryTests {
     #expect(selected.credentialScopeID != previousScope)
     #expect(fixture.store.reconciledSelectionOrigins[.claude]?.id == fixture.saved.providerAccount.id)
     #expect(fixture.store.accounts[.claude]?.count == 1)
+  }
+
+  @Test func periodicRecoveryFinishesAPartialMirrorAfterClaudeExits() async throws {
+    let fixture = try AutomaticCLIRecoveryAppFixture(selection: .mirror)
+    fixture.activity.startsAfterCredentialWrite = true
+    await fixture.store.reloadAccounts()
+    #expect(try ClaudeCredentialsStore.parse(fixture.slot.value).accessToken == "saved-access")
+    #expect(try ClaudeCredentialsStore.parse(Data(contentsOf: fixture.fileURL)).accessToken == "old-access")
+    let fileID = ProviderAccount.id(provider: .claude, source: .claudeCredentialsFile(path: fixture.fileURL.path))
+    let persistedProfiles = ClaudeProfileStore(url: fixture.directory.url.appendingPathComponent("profiles.json"))
+      .load()
+    #expect(persistedProfiles[fileID]?.fingerprint == ProviderCredentialIdentity.fingerprint(of: "old-access"))
+    fixture.store.claudeProfiles[fixture.liveID] = fixture.store.claudeProfiles[fixture.saved.providerAccount.id]
+    fixture.store.beginRefresh(interaction: .background)
+    await fixture.store.inFlightRefresh?.value
+    #expect(try ClaudeCredentialsStore.parse(Data(contentsOf: fixture.fileURL)).accessToken == "old-access")
+
+    fixture.activity.startsAfterCredentialWrite = false
+    fixture.activity.isActive = false
+    fixture.store.beginRefresh(interaction: .background)
+    await fixture.store.inFlightRefresh?.value
+
+    #expect(try ClaudeCredentialsStore.parse(Data(contentsOf: fixture.fileURL)).accessToken == "saved-access")
+    #expect(fixture.store.accounts[.claude]?.count == 1)
+    #expect(fixture.store.selectedAccounts[.claude]?.credentialSource == fixture.source)
   }
 
   @Test func recoveryDoesNotAdoptASelectionForAnUnrelatedTokenInTheSameSlot() async throws {
@@ -98,130 +162,5 @@ struct UsageStoreClaudeAutomaticRecoveryTests {
     #expect(try ClaudeCredentialsStore.parse(fixture.slot.value).accessToken == "saved-access")
     #expect(fixture.store.selectedAccounts[.claude]?.id == other.providerAccount.id)
     #expect(fixture.registry.account(id: other.id) == other)
-  }
-}
-
-private enum AutomaticCLIRecoverySelection {
-  case saved, live, mirror
-
-  func prepareStore(
-    home: URL,
-    saved: CapturedAccount,
-    livePayload: Data,
-    token: String
-  ) throws -> ProviderAccountSelectionStore {
-    let fileURL = home.appendingPathComponent(".claude/.credentials.json")
-    if self == .mirror {
-      try FileManager.default.createDirectory(
-        at: fileURL.deletingLastPathComponent(),
-        withIntermediateDirectories: true
-      )
-      try livePayload.write(to: fileURL)
-    }
-    let store = ProviderAccountSelectionStore(url: home.appendingPathComponent("selection.json"))
-    let selected = self == .saved ? saved.providerAccount : ProviderAccount(
-      provider: .claude, displayName: "Claude Code", detail: nil,
-      credentialSource: self == .mirror ? .claudeCredentialsFile(path: fileURL.path) : saved.origin,
-      credentialIdentity: token
-    )
-    try store.save([.claude: selected])
-    return store
-  }
-}
-
-@MainActor
-private struct AutomaticCLIRecoveryAppFixture {
-  let directory: TemporaryDirectory
-  let registry: CapturedAccountStore
-  let saved: CapturedAccount
-  let slot: AutomaticCapturePayloadBox
-  let activity = AutomaticCLIRecoveryActivity()
-  let now = Date()
-  let source = ProviderCredentialSource.claudeKeychain(service: ClaudeCredentialsStore.keychainService)
-  let store: UsageStore
-
-  var liveID: String {
-    ProviderAccount.id(provider: .claude, source: source)
-  }
-
-  init(
-    empty: Bool = false,
-    selection: AutomaticCLIRecoverySelection = .saved,
-    selectedToken: String = "old-access"
-  ) throws {
-    directory = try TemporaryDirectory()
-    let home = directory.url
-    registry = .inMemoryForTesting()
-    slot = AutomaticCapturePayloadBox(empty ? Data(#"{"claudeAiOauth":{}}"#.utf8) : claudePayload(
-      accessToken: "old-access", refreshToken: "old-refresh", expiresAt: now.addingTimeInterval(-3600)
-    ))
-    let profile = ClaudeProfile(accountID: "account", email: "same@example.com", organizationID: "organization")
-    saved = CapturedAccount(
-      id: "claude:saved", provider: .claude, displayName: "Saved", detail: nil,
-      capturedAt: now, origin: source,
-      payload: claudePayload(
-        accessToken: "saved-access",
-        refreshToken: "saved-refresh",
-        expiresAt: now.addingTimeInterval(3600)
-      ),
-      claudeAccountIdentity: profile.accountIdentity
-    )
-    try registry.save(saved)
-    try Data(#"{"oauthAccount":{"accountUuid":"account","organizationUuid":"organization"}}"#.utf8)
-      .write(to: home.appendingPathComponent(".claude.json"))
-    let selections = try selection.prepareStore(home: home, saved: saved, livePayload: slot.value, token: selectedToken)
-    let profiles = ClaudeProfileStore(url: home.appendingPathComponent("profiles.json"))
-    try profiles.save([
-      ProviderAccount.id(provider: .claude, source: source): profile.verified(
-        for: ProviderCredentialIdentity.fingerprint(of: "old-access")
-      ),
-      saved.providerAccount.id: profile.verified(for: ProviderCredentialIdentity.fingerprint(of: "saved-access")),
-    ])
-    let (registry, slot, activity, now) = (registry, slot, activity, now)
-    store = UsageStore.isolatedForTesting(
-      providers: [claudeDescriptorForAutomaticCapture()],
-      accountDiscovery: ProviderAccountDiscovery(
-        environment: [:],
-        home: home,
-        keychainData: { slot.value },
-        capturedAccounts: registry
-      ),
-      accountSelectionStore: selections,
-      accountCapture: AccountCaptureService(capturedAccounts: registry, claudeKeychainRead: { _ in slot.value }),
-      automaticallyCapturesDiscoveredAccounts: true,
-      accountSwitch: recoverySwitcher(registry: registry, home: home, slot: slot, activity: activity),
-      profileFetcher: TokenClaudeProfileFetcher(profiles: ["saved-access": profile, "old-access": profile]),
-      profileStore: profiles,
-      claudeCredentialLoader: { source in
-        automaticCaptureClaudeCredentials(source: source, keychainPayload: slot.value, registry: registry)
-      },
-      currentDate: { now },
-      startsAutomatically: false
-    )
-  }
-}
-
-private func recoverySwitcher(
-  registry: CapturedAccountStore,
-  home: URL,
-  slot: AutomaticCapturePayloadBox,
-  activity: AutomaticCLIRecoveryActivity
-) -> AccountSwitchService {
-  AccountSwitchService(
-    capturedAccounts: registry, environment: [:], home: home,
-    keychainRead: { _ in slot.value },
-    keychainWrite: { data, _ in slot.value = data },
-    keychainDelete: { _ in slot.value = Data(#"{"claudeAiOauth":{}}"#.utf8) },
-    activeCLIProcesses: { _ in activity.isActive ? ["claude"] : [] }
-  )
-}
-
-private final class AutomaticCLIRecoveryActivity: @unchecked Sendable {
-  private let lock = NSLock()
-  private var active = false
-
-  var isActive: Bool {
-    get { lock.withLock { active } }
-    set { lock.withLock { active = newValue } }
   }
 }
