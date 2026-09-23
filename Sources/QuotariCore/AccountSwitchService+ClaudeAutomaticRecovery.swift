@@ -4,6 +4,9 @@ public struct ClaudeCLIRecovery: Sendable {
   public let registryID: String
   public let source: ProviderCredentialSource
   public let profile: ClaudeProfile
+  /// Exact credential scopes replaced by this installation, pointing to the
+  /// canonical live scope that discovery will expose afterwards.
+  public let credentialTransitions: [String: String]
 }
 
 extension AccountSwitchService {
@@ -44,12 +47,15 @@ extension AccountSwitchService {
     else { return nil }
 
     let slots = [(keychainSource, previous.keychain), (fileSource, previous.file)]
-    guard slots.allSatisfy({ source, payload in
-      canAutomaticallyRestoreClaudeSlot(payload, source: source, target: target.profile, profiles: profiles, now: now)
+    let verifiedProfiles = verifiedClaudeRecoveryProfiles(in: slots, profiles: profiles)
+    guard slots.allSatisfy({ _, payload in
+      canAutomaticallyRestoreClaudeSlot(payload, target: target.profile, profiles: verifiedProfiles, now: now)
     }) else { return nil }
     guard try capturedAccounts.loadPendingGrantData(id: target.saved.id) == nil else { return nil }
 
     let writeKeychain = previous.keychain != nil || previous.file == nil
+    let recoveredSource = writeKeychain ? keychainSource : fileSource
+    let transitions = try claudeRecoveryTransitions(from: slots, to: recoveredSource, payload: target.saved.payload)
     let replacement = try ResolvedClaudeLivePayloads(
       keychain: writeKeychain ? Self.transplantClaude(saved: target.saved.payload, intoLive: previous.keychain) : nil,
       file: previous.file != nil ? Self.transplantClaude(saved: target.saved.payload, intoLive: previous.file) : nil
@@ -72,8 +78,9 @@ extension AccountSwitchService {
     }
     return ClaudeCLIRecovery(
       registryID: target.saved.id,
-      source: writeKeychain ? keychainSource : fileSource,
-      profile: target.profile
+      source: recoveredSource,
+      profile: target.profile,
+      credentialTransitions: transitions
     )
   }
 
@@ -107,23 +114,35 @@ extension AccountSwitchService {
     ))
   }
 
+  private func verifiedClaudeRecoveryProfiles(
+    in slots: [(ProviderCredentialSource, Data?)],
+    profiles: [String: ClaudeProfile]
+  ) -> [ClaudeProfile] {
+    slots.compactMap { source, payload in
+      guard let payload, let credentials = try? ClaudeCredentialsStore.parse(payload),
+            let profile = profiles[ProviderAccount.id(provider: .claude, source: source)],
+            profile.fingerprint == ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
+      else { return nil }
+      return profile
+    }
+  }
+
   private func canAutomaticallyRestoreClaudeSlot(
     _ payload: Data?,
-    source: ProviderCredentialSource,
     target: ClaudeProfile,
-    profiles: [String: ClaudeProfile],
+    profiles: [ClaudeProfile],
     now: Date
   ) -> Bool {
     guard let payload else { return true }
     if let credentials = try? ClaudeCredentialsStore.parse(payload) {
-      let id = ProviderAccount.id(provider: .claude, source: source)
       // Terminal metadata can lag an external login. Require profile evidence
       // bound to the actual token before replacing any nonempty credential.
-      guard credentials.isExpired(now: now),
-            let profile = profiles[id],
-            profile.fingerprint == ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
-      else { return false }
-      return profile.stronglyIdentifiesSameAccount(as: target)
+      // Discovery hides identical mirrors, so they share the canonical slot's
+      // proof only when their access-token fingerprints match exactly.
+      let fingerprint = ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
+      let matchingProfiles = profiles.filter { $0.fingerprint == fingerprint }
+      return credentials.isExpired(now: now) && !matchingProfiles.isEmpty
+        && matchingProfiles.allSatisfy { $0.stronglyIdentifiesSameAccount(as: target) }
     }
     // A recognized empty OAuth slot is recoverable; unknown/corrupt data is
     // not evidence of logout or permission to overwrite another credential.
@@ -132,6 +151,26 @@ extension AccountSwitchService {
     else { return false }
     return ["accessToken", "refreshToken"].allSatisfy { key in
       oauth[key] == nil || (oauth[key] as? String)?.isEmpty == true
+    }
+  }
+
+  private func claudeRecoveryTransitions(
+    from slots: [(ProviderCredentialSource, Data?)],
+    to source: ProviderCredentialSource,
+    payload: Data
+  ) throws -> [String: String] {
+    let installed = try ClaudeCredentialsStore.parse(payload)
+    let target = ProviderAccount(
+      provider: .claude, displayName: "Claude Code", detail: nil,
+      credentialSource: source, credentialIdentity: installed.accessToken
+    )
+    return slots.reduce(into: [:]) { transitions, slot in
+      guard let payload = slot.1, let credentials = try? ClaudeCredentialsStore.parse(payload) else { return }
+      let previous = ProviderAccount(
+        provider: .claude, displayName: "Claude Code", detail: nil,
+        credentialSource: slot.0, credentialIdentity: credentials.accessToken
+      )
+      transitions[previous.credentialScopeID] = target.credentialScopeID
     }
   }
 }

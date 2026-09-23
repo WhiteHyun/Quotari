@@ -37,6 +37,47 @@ struct UsageStoreClaudeAutomaticRecoveryTests {
     #expect(fixture.store.accounts[.claude]?.count == 1)
   }
 
+  @Test(arguments: [false, true])
+  func reloadKeepsTheSelectedLiveAccountAfterRecovery(selectMirror: Bool) async throws {
+    let fixture = try AutomaticCLIRecoveryAppFixture(selection: selectMirror ? .mirror : .live)
+    let previousScope = try #require(fixture.store.selectedAccounts[.claude]?.credentialScopeID)
+    #expect(fixture.store.reconciledSelectionOrigins[.claude] == nil)
+
+    await fixture.store.reloadAccounts()
+
+    #expect(try ClaudeCredentialsStore.parse(fixture.slot.value).accessToken == "saved-access")
+    let selected = try #require(fixture.store.selectedAccounts[.claude])
+    #expect(selected.credentialSource == fixture.source)
+    #expect(selected.credentialScopeID != previousScope)
+    #expect(fixture.store.reconciledSelectionOrigins[.claude]?.id == fixture.saved.providerAccount.id)
+    #expect(fixture.store.accounts[.claude]?.count == 1)
+  }
+
+  @Test func recoveryDoesNotAdoptASelectionForAnUnrelatedTokenInTheSameSlot() async throws {
+    let fixture = try AutomaticCLIRecoveryAppFixture(selection: .live, selectedToken: "unrelated-access")
+
+    await fixture.store.reloadAccounts()
+
+    #expect(try ClaudeCredentialsStore.parse(fixture.slot.value).accessToken == "saved-access")
+    #expect(fixture.store.selectedAccounts[.claude] == nil)
+    #expect(fixture.store.reconciledSelectionOrigins[.claude] == nil)
+  }
+
+  @Test func recoveryContinuesTheCredentialTransitionCompletedBeforeReload() async throws {
+    let fixture = try AutomaticCLIRecoveryAppFixture(selection: .live, selectedToken: "earlier-access")
+    let selectedScope = try #require(fixture.store.selectedAccounts[.claude]?.credentialScopeID)
+    let live = ProviderAccount(
+      provider: .claude, displayName: "Claude Code", detail: nil,
+      credentialSource: fixture.source, credentialIdentity: "old-access"
+    )
+    fixture.store.completedCredentialTransitions[.claude] = [selectedScope: [live.credentialScopeID]]
+
+    await fixture.store.reloadAccounts()
+
+    #expect(fixture.store.selectedAccounts[.claude]?.credentialSource == fixture.source)
+    #expect(fixture.store.reconciledSelectionOrigins[.claude]?.id == fixture.saved.providerAccount.id)
+  }
+
   @Test func automaticRecoveryNeverFollowsAnUnrelatedDashboardSelection() async throws {
     let fixture = try AutomaticCLIRecoveryAppFixture()
     let other = CapturedAccount(
@@ -60,6 +101,34 @@ struct UsageStoreClaudeAutomaticRecoveryTests {
   }
 }
 
+private enum AutomaticCLIRecoverySelection {
+  case saved, live, mirror
+
+  func prepareStore(
+    home: URL,
+    saved: CapturedAccount,
+    livePayload: Data,
+    token: String
+  ) throws -> ProviderAccountSelectionStore {
+    let fileURL = home.appendingPathComponent(".claude/.credentials.json")
+    if self == .mirror {
+      try FileManager.default.createDirectory(
+        at: fileURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+      )
+      try livePayload.write(to: fileURL)
+    }
+    let store = ProviderAccountSelectionStore(url: home.appendingPathComponent("selection.json"))
+    let selected = self == .saved ? saved.providerAccount : ProviderAccount(
+      provider: .claude, displayName: "Claude Code", detail: nil,
+      credentialSource: self == .mirror ? .claudeCredentialsFile(path: fileURL.path) : saved.origin,
+      credentialIdentity: token
+    )
+    try store.save([.claude: selected])
+    return store
+  }
+}
+
 @MainActor
 private struct AutomaticCLIRecoveryAppFixture {
   let directory: TemporaryDirectory
@@ -75,7 +144,11 @@ private struct AutomaticCLIRecoveryAppFixture {
     ProviderAccount.id(provider: .claude, source: source)
   }
 
-  init(empty: Bool = false) throws {
+  init(
+    empty: Bool = false,
+    selection: AutomaticCLIRecoverySelection = .saved,
+    selectedToken: String = "old-access"
+  ) throws {
     directory = try TemporaryDirectory()
     let home = directory.url
     registry = .inMemoryForTesting()
@@ -96,8 +169,7 @@ private struct AutomaticCLIRecoveryAppFixture {
     try registry.save(saved)
     try Data(#"{"oauthAccount":{"accountUuid":"account","organizationUuid":"organization"}}"#.utf8)
       .write(to: home.appendingPathComponent(".claude.json"))
-    let selections = ProviderAccountSelectionStore(url: home.appendingPathComponent("selection.json"))
-    try selections.save([.claude: saved.providerAccount])
+    let selections = try selection.prepareStore(home: home, saved: saved, livePayload: slot.value, token: selectedToken)
     let profiles = ClaudeProfileStore(url: home.appendingPathComponent("profiles.json"))
     try profiles.save([
       ProviderAccount.id(provider: .claude, source: source): profile.verified(

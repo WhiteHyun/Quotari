@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 struct ClaudeAutomaticCLIRecoveryTests {
-  @Test func restoresExpiredLoginAndItsMirrorWithoutReplacingOtherFields() throws {
+  @Test func restoresExpiredLoginAndItsMirrorWithoutReplacingOtherFields() async throws {
     let fixture = try ClaudeAutomaticRecoveryFixture()
     let original = try #require(fixture.slot.value)
     try FileManager.default.createDirectory(
@@ -11,10 +11,15 @@ struct ClaudeAutomaticCLIRecoveryTests {
       withIntermediateDirectories: true
     )
     try original.write(to: fixture.fileURL)
-    var profiles = fixture.profiles
-    profiles[ProviderAccount.id(provider: .claude, source: fixture.fileSource)] = fixture.profile.verified(
-      for: ProviderCredentialIdentity.fingerprint(of: "old-access")
+    let slot = fixture.slot
+    let discovery = ProviderAccountDiscovery(
+      environment: [:], home: fixture.home,
+      keychainData: { slot.value }, capturedAccounts: fixture.registry
     )
+    let accounts = await discovery.accounts(for: .claude)
+    #expect(accounts.filter { !$0.credentialSource.isCaptured }.map(\.credentialSource) == [fixture.source])
+    // The hidden mirror never receives a profile through normal discovery.
+    let profiles = fixture.profiles.filter { id, _ in accounts.contains { $0.id == id } }
 
     let result = try fixture.service().recoverClaudeCLIIfNeeded(profiles: profiles, now: fixture.now)
 
@@ -27,6 +32,22 @@ struct ClaudeAutomaticCLIRecoveryTests {
     }
     #expect(fixture.registry.load() == [fixture.saved])
     #expect(try fixture.service().recoverClaudeCLIIfNeeded(profiles: profiles, now: fixture.now) == nil)
+  }
+
+  @Test func doesNotBorrowAMirrorProfileForADifferentAccessToken() throws {
+    let fixture = try ClaudeAutomaticRecoveryFixture()
+    let original = fixture.slot.value
+    let mirror = Data(
+      #"{"claudeAiOauth":{"accessToken":"different-access","refreshToken":"old-refresh","expiresAt":1000}}"#.utf8
+    )
+    try FileManager.default.createDirectory(
+      at: fixture.fileURL.deletingLastPathComponent(), withIntermediateDirectories: true
+    )
+    try mirror.write(to: fixture.fileURL)
+
+    #expect(try fixture.service().recoverClaudeCLIIfNeeded(profiles: fixture.profiles, now: fixture.now) == nil)
+    #expect(fixture.slot.value == original)
+    #expect(try Data(contentsOf: fixture.fileURL) == mirror)
   }
 
   @Test(arguments: [false, true])

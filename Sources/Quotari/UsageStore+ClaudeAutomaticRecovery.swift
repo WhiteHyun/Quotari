@@ -6,7 +6,8 @@ extension UsageStore {
           isProviderEnabled(provider), !isSwitching, addingAccountProviders.isEmpty else { return nil }
     let transitions = await drainProviderActivityBeforeCapture(provider)
     if isProviderEnabled(provider), !isSwitching, addingAccountProviders.isEmpty {
-      await recoverClaudeCLIIfNeeded()
+      let recoveryTransitions = await recoverClaudeCLIIfNeeded()
+      return mergedCredentialTransitions(transitions, recoveryTransitions)
     }
     return transitions
   }
@@ -14,14 +15,14 @@ extension UsageStore {
   /// Runs inside the account-reload capture gate, after existing fetches have
   /// drained. Rediscovery immediately afterwards publishes the repaired source
   /// and hides its saved copy before another usage request can rotate it.
-  func recoverClaudeCLIIfNeeded() async {
+  func recoverClaudeCLIIfNeeded() async -> [String: String] {
     let switcher = accountSwitch
     let profiles = claudeProfiles
     let now = currentDate()
     do {
       guard let recovery = try await Task.detached(operation: {
         try switcher.recoverClaudeCLIIfNeeded(profiles: profiles, now: now)
-      }).value else { return }
+      }).value else { return [:] }
       let liveID = ProviderAccount.id(provider: .claude, source: recovery.source)
       claudeProfiles[liveID] = recovery.profile
       profileFetchAttempts[liveID] = recovery.profile.fingerprint
@@ -34,6 +35,7 @@ extension UsageStore {
         interaction: .background,
         timestamp: now
       )
+      return recovery.credentialTransitions
     } catch AccountSwitchError.cliStillRunning {
       // The next timer pass retries after Claude exits.
     } catch {
@@ -45,5 +47,6 @@ extension UsageStore {
         timestamp: now
       )
     }
+    return [:]
   }
 }
