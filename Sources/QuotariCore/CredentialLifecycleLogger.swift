@@ -23,6 +23,8 @@ public struct CredentialLifecycleEvent: Codable, Equatable, Sendable {
     case switchCredentialsWritten
     case switchVerified
     case switchFailed
+    case automaticCLIRecoverySucceeded
+    case automaticCLIRecoveryFailed
     case postSwitchRefreshScheduled
     case postSwitchRefreshStarted
     case postSwitchRefreshCompleted

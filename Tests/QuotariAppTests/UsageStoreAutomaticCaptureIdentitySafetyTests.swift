@@ -36,7 +36,8 @@ struct AutomaticCaptureIdentitySafetyTests {
   @Test func externalClaudeReloginDuringFetchDoesNotInheritThePreviousSelection() async throws {
     let fixture = try await makeReloginSafetyFixture()
 
-    fixture.store.beginRefresh()
+    // Force the external relogin to overlap a request before the first scan.
+    let refresh = Task { await fixture.store.refresh(provider: .claude, serializesProviderFetch: true) }
     await fixture.strategy.waitUntilRequestStarts()
     let reload = Task { await fixture.store.reloadAccounts() }
     #expect(await waitUntilIdentitySafetyCaptureStarts(fixture.store))
@@ -46,7 +47,7 @@ struct AutomaticCaptureIdentitySafetyTests {
     )
     await fixture.strategy.resume()
     await reload.value
-    await fixture.store.inFlightRefresh?.value
+    await refresh.value
 
     #expect(fixture.registry.load().count == 1)
     #expect(fixture.store.selectedAccounts[.claude] == nil)

@@ -41,7 +41,8 @@ struct CodexAutomaticCredentialTests {
     let accounts = await ProviderAccountDiscovery(
       environment: environment,
       home: home.url,
-      keychainData: { nil }
+      keychainData: { nil },
+      capturedAccounts: CapturedAccountStore(keychain: InMemoryKeychain().store, service: "Test-Codex-Automatic")
     ).accounts(for: .codex)
     let discovered = try #require(accounts.first)
 
@@ -64,7 +65,8 @@ struct CodexAutomaticCredentialTests {
     let discovery = ProviderAccountDiscovery(
       environment: ["CODEX_HOME": codexHome.path],
       home: home.url,
-      keychainData: { nil }
+      keychainData: { nil },
+      capturedAccounts: CapturedAccountStore(keychain: InMemoryKeychain().store, service: "Test-Codex-Automatic")
     )
 
     let accounts = await discovery.accounts(for: .codex)
@@ -100,7 +102,8 @@ struct CodexAutomaticCredentialTests {
       environment: [:],
       home: home.url,
       keychainData: { nil },
-      codexKeychainData: { _, _ in payload }
+      codexKeychainData: { _, _ in payload },
+      capturedAccounts: CapturedAccountStore(keychain: InMemoryKeychain().store, service: "Test-Codex-Automatic")
     )
 
     let result = try await strategy.fetch(context)
@@ -125,7 +128,8 @@ struct CodexAutomaticCredentialTests {
     let accounts = await ProviderAccountDiscovery(
       environment: environment,
       home: home.url,
-      keychainData: { nil }
+      keychainData: { nil },
+      capturedAccounts: CapturedAccountStore(keychain: InMemoryKeychain().store, service: "Test-Codex-Automatic")
     ).accounts(for: .codex)
 
     #expect(accounts.count == 1)
