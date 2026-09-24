@@ -13,6 +13,9 @@ extension LocalUsageCostScanner {
     var unsupportedUsage: [LocalUnsupportedUsage] = []
 
     let readOutcome = forEachLine(handle: handle) { line in
+      guard LocalUsageLineFilter.mayContain(LocalUsageLineFilter.codexNeedles, in: line) else {
+        return LocalUsageLineFilter.looksLikeCompleteObject(line)
+      }
       // A trailing partial line is expected while a writer is active, but
       // caching a total before that line completes would undercount. Preserve
       // the previous summary until every observed line is valid JSON.
@@ -66,14 +69,14 @@ extension LocalUsageCostScanner {
     range: DayRange
   ) -> LocalUsageFileParseOutcome {
     let sessionID = localSessionID(forSourcePath: sourcePath)
-    var state = ClaudeFileParseState()
+    var state = ClaudeUsageEvents()
 
     let readOutcome = forEachLine(handle: handle) { line in
       consumeClaudeLine(line, sessionID: sessionID, range: range, state: &state)
     }
     return switch readOutcome {
     case .completed:
-      .success(state.scan)
+      .success(LocalUsageFileScan(records: [], unsupportedUsage: [], claudeEvents: state.events))
     case .cancelled:
       .cancelled
     case .failure:
@@ -85,9 +88,12 @@ extension LocalUsageCostScanner {
     _ line: Data,
     sessionID: String,
     range: DayRange,
-    state: inout ClaudeFileParseState
+    state: inout ClaudeUsageEvents
   ) -> Bool {
     defer { state.lineNumber += 1 }
+    guard LocalUsageLineFilter.mayContain(LocalUsageLineFilter.claudeNeedles, in: line) else {
+      return LocalUsageLineFilter.looksLikeCompleteObject(line)
+    }
     guard let object = jsonObject(from: line) else { return false }
     guard
       object["type"] as? String == "assistant",
@@ -96,7 +102,9 @@ extension LocalUsageCostScanner {
       let model = string(message["model"]),
       let usage = message["usage"] as? [String: Any]
     else { return true }
-    guard let day = range.day(containing: timestamp) else { return true }
+    // Days outside the window are kept so a cached parse stays valid as the window slides; callers
+    // filter to the requested range. Deduplication therefore no longer depends on the window either.
+    let day = range.calendar.startOfDay(for: timestamp)
 
     guard let tokens = claudeTokenTotals(from: usage) else {
       state.appendUnsupportedUsage(
@@ -306,54 +314,6 @@ extension LocalUsageCostScanner {
   }
 }
 
-private struct PendingClaudeTokenRecord {
-  let lineNumber: Int
-  let record: LocalTokenRecord
-}
-
-private struct ClaudeFileParseState {
-  var records: [PendingClaudeTokenRecord] = []
-  var keyedRecords: [String: PendingClaudeTokenRecord] = [:]
-  var unsupportedUsage: [LocalUnsupportedUsage] = []
-  var keyedUnsupportedUsage: [String: LocalUnsupportedUsage] = [:]
-  var lineNumber = 0
-
-  var scan: LocalUsageFileScan {
-    LocalUsageFileScan(
-      records: (records + keyedRecords.values)
-        .sorted { $0.lineNumber < $1.lineNumber }
-        .map(\.record),
-      unsupportedUsage: unsupportedUsage + Array(keyedUnsupportedUsage.values)
-    )
-  }
-
-  mutating func append(record: LocalTokenRecord, key: String?) {
-    let pending = PendingClaudeTokenRecord(lineNumber: lineNumber, record: record)
-    if let key {
-      keyedRecords[key] = pending
-      keyedUnsupportedUsage[key] = nil
-    } else {
-      records.append(pending)
-    }
-  }
-
-  mutating func appendUnsupportedUsage(
-    day: Date,
-    model: String,
-    sessionID: String,
-    key: String?,
-    hasPositiveUsage: Bool
-  ) {
-    guard hasPositiveUsage else { return }
-    let unsupported = LocalUnsupportedUsage(day: day, model: model, sessionID: sessionID)
-    if let key {
-      keyedUnsupportedUsage[key] = unsupported
-    } else {
-      unsupportedUsage.append(unsupported)
-    }
-  }
-}
-
 enum LocalUsageFileParseOutcome: Sendable {
   case success(LocalUsageFileScan)
   case cancelled
@@ -369,11 +329,26 @@ enum LocalUsageLineReadOutcome: Sendable {
 struct LocalUsageFileScan: Codable, Equatable, Sendable {
   let records: [LocalTokenRecord]
   let unsupportedUsage: [LocalUnsupportedUsage]
+  /// Claude rows deduplicate within the requested window, so they are kept
+  /// unresolved and replayed per window; see ``ClaudeUsageEvents``.
+  let claudeEvents: [ClaudeUsageEvent]
+
+  init(
+    records: [LocalTokenRecord],
+    unsupportedUsage: [LocalUnsupportedUsage],
+    claudeEvents: [ClaudeUsageEvent] = []
+  ) {
+    self.records = records
+    self.unsupportedUsage = unsupportedUsage
+    self.claudeEvents = claudeEvents
+  }
 
   func filtered(to range: DayRange) -> LocalUsageFileScan {
-    LocalUsageFileScan(
-      records: records.filter { range.day(containing: $0.day) != nil },
+    let claude = ClaudeUsageEvents.resolve(claudeEvents, in: range)
+    return LocalUsageFileScan(
+      records: records.filter { range.day(containing: $0.day) != nil } + claude.records,
       unsupportedUsage: unsupportedUsage.filter { range.day(containing: $0.day) != nil }
+        + claude.unsupportedUsage
     )
   }
 }

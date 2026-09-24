@@ -326,6 +326,7 @@ struct FileScanFixture {
       homeDirectory: root,
       calendar: calendar,
       fileScanCacheDirectory: cacheDirectory,
+      diskCachePruneInterval: 0,
       onFileParsed: capture.record,
       onCacheLoaded: onCacheLoaded
     )
