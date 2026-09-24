@@ -136,7 +136,8 @@ struct UsageInsightsChangeMonitorTests {
     let capture = UsageInsightsChangeCapture()
     let monitor = FSEventsUsageInsightsChangeMonitor(
       quietPeriod: .milliseconds(20),
-      maximumDelay: .milliseconds(100)
+      maximumDelay: .milliseconds(100),
+      isLowPowerModeEnabled: { false }
     )
     defer { monitor.stop() }
     monitor.replaceObservations([
@@ -166,7 +167,8 @@ struct UsageInsightsChangeMonitorTests {
     let monitor = FSEventsUsageInsightsChangeMonitor(
       quietPeriod: .milliseconds(20),
       maximumDelay: .milliseconds(100),
-      reconciliationInterval: .milliseconds(20)
+      reconciliationInterval: .milliseconds(20),
+      isLowPowerModeEnabled: { false }
     )
     defer { monitor.stop() }
     monitor.replaceObservations([

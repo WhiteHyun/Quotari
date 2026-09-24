@@ -25,6 +25,9 @@ enum LenientDateParser {
     if let epoch = Double(trimmed) {
       return date(fromEpoch: epoch)
     }
+    if let date = InternetTimestamp.parse(trimmed) {
+      return date
+    }
 
     for candidate in candidates(for: trimmed) {
       if let date = iso8601Date(from: candidate) {
@@ -73,15 +76,50 @@ enum LenientDateParser {
     return candidates
   }
 
+  /// Creating a formatter loads ICU locale data and dominated log scans when it
+  /// ran once per timestamp. Formatters are built once and shared: Foundation's
+  /// date formatters are thread-safe for parsing, and these are never mutated.
+  private nonisolated(unsafe) static let iso8601Formatters: [ISO8601DateFormatter] = [
+    [.withInternetDateTime, .withFractionalSeconds],
+    [.withInternetDateTime],
+    [.withFullDate, .withDashSeparatorInDate],
+  ].map { (options: ISO8601DateFormatter.Options) in
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = options
+    return formatter
+  }
+
+  private nonisolated(unsafe) static let fallbackFormatters: [DateFormatter] = [
+    "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXXXX",
+    "yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX",
+    "yyyy-MM-dd'T'HH:mm:ssXXXXX",
+    "yyyy-MM-dd'T'HH:mm:ss.SSSSSSZ",
+    "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
+    "yyyy-MM-dd'T'HH:mm:ssZ",
+    "yyyy-MM-dd HH:mm:ss.SSSSSSXXXXX",
+    "yyyy-MM-dd HH:mm:ss.SSSXXXXX",
+    "yyyy-MM-dd HH:mm:ssXXXXX",
+    "yyyy-MM-dd HH:mm:ss.SSSSSSZ",
+    "yyyy-MM-dd HH:mm:ss.SSSZ",
+    "yyyy-MM-dd HH:mm:ssZ",
+    "yyyy-MM-dd'T'HH:mm:ss.SSSSSS",
+    "yyyy-MM-dd'T'HH:mm:ss.SSS",
+    "yyyy-MM-dd'T'HH:mm:ss",
+    "yyyy-MM-dd HH:mm:ss.SSSSSS",
+    "yyyy-MM-dd HH:mm:ss.SSS",
+    "yyyy-MM-dd HH:mm:ss",
+    "yyyy-MM-dd",
+  ].map { format in
+    let formatter = DateFormatter()
+    formatter.locale = Locale(identifier: "en_US_POSIX")
+    formatter.calendar = Calendar(identifier: .gregorian)
+    formatter.timeZone = TimeZone(secondsFromGMT: 0)
+    formatter.dateFormat = format
+    return formatter
+  }
+
   private static func iso8601Date(from string: String) -> Date? {
-    let optionSets: [ISO8601DateFormatter.Options] = [
-      [.withInternetDateTime, .withFractionalSeconds],
-      [.withInternetDateTime],
-      [.withFullDate, .withDashSeparatorInDate],
-    ]
-    for options in optionSets {
-      let formatter = ISO8601DateFormatter()
-      formatter.formatOptions = options
+    for formatter in iso8601Formatters {
       if let date = formatter.date(from: string) {
         return date
       }
@@ -90,33 +128,7 @@ enum LenientDateParser {
   }
 
   private static func formattedDate(from string: String) -> Date? {
-    let formats = [
-      "yyyy-MM-dd'T'HH:mm:ss.SSSSSSXXXXX",
-      "yyyy-MM-dd'T'HH:mm:ss.SSSXXXXX",
-      "yyyy-MM-dd'T'HH:mm:ssXXXXX",
-      "yyyy-MM-dd'T'HH:mm:ss.SSSSSSZ",
-      "yyyy-MM-dd'T'HH:mm:ss.SSSZ",
-      "yyyy-MM-dd'T'HH:mm:ssZ",
-      "yyyy-MM-dd HH:mm:ss.SSSSSSXXXXX",
-      "yyyy-MM-dd HH:mm:ss.SSSXXXXX",
-      "yyyy-MM-dd HH:mm:ssXXXXX",
-      "yyyy-MM-dd HH:mm:ss.SSSSSSZ",
-      "yyyy-MM-dd HH:mm:ss.SSSZ",
-      "yyyy-MM-dd HH:mm:ssZ",
-      "yyyy-MM-dd'T'HH:mm:ss.SSSSSS",
-      "yyyy-MM-dd'T'HH:mm:ss.SSS",
-      "yyyy-MM-dd'T'HH:mm:ss",
-      "yyyy-MM-dd HH:mm:ss.SSSSSS",
-      "yyyy-MM-dd HH:mm:ss.SSS",
-      "yyyy-MM-dd HH:mm:ss",
-      "yyyy-MM-dd",
-    ]
-    for format in formats {
-      let formatter = DateFormatter()
-      formatter.locale = Locale(identifier: "en_US_POSIX")
-      formatter.calendar = Calendar(identifier: .gregorian)
-      formatter.timeZone = TimeZone(secondsFromGMT: 0)
-      formatter.dateFormat = format
+    for formatter in fallbackFormatters {
       if let date = formatter.date(from: string) {
         return date
       }
