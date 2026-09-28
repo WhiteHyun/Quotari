@@ -73,6 +73,14 @@ Recovery treats unchanged `.claude.json` contents as a compare-only condition. I
 identity changes and retains the existing rollback protections, but does not replace an unchanged file or
 its symlink.
 
+For a recognized empty or missing CLI slot, an unreconciled direct selection can survive recovery only
+when its persisted access-token fingerprint matches a cached verified profile with the same account and
+organization as the independently authorized recovery target. This adds a SHA-256 fingerprint to Claude
+CLI account selections without storing the token or changing existing credential scope IDs. Older selection
+files still decode; an old selection without this proof does not automatically inherit the recovered login.
+The evidence applies only to the selected empty source, never to a different nonempty token. Partial recovery
+retains the profile proof for an empty mirror until a later attempt actually installs it.
+
 `automaticCLIRecoverySucceeded` identifies a completed local installation, correlated with the saved
 account. It does not establish server acceptance or a successful Claude launch. `automaticCLIRecoveryFailed`
 records typed read/write/concurrency failures; an active CLI is silently deferred until a later pass.

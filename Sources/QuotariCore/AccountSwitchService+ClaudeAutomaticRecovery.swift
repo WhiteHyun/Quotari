@@ -24,17 +24,19 @@ extension AccountSwitchService {
   /// The caller must drain Quotari's credential writers before entering here.
   public func recoverClaudeCLIIfNeeded(
     profiles: [String: ClaudeProfile],
-    now: Date
+    now: Date,
+    selectedAccount: ProviderAccount? = nil
   ) throws -> ClaudeCLIRecovery? {
     try Task.checkCancellation()
     return try CLIActivityApprovalContext.$snapshot.withValue(nil) {
-      try recoverInactiveClaudeCLI(profiles: profiles, now: now)
+      try recoverInactiveClaudeCLI(profiles: profiles, now: now, selectedAccount: selectedAccount)
     }
   }
 
   private func recoverInactiveClaudeCLI(
     profiles: [String: ClaudeProfile],
-    now: Date
+    now: Date,
+    selectedAccount: ProviderAccount?
   ) throws -> ClaudeCLIRecovery? {
     guard environment[ClaudeCredentialsStore.tokenEnvKey]?.isEmpty != false else { return nil }
     let saved = try capturedAccounts.registeredAccounts(for: .claude)
@@ -45,10 +47,9 @@ extension AccountSwitchService {
     let fileURL = home.appendingPathComponent(".claude/.credentials.json")
     let keychainSource = ProviderCredentialSource.claudeKeychain(service: service)
     let fileSource = ProviderCredentialSource.claudeCredentialsFile(path: fileURL.standardizedFileURL.path)
-    let sources = [keychainSource, fileSource]
     // A pending grant may be newer than either saved or live credentials.
     // Leave its existing recovery transaction in charge until it completes.
-    guard try loadClaudeLivePendingGrants(sources: sources).isEmpty else { return nil }
+    guard try loadClaudeLivePendingGrants(sources: [keychainSource, fileSource]).isEmpty else { return nil }
     let previous = try ResolvedClaudeLivePayloads(keychain: readKeychain(service), file: readFile(fileURL))
     let stateURL = ClaudeCodeAccountState.configurationURL(environment: environment, home: home)
     guard let state = try readFile(stateURL),
@@ -66,32 +67,31 @@ extension AccountSwitchService {
 
     let writeKeychain = previous.keychain != nil || previous.file == nil
     let recoveredSource = writeKeychain ? keychainSource : fileSource
-    let transitions = try claudeRecoveryTransitions(from: slots, to: recoveredSource, payload: target.saved.payload)
+    let selection = verifiedClaudeRecoverySelection(selectedAccount, profiles: profiles, target: target.profile)
     let replacement = try ResolvedClaudeLivePayloads(
       keychain: writeKeychain ? Self.transplantClaude(saved: target.saved.payload, intoLive: previous.keychain) : nil,
       file: previous.file != nil ? Self.transplantClaude(saved: target.saved.payload, intoLive: previous.file) : nil
     )
-    // Keep the saved generation stable through installation. The ordinary
-    // installer rechecks live slots/processes and rolls back on identity races.
-    try CapturedAccountStore.mutationLock.withLock {
-      guard capturedAccounts.account(id: target.saved.id) == target.saved,
-            try capturedAccounts.loadPendingGrantData(id: target.saved.id) == nil,
-            try loadClaudeLivePendingGrants(sources: sources).isEmpty,
-            try readFile(stateURL) == state
-      else { throw AccountSwitchError.concurrentCredentialChange }
-      try installClaudeRecovery(ClaudeCredentialInstallation(
+    try installClaudeRecovery(
+      ClaudeCredentialInstallation(
         service: service, fileURL: fileURL,
-        previous: previous,
-        replacement: replacement,
+        previous: previous, replacement: replacement,
         accountState: ClaudeAccountStateInstallation(url: stateURL, previous: state, replacement: state),
         checkCancellation: { try Task.checkCancellation() }
-      ), preserving: claudeRecoveryProfileCopies(in: slots, profiles: verifiedProfiles + [target.profile]))
-    }
-    return ClaudeCLIRecovery(
-      registryID: target.saved.id,
-      source: recoveredSource,
-      profile: target.profile,
-      credentialTransitions: transitions
+      ),
+      saved: target.saved,
+      preserving: claudeRecoveryProfileCopies(
+        in: slots,
+        profiles: verifiedProfiles + [target.profile],
+        selection: selection
+      ),
+      selection: selection
+    )
+    return try ClaudeCLIRecovery(
+      registryID: target.saved.id, source: recoveredSource, profile: target.profile,
+      credentialTransitions: claudeRecoveryTransitions(
+        from: slots, to: recoveredSource, payload: target.saved.payload, selection: selection
+      )
     )
   }
 
@@ -162,12 +162,7 @@ extension AccountSwitchService {
     }
     // A recognized empty OAuth slot is recoverable; unknown/corrupt data is
     // not evidence of logout or permission to overwrite another credential.
-    guard let root = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
-          let oauth = root["claudeAiOauth"] as? [String: Any]
-    else { return false }
-    return ["accessToken", "refreshToken"].allSatisfy { key in
-      oauth[key] == nil || (oauth[key] as? String)?.isEmpty == true
-    }
+    return Self.isEmptyClaudeRecoverySlot(payload)
   }
 
   private func needsClaudeRecovery(
@@ -180,9 +175,13 @@ extension AccountSwitchService {
 
   private func claudeRecoveryProfileCopies(
     in slots: [(ProviderCredentialSource, Data?)],
-    profiles: [ClaudeProfile]
+    profiles: [ClaudeProfile],
+    selection: ClaudeRecoverySelection?
   ) -> [String: ClaudeProfile] {
     slots.reduce(into: [:]) { copies, slot in
+      if Self.isEmptyClaudeRecoverySlot(slot.1), let selection, selection.account.credentialSource == slot.0 {
+        copies[selection.account.id] = selection.profile
+      }
       guard let payload = slot.1, let credentials = try? ClaudeCredentialsStore.parse(payload),
             let profile = profiles.first(where: {
               $0.fingerprint == ProviderCredentialIdentity.fingerprint(of: credentials.accessToken)
@@ -193,22 +192,40 @@ extension AccountSwitchService {
 
   private func installClaudeRecovery(
     _ installation: ClaudeCredentialInstallation,
-    preserving profiles: [String: ClaudeProfile]
+    saved: CapturedAccount,
+    preserving profiles: [String: ClaudeProfile],
+    selection: ClaudeRecoverySelection?
   ) throws {
-    do {
-      try installClaudeCredentials(installation)
-    } catch let error as AccountSwitchError {
-      guard case .partialSwitch = error else { throw error }
-      throw ClaudeCLIRecoveryFailure(
-        underlying: error,
-        verifiedProfiles: profiles,
-        credentialTransitions: (try? verifiedPartialClaudeRecoveryTransitions(installation)) ?? [:]
-      )
+    let sources: [ProviderCredentialSource] = [
+      .claudeKeychain(service: installation.service),
+      .claudeCredentialsFile(path: installation.fileURL.standardizedFileURL.path),
+    ]
+    // Keep the saved generation stable through installation and verify that
+    // terminal identity still authorizes this target, independently of selection.
+    try CapturedAccountStore.mutationLock.withLock {
+      guard let state = installation.accountState,
+            capturedAccounts.account(id: saved.id) == saved,
+            try capturedAccounts.loadPendingGrantData(id: saved.id) == nil,
+            try loadClaudeLivePendingGrants(sources: sources).isEmpty,
+            try readFile(state.url) == state.previous
+      else { throw AccountSwitchError.concurrentCredentialChange }
+      do {
+        try installClaudeCredentials(installation)
+      } catch let error as AccountSwitchError {
+        guard case .partialSwitch = error else { throw error }
+        throw ClaudeCLIRecoveryFailure(
+          underlying: error,
+          verifiedProfiles: profiles,
+          credentialTransitions: (try? verifiedPartialClaudeRecoveryTransitions(installation, selection: selection)) ??
+            [:]
+        )
+      }
     }
   }
 
   private func verifiedPartialClaudeRecoveryTransitions(
-    _ installation: ClaudeCredentialInstallation
+    _ installation: ClaudeCredentialInstallation,
+    selection: ClaudeRecoverySelection?
   ) throws -> [String: String] {
     guard let state = installation.accountState, try readFile(state.url) == state.previous else { return [:] }
     let keychain = try readKeychain(installation.service)
@@ -227,13 +244,19 @@ extension AccountSwitchService {
     if file == installation.replacement.file, file != installation.previous.file {
       changed.append((fileSource, installation.previous.file))
     }
-    return try claudeRecoveryTransitions(from: changed, to: canonicalSource, payload: canonicalPayload)
+    return try claudeRecoveryTransitions(
+      from: changed,
+      to: canonicalSource,
+      payload: canonicalPayload,
+      selection: selection
+    )
   }
 
   private func claudeRecoveryTransitions(
     from slots: [(ProviderCredentialSource, Data?)],
     to source: ProviderCredentialSource,
-    payload: Data
+    payload: Data,
+    selection: ClaudeRecoverySelection?
   ) throws -> [String: String] {
     let installed = try ClaudeCredentialsStore.parse(payload)
     let target = ProviderAccount(
@@ -241,17 +264,50 @@ extension AccountSwitchService {
       credentialSource: source, credentialIdentity: installed.accessToken
     )
     return slots.reduce(into: [:]) { transitions, slot in
-      guard let payload = slot.1, let credentials = try? ClaudeCredentialsStore.parse(payload) else { return }
-      let previous = ProviderAccount(
-        provider: .claude, displayName: "Claude Code", detail: nil,
-        credentialSource: slot.0, credentialIdentity: credentials.accessToken
-      )
+      let previous: ProviderAccount
+      if let payload = slot.1, let credentials = try? ClaudeCredentialsStore.parse(payload) {
+        previous = ProviderAccount(
+          provider: .claude, displayName: "Claude Code", detail: nil,
+          credentialSource: slot.0, credentialIdentity: credentials.accessToken
+        )
+      } else if Self.isEmptyClaudeRecoverySlot(slot.1), let selection, selection.account.credentialSource == slot.0 {
+        previous = selection.account
+      } else {
+        return
+      }
       // An already-installed canonical slot must not create a self-cycle
       // that invalidates the stale mirror's transition during reconciliation.
       guard previous.credentialScopeID != target.credentialScopeID else { return }
       transitions[previous.credentialScopeID] = target.credentialScopeID
     }
   }
+
+  private func verifiedClaudeRecoverySelection(
+    _ account: ProviderAccount?,
+    profiles: [String: ClaudeProfile],
+    target: ClaudeProfile
+  ) -> ClaudeRecoverySelection? {
+    guard let account, account.provider == .claude,
+          let fingerprint = account.claudeAccessTokenFingerprint else { return nil }
+    let matching = profiles.values.filter { $0.fingerprint == fingerprint }
+    guard let profile = matching.first,
+          matching.allSatisfy({ $0.stronglyIdentifiesSameAccount(as: target) }) else { return nil }
+    return ClaudeRecoverySelection(account: account, profile: profile)
+  }
+
+  private static func isEmptyClaudeRecoverySlot(_ payload: Data?) -> Bool {
+    guard let payload else { return true }
+    guard let root = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
+          let oauth = root["claudeAiOauth"] as? [String: Any] else { return false }
+    return ["accessToken", "refreshToken"].allSatisfy { key in
+      oauth[key] == nil || (oauth[key] as? String)?.isEmpty == true
+    }
+  }
+}
+
+private struct ClaudeRecoverySelection {
+  let account: ProviderAccount
+  let profile: ClaudeProfile
 }
 
 private struct ClaudeAutomaticRecoveryTarget {

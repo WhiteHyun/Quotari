@@ -19,9 +19,10 @@ extension UsageStore {
   func recoverClaudeCLIIfNeeded() async -> [String: String] {
     let switcher = accountSwitch
     let profiles = claudeProfiles
+    let selected = reconciledSelectionOrigins[.claude] == nil ? selectedAccounts[.claude] : nil
     let now = currentDate()
     let recoveryTask = Task.detached {
-      try switcher.recoverClaudeCLIIfNeeded(profiles: profiles, now: now)
+      try switcher.recoverClaudeCLIIfNeeded(profiles: profiles, now: now, selectedAccount: selected)
     }
     // Retain the cancelled task until it drains: re-enabling monitoring must
     // not revive an operation that was already stopped by the user's toggle.
