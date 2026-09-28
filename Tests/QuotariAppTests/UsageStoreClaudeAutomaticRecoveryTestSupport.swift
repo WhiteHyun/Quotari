@@ -37,7 +37,7 @@ struct AutomaticCLIRecoveryAppFixture {
   let saved: CapturedAccount
   let slot: AutomaticCapturePayloadBox
   let keychain = AutomaticCLIRecoveryKeychain()
-  let activity = AutomaticCLIRecoveryActivity()
+  let activity: AutomaticCLIRecoveryActivity
   let now = Date()
   let source = ProviderCredentialSource.claudeKeychain(service: ClaudeCredentialsStore.keychainService)
   let store: UsageStore
@@ -53,8 +53,10 @@ struct AutomaticCLIRecoveryAppFixture {
   init(
     empty: Bool = false,
     selection: AutomaticCLIRecoverySelection = .saved,
-    selectedToken: String = "old-access"
+    selectedToken: String = "old-access",
+    recoveryGate: AutomaticCLIRecoveryIOGate? = nil
   ) throws {
+    activity = AutomaticCLIRecoveryActivity(gate: recoveryGate)
     directory = try TemporaryDirectory()
     let home = directory.url
     registry = keychain.makeRegistry()
@@ -138,17 +140,25 @@ private func recoverySwitcher(
   activity: AutomaticCLIRecoveryActivity,
   keychain: AutomaticCLIRecoveryKeychain
 ) -> AccountSwitchService {
-  AccountSwitchService(
+  let gate = activity.gate
+  return AccountSwitchService(
     capturedAccounts: registry, environment: [:], home: home,
-    keychainRead: { _ in try keychain.readCLI(slot) },
+    keychainRead: { _ in
+      gate?.block(.keychainRead)
+      return try keychain.readCLI(slot)
+    },
     keychainWrite: { data, _ in
       slot.value = data
+      gate?.block(.afterKeychainWrite)
       if activity.startsAfterCredentialWrite {
         activity.isActive = true
       }
     },
     keychainDelete: { _ in slot.value = Data(#"{"claudeAiOauth":{}}"#.utf8) },
-    activeCLIProcesses: { _ in activity.isActive ? ["claude"] : [] }
+    activeCLIProcesses: { _ in
+      gate?.block(.processCheck)
+      return activity.isActive ? ["claude"] : []
+    }
   )
 }
 
@@ -185,6 +195,12 @@ final class AutomaticCLIRecoveryKeychain: @unchecked Sendable {
 }
 
 final class AutomaticCLIRecoveryActivity: @unchecked Sendable {
+  let gate: AutomaticCLIRecoveryIOGate?
+
+  init(gate: AutomaticCLIRecoveryIOGate? = nil) {
+    self.gate = gate
+  }
+
   private let lock = NSLock()
   private var active = false
   private var startsAfterWrite = false

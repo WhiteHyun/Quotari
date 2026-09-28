@@ -92,12 +92,23 @@ struct UsageStoreClaudeAutomaticRecoveryTests {
     #expect(fixture.store.accounts[.claude]?.count == 1)
   }
 
-  @Test func periodicRecoveryFinishesAPartialMirrorAfterClaudeExits() async throws {
-    let fixture = try AutomaticCLIRecoveryAppFixture(selection: .mirror)
+  @Test(arguments: [false, true])
+  func periodicRecoveryFinishesAPartialMirrorAfterClaudeExits(selectMirror: Bool) async throws {
+    let fixture = try AutomaticCLIRecoveryAppFixture(selection: selectMirror ? .mirror : .live)
+    try FileManager.default.createDirectory(
+      at: fixture.fileURL.deletingLastPathComponent(),
+      withIntermediateDirectories: true
+    )
+    try fixture.slot.value.write(to: fixture.fileURL)
     fixture.activity.startsAfterCredentialWrite = true
     await fixture.store.reloadAccounts()
     #expect(try ClaudeCredentialsStore.parse(fixture.slot.value).accessToken == "saved-access")
     #expect(try ClaudeCredentialsStore.parse(Data(contentsOf: fixture.fileURL)).accessToken == "old-access")
+    if !selectMirror {
+      #expect(fixture.store.selectedAccounts[.claude]?.credentialSource == fixture.source)
+      #expect(fixture.store.reconciledSelectionOrigins[.claude]?.id == fixture.saved.providerAccount.id)
+      #expect(fixture.store.accountSelectionStore.load()[.claude]?.id == fixture.saved.providerAccount.id)
+    }
     let fileID = ProviderAccount.id(provider: .claude, source: .claudeCredentialsFile(path: fixture.fileURL.path))
     let persistedProfiles = ClaudeProfileStore(url: fixture.directory.url.appendingPathComponent("profiles.json"))
       .load()
@@ -125,6 +136,21 @@ struct UsageStoreClaudeAutomaticRecoveryTests {
     #expect(try ClaudeCredentialsStore.parse(fixture.slot.value).accessToken == "saved-access")
     #expect(fixture.store.selectedAccounts[.claude] == nil)
     #expect(fixture.store.reconciledSelectionOrigins[.claude] == nil)
+  }
+
+  @Test func partialRecoveryDoesNotAdoptAnUnrelatedSelectedToken() async throws {
+    let fixture = try AutomaticCLIRecoveryAppFixture(selection: .live, selectedToken: "unrelated-access")
+    try FileManager.default.createDirectory(
+      at: fixture.fileURL.deletingLastPathComponent(), withIntermediateDirectories: true
+    )
+    try fixture.slot.value.write(to: fixture.fileURL)
+    fixture.activity.startsAfterCredentialWrite = true
+
+    await fixture.store.reloadAccounts()
+
+    #expect(try ClaudeCredentialsStore.parse(fixture.slot.value).accessToken == "saved-access")
+    #expect(fixture.store.selectedAccounts[.claude] == nil)
+    #expect(fixture.store.accountSelectionStore.load()[.claude] == nil)
   }
 
   @Test func recoveryContinuesTheCredentialTransitionCompletedBeforeReload() async throws {

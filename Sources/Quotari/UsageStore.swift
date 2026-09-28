@@ -52,6 +52,7 @@ final class UsageStore {
   /// manual reloads. Joining this task prevents simultaneous lifecycle events
   /// from repeating the same keychain and credential-file reads.
   var inFlightAccountReload: Task<Void, Never>?
+  var claudeCLIRecoveryTask: Task<ClaudeCLIRecovery?, Error>?
   /// Providers whose discovered credentials are being copied into the registry.
   /// A fetch that starts after this gate closes waits for the reload to finish,
   /// so it receives the newly established live-to-registry identity link.

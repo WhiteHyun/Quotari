@@ -45,6 +45,9 @@ extension UsageStore {
   private func disableProvider(_ provider: UsageProvider) {
     invalidateAccountRevision(for: provider)
     cancelDelayedCredentialRefresh(for: provider)
+    if provider == .claude {
+      claudeCLIRecoveryTask?.cancel()
+    }
 
     snapshots[provider] = nil
     usageInsightsStates[provider] = nil

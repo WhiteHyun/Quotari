@@ -1,3 +1,4 @@
+import Foundation
 import QuotariCore
 
 extension UsageStore {
@@ -19,10 +20,20 @@ extension UsageStore {
     let switcher = accountSwitch
     let profiles = claudeProfiles
     let now = currentDate()
+    let recoveryTask = Task.detached {
+      try switcher.recoverClaudeCLIIfNeeded(profiles: profiles, now: now)
+    }
+    // Retain the cancelled task until it drains: re-enabling monitoring must
+    // not revive an operation that was already stopped by the user's toggle.
+    claudeCLIRecoveryTask = recoveryTask
+    defer { claudeCLIRecoveryTask = nil }
     do {
-      guard let recovery = try await Task.detached(operation: {
-        try switcher.recoverClaudeCLIIfNeeded(profiles: profiles, now: now)
-      }).value else { return [:] }
+      let result = try await withTaskCancellationHandler {
+        try await recoveryTask.value
+      } onCancel: {
+        recoveryTask.cancel()
+      }
+      guard let recovery = result else { return [:] }
       let liveID = ProviderAccount.id(provider: .claude, source: recovery.source)
       claudeProfiles[liveID] = recovery.profile
       profileFetchAttempts[liveID] = recovery.profile.fingerprint
@@ -37,19 +48,9 @@ extension UsageStore {
       )
       return recovery.credentialTransitions
     } catch let failure as ClaudeCLIRecoveryFailure {
-      // Keep proof for a stale hidden mirror before profile refresh advances
-      // the canonical slot's cache. Never replace a profile updated meanwhile.
-      for (id, profile) in failure.verifiedProfiles where claudeProfiles[id] == profiles[id] {
-        claudeProfiles[id] = profile
-      }
-      try? profileStore.save(claudeProfiles)
-      credentialLifecycleLogger.record(
-        .automaticCLIRecoveryFailed,
-        provider: .claude,
-        interaction: .background,
-        failure: .classify(failure.underlying),
-        timestamp: now
-      )
+      return preservePartialClaudeRecovery(failure, originalProfiles: profiles, now: now)
+    } catch is CancellationError {
+      // Disabling monitoring stops recovery at the next mutation boundary.
     } catch AccountSwitchError.cliStillRunning {
       // The next timer pass retries after Claude exits.
     } catch {
@@ -62,5 +63,26 @@ extension UsageStore {
       )
     }
     return [:]
+  }
+
+  private func preservePartialClaudeRecovery(
+    _ failure: ClaudeCLIRecoveryFailure,
+    originalProfiles: [String: ClaudeProfile],
+    now: Date
+  ) -> [String: String] {
+    // Keep proof for a stale hidden mirror before profile refresh advances
+    // the canonical slot's cache. Never replace a profile updated meanwhile.
+    for (id, profile) in failure.verifiedProfiles where claudeProfiles[id] == originalProfiles[id] {
+      claudeProfiles[id] = profile
+    }
+    try? profileStore.save(claudeProfiles)
+    credentialLifecycleLogger.record(
+      .automaticCLIRecoveryFailed,
+      provider: .claude,
+      interaction: .background,
+      failure: .classify(failure.underlying),
+      timestamp: now
+    )
+    return failure.credentialTransitions
   }
 }

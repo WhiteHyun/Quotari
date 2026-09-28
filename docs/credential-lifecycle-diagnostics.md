@@ -61,6 +61,18 @@ the exact saved credential generation and repairs the remaining stale mirror. Ot
 remain protected, and a fully restored set of stores is a no-op. Only changed credential scopes are returned
 for selection reconciliation, so the already-installed slot does not create a transition back to itself.
 
+Partial recovery also re-reads the installed stores and terminal identity before reporting transitions for
+the slots that actually changed. This preserves a selected Keychain account without claiming an unchanged
+mirror, an unreadable store, or a credential replaced by an external login as a successful installation.
+Disabling Claude monitoring cancels its tracked recovery task. The installer checks cancellation after
+blocking reads and immediately before credential writes; re-enabling monitoring does not revive that task.
+Writes already handed to the operating system may complete, but later writes stop and any verified partial
+result is retained for reconciliation. A later enabled reload can finish the remaining repair.
+
+Recovery treats unchanged `.claude.json` contents as a compare-only condition. It still detects concurrent
+identity changes and retains the existing rollback protections, but does not replace an unchanged file or
+its symlink.
+
 `automaticCLIRecoverySucceeded` identifies a completed local installation, correlated with the saved
 account. It does not establish server acceptance or a successful Claude launch. `automaticCLIRecoveryFailed`
 records typed read/write/concurrency failures; an active CLI is silently deferred until a later pass.

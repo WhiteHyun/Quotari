@@ -14,6 +14,8 @@ public struct ClaudeCLIRecovery: Sendable {
 public struct ClaudeCLIRecoveryFailure: Error, Sendable {
   public let underlying: AccountSwitchError
   public let verifiedProfiles: [String: ClaudeProfile]
+  /// Only slots re-read as the installed generation after the partial write.
+  public let credentialTransitions: [String: String]
 }
 
 extension AccountSwitchService {
@@ -24,7 +26,8 @@ extension AccountSwitchService {
     profiles: [String: ClaudeProfile],
     now: Date
   ) throws -> ClaudeCLIRecovery? {
-    try CLIActivityApprovalContext.$snapshot.withValue(nil) {
+    try Task.checkCancellation()
+    return try CLIActivityApprovalContext.$snapshot.withValue(nil) {
       try recoverInactiveClaudeCLI(profiles: profiles, now: now)
     }
   }
@@ -77,11 +80,11 @@ extension AccountSwitchService {
             try readFile(stateURL) == state
       else { throw AccountSwitchError.concurrentCredentialChange }
       try installClaudeRecovery(ClaudeCredentialInstallation(
-        service: service,
-        fileURL: fileURL,
+        service: service, fileURL: fileURL,
         previous: previous,
         replacement: replacement,
-        accountState: ClaudeAccountStateInstallation(url: stateURL, previous: state, replacement: state)
+        accountState: ClaudeAccountStateInstallation(url: stateURL, previous: state, replacement: state),
+        checkCancellation: { try Task.checkCancellation() }
       ), preserving: claudeRecoveryProfileCopies(in: slots, profiles: verifiedProfiles + [target.profile]))
     }
     return ClaudeCLIRecovery(
@@ -196,8 +199,35 @@ extension AccountSwitchService {
       try installClaudeCredentials(installation)
     } catch let error as AccountSwitchError {
       guard case .partialSwitch = error else { throw error }
-      throw ClaudeCLIRecoveryFailure(underlying: error, verifiedProfiles: profiles)
+      throw ClaudeCLIRecoveryFailure(
+        underlying: error,
+        verifiedProfiles: profiles,
+        credentialTransitions: (try? verifiedPartialClaudeRecoveryTransitions(installation)) ?? [:]
+      )
     }
+  }
+
+  private func verifiedPartialClaudeRecoveryTransitions(
+    _ installation: ClaudeCredentialInstallation
+  ) throws -> [String: String] {
+    guard let state = installation.accountState, try readFile(state.url) == state.previous else { return [:] }
+    let keychain = try readKeychain(installation.service)
+    let file = try readFile(installation.fileURL)
+    let keychainSource = ProviderCredentialSource.claudeKeychain(service: installation.service)
+    let fileSource = ProviderCredentialSource.claudeCredentialsFile(path: installation.fileURL.standardizedFileURL.path)
+    let canonicalSource = keychain == nil ? fileSource : keychainSource
+    let canonicalPayload = keychain == nil ? installation.replacement.file : installation.replacement.keychain
+    guard let canonicalPayload, (keychain ?? file) == canonicalPayload else { return [:] }
+    // A partial failure can also mean an external login or a failed rollback.
+    // Report only changed slots still containing precisely what we installed.
+    var changed: [(ProviderCredentialSource, Data?)] = []
+    if keychain == installation.replacement.keychain, keychain != installation.previous.keychain {
+      changed.append((keychainSource, installation.previous.keychain))
+    }
+    if file == installation.replacement.file, file != installation.previous.file {
+      changed.append((fileSource, installation.previous.file))
+    }
+    return try claudeRecoveryTransitions(from: changed, to: canonicalSource, payload: canonicalPayload)
   }
 
   private func claudeRecoveryTransitions(
