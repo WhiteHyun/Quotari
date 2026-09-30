@@ -26,14 +26,16 @@ struct UsageStoreAutomaticCaptureFreshnessTests {
 
   @Test func scanAnchorsSelectionAfterAnInFlightClaudeRotation() async throws {
     let fixture = try await makeClaudeRotationFixture()
-    fixture.store.beginRefresh()
+    // Start the rotation directly: a dashboard refresh now discovers and
+    // captures accounts before fetching, which would preempt this interleaving.
+    let refresh = Task { await fixture.store.refresh(provider: .claude, serializesProviderFetch: true) }
     await fixture.strategy.waitUntilRequestStarts()
     let reload = Task { await fixture.store.reloadAccounts() }
     #expect(await waitUntilAutomaticCaptureStarts(fixture.store, provider: .claude))
 
     await fixture.strategy.resumeWithRotatedPayload()
     await reload.value
-    await fixture.store.inFlightRefresh?.value
+    await refresh.value
 
     #expect(fixture.store.captureErrors[.claude] == nil)
     let saved = try #require(fixture.registry.load().first)
@@ -48,10 +50,10 @@ struct UsageStoreAutomaticCaptureFreshnessTests {
 
   @Test func scanAnchorsSelectionAfterAJustCompletedClaudeRotation() async throws {
     let fixture = try await makeClaudeRotationFixture()
-    fixture.store.beginRefresh()
+    let refresh = Task { await fixture.store.refresh(provider: .claude, serializesProviderFetch: true) }
     await fixture.strategy.waitUntilRequestStarts()
     await fixture.strategy.resumeWithRotatedPayload()
-    await fixture.store.inFlightRefresh?.value
+    await refresh.value
     #expect(fixture.store.providerFetchTasks[.claude] == nil)
 
     await fixture.store.reloadAccounts()

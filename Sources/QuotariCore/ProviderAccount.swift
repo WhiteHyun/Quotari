@@ -7,6 +7,9 @@ public struct ProviderAccount: Codable, Equatable, Identifiable, Sendable {
   public var detail: String?
   public var credentialSource: ProviderCredentialSource
   private var credentialFingerprint: String?
+  /// Binds a persisted Claude CLI selection to a verified profile even after
+  /// its token disappears. Optional for backward-compatible decoding.
+  public private(set) var claudeAccessTokenFingerprint: String?
 
   public init(
     provider: UsageProvider,
@@ -20,6 +23,12 @@ public struct ProviderAccount: Codable, Equatable, Identifiable, Sendable {
     self.detail = detail
     self.credentialSource = credentialSource
     credentialFingerprint = credentialIdentity.map(Self.fingerprint)
+    switch credentialSource {
+    case .claudeKeychain, .claudeCredentialsFile:
+      claudeAccessTokenFingerprint = credentialIdentity.map(ProviderCredentialIdentity.fingerprint(of:))
+    default:
+      claudeAccessTokenFingerprint = nil
+    }
     id = Self.id(provider: provider, source: credentialSource)
   }
 

@@ -87,7 +87,7 @@ extension UsageStore {
     )
   }
 
-  private func drainProviderActivityBeforeCapture(_ provider: UsageProvider) async -> [String: String] {
+  func drainProviderActivityBeforeCapture(_ provider: UsageProvider) async -> [String: String] {
     // Close the provider gate before observing current fetch handles. Any fetch
     // already registered drains first; a later fetch waits for the enclosing
     // account reload to publish the new registry mapping.

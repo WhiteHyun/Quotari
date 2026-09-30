@@ -37,5 +37,50 @@ For a long-unused saved account, follow its opaque `accountID` through:
 4. `switchStarted`, `switchCredentialsWritten`, and `switchVerified`
 5. `postSwitchRefreshScheduled`, `postSwitchRefreshStarted`, and `postSwitchRefreshCompleted`
 
-`reauthenticationRequired` is the diagnostic equivalent of an invalid or revoked refresh grant. Quotari
-cannot repair that state; the affected CLI account must be logged in and saved again.
+`reauthenticationRequired` is the diagnostic equivalent of an invalid or revoked refresh grant. A usable
+saved credential for the same account can restore an expired CLI slot; if every copy is rejected, the
+account must be logged in and saved again.
+
+## Automatic Claude CLI recovery
+
+While Claude monitoring is enabled, account reloads check for expired or empty CLI credentials before
+normal usage requests. Recovery requires exactly one unexpired, renewable saved account with verified
+account and organization IDs matching Claude's existing `oauthAccount`. Nonempty live credentials also
+require a cached profile bound to their exact access token; terminal labels alone cannot prove ownership.
+
+Recovery waits until Claude exits, drains Quotari's credential requests, and reuses the switch installer's
+process checks, slot verification, and rollback. It preserves unrelated credential fields and does not
+follow the dashboard selection. Healthy credentials, ambiguous saved accounts, pending token grants,
+unreadable stores, and logout with a removed terminal identity are left unchanged. Monitoring continues
+checking on later refreshes even when a transient read failure hides every account, so recovery can resume
+after Keychain becomes readable, Claude exits, or the saved token renews.
+
+If Claude starts between the Keychain and file writes, recovery preserves verified profiles for the original
+tokens, including a mirror previously hidden by discovery. A later attempt accepts a slot that already holds
+the exact saved credential generation and repairs the remaining stale mirror. Other healthy generations
+remain protected, and a fully restored set of stores is a no-op. Only changed credential scopes are returned
+for selection reconciliation, so the already-installed slot does not create a transition back to itself.
+
+Partial recovery also re-reads the installed stores and terminal identity before reporting transitions for
+the slots that actually changed. This preserves a selected Keychain account without claiming an unchanged
+mirror, an unreadable store, or a credential replaced by an external login as a successful installation.
+Disabling Claude monitoring cancels its tracked recovery task. The installer checks cancellation after
+blocking reads and immediately before credential writes; re-enabling monitoring does not revive that task.
+Writes already handed to the operating system may complete, but later writes stop and any verified partial
+result is retained for reconciliation. A later enabled reload can finish the remaining repair.
+
+Recovery treats unchanged `.claude.json` contents as a compare-only condition. It still detects concurrent
+identity changes and retains the existing rollback protections, but does not replace an unchanged file or
+its symlink.
+
+For a recognized empty or missing CLI slot, an unreconciled direct selection can survive recovery only
+when its persisted access-token fingerprint matches a cached verified profile with the same account and
+organization as the independently authorized recovery target. This adds a SHA-256 fingerprint to Claude
+CLI account selections without storing the token or changing existing credential scope IDs. Older selection
+files still decode; an old selection without this proof does not automatically inherit the recovered login.
+The evidence applies only to the selected empty source, never to a different nonempty token. Partial recovery
+retains the profile proof for an empty mirror until a later attempt actually installs it.
+
+`automaticCLIRecoverySucceeded` identifies a completed local installation, correlated with the saved
+account. It does not establish server acceptance or a successful Claude launch. `automaticCLIRecoveryFailed`
+records typed read/write/concurrency failures; an active CLI is silently deferred until a later pass.

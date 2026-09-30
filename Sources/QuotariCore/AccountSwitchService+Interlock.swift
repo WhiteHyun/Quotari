@@ -7,37 +7,17 @@ extension AccountSwitchService {
     var previous: ResolvedClaudeLivePayloads
     var replacement: ResolvedClaudeLivePayloads
     var accountState: ClaudeAccountStateInstallation?
+    var checkCancellation: @Sendable () throws -> Void = {}
   }
 
   struct ClaudeAccountStateInstallation {
     var url: URL
     var previous: Data?
     var replacement: Data
-  }
 
-  public func cliActivitySnapshot(for provider: UsageProvider) throws -> CLIActivitySnapshot {
-    try CLIActivitySnapshot(provider: provider, processes: activeCLIProcessRecords(provider))
-  }
-
-  func requireCLIInactive(_ provider: UsageProvider) throws {
-    let active = try checkedActiveCLIProcesses(provider)
-    let blocked = CLIActivityApprovalContext.snapshot?.unapprovedProcesses(
-      for: provider,
-      activeProcesses: active
-    ) ?? active.map(\.displayName)
-    guard blocked.isEmpty else {
-      throw AccountSwitchError.cliStillRunning(processes: blocked)
+    var changedPayload: Data? {
+      previous == replacement ? nil : replacement
     }
-  }
-
-  func checkedActiveCLIProcesses(_ provider: UsageProvider) throws -> [CLIActivityProcess] {
-    let active: [CLIActivityProcess]
-    do {
-      active = try activeCLIProcessRecords(provider)
-    } catch {
-      throw AccountSwitchError.cliActivityCheckFailed(underlying: error.localizedDescription)
-    }
-    return active
   }
 
   func installClaudeCredentials(_ installation: ClaudeCredentialInstallation) throws {
@@ -52,7 +32,7 @@ extension AccountSwitchService {
     )
     defer { secureFileWriter.discard(preparedFileRollback) }
     let preparedAccountState = try prepareCredentialFile(
-      installation.accountState?.replacement,
+      installation.accountState?.changedPayload,
       replacing: installation.accountState?.url ?? installation.fileURL
     )
     defer { secureFileWriter.discard(preparedAccountState) }
@@ -63,6 +43,7 @@ extension AccountSwitchService {
       expectedKeychain: installation.previous.keychain,
       expectedFile: installation.previous.file
     )
+    try installation.checkCancellation()
     if let replacementKeychain = installation.replacement.keychain {
       try writeClaudeKeychain(
         replacementKeychain,
@@ -74,7 +55,7 @@ extension AccountSwitchService {
       try commitClaudeFile(preparedFile, installation: installation)
     }
     try verifyAppliedClaudeSlots(installation)
-    if let preparedAccountState, let accountState = installation.accountState {
+    if let accountState = installation.accountState {
       try commitClaudeAccountState(
         preparedAccountState,
         accountState: accountState,
@@ -85,7 +66,7 @@ extension AccountSwitchService {
   }
 
   private func commitClaudeAccountState(
-    _ preparedAccountState: URL,
+    _ preparedAccountState: URL?,
     accountState: ClaudeAccountStateInstallation,
     installation: ClaudeCredentialInstallation,
     preparedFileRollback: URL?
@@ -101,7 +82,12 @@ extension AccountSwitchService {
       guard try readFile(accountState.url) == accountState.previous else {
         throw AccountSwitchError.concurrentCredentialChange
       }
-      try secureFileWriter.commit(preparedAccountState, replacing: accountState.url)
+      // Automatic recovery uses the state only as a compare condition. Never
+      // rename over an unchanged file: it may be a user-managed symlink.
+      if let preparedAccountState {
+        try installation.checkCancellation()
+        try secureFileWriter.commit(preparedAccountState, replacing: accountState.url)
+      }
     } catch {
       let writeError = error
       do {
@@ -127,12 +113,14 @@ extension AccountSwitchService {
     preparedFileRollback: URL?
   ) throws {
     try requireCLIInactive(.claude)
+    try installation.checkCancellation()
     var rollbackErrors: [String] = []
     if let replacementFile = installation.replacement.file {
       do {
         guard try readFile(installation.fileURL) == replacementFile,
               let preparedFileRollback
         else { throw AccountSwitchError.concurrentCredentialChange }
+        try installation.checkCancellation()
         try secureFileWriter.commit(preparedFileRollback, replacing: installation.fileURL)
       } catch {
         rollbackErrors.append("credentials file: \(error.localizedDescription)")
@@ -142,7 +130,8 @@ extension AccountSwitchService {
       try restoreClaudeKeychainIfNeeded(
         installation.previous.keychain,
         replacing: installation.replacement.keychain,
-        service: installation.service
+        service: installation.service,
+        checkCancellation: installation.checkCancellation
       )
     } catch {
       rollbackErrors.append("Keychain: \(error.localizedDescription)")
@@ -159,6 +148,7 @@ extension AccountSwitchService {
     installation: ClaudeCredentialInstallation
   ) throws {
     do {
+      try installation.checkCancellation()
       try requireCLIInactive(.claude)
     } catch {
       if installation.replacement.keychain != nil {
@@ -180,9 +170,18 @@ extension AccountSwitchService {
       try restoreClaudeKeychainIfNeeded(
         installation.previous.keychain,
         replacing: installation.replacement.keychain,
-        service: installation.service
+        service: installation.service,
+        checkCancellation: installation.checkCancellation
       )
       throw AccountSwitchError.concurrentCredentialChange
+    }
+    do {
+      try installation.checkCancellation()
+    } catch {
+      if installation.replacement.keychain != nil {
+        throw AccountSwitchError.partialSwitch(underlying: error.localizedDescription)
+      }
+      throw error
     }
     do {
       try secureFileWriter.commit(preparedFile, replacing: installation.fileURL)
@@ -190,7 +189,8 @@ extension AccountSwitchService {
       try restoreClaudeKeychainIfNeeded(
         installation.previous.keychain,
         replacing: installation.replacement.keychain,
-        service: installation.service
+        service: installation.service,
+        checkCancellation: installation.checkCancellation
       )
       throw AccountSwitchError.writeFailed(underlying: error.localizedDescription)
     }
@@ -209,7 +209,8 @@ extension AccountSwitchService {
       try restoreClaudeKeychainIfNeeded(
         installation.previous.keychain,
         replacing: installation.replacement.keychain,
-        service: installation.service
+        service: installation.service,
+        checkCancellation: installation.checkCancellation
       )
       throw AccountSwitchError.writeFailed(
         underlying: "Claude's credentials file couldn't be verified after the keychain update; "
@@ -221,13 +222,14 @@ extension AccountSwitchService {
   private func restoreClaudeKeychainIfNeeded(
     _ previous: Data?,
     replacing installed: Data?,
-    service: String
+    service: String,
+    checkCancellation: @Sendable () throws -> Void = {}
   ) throws {
     guard let installed else { return }
     if let previous {
-      try restoreClaudeKeychain(previous, replacing: installed, service: service)
+      try restoreClaudeKeychain(previous, replacing: installed, service: service, checkCancellation: checkCancellation)
     } else {
-      try removeCreatedClaudeKeychain(replacing: installed, service: service)
+      try removeCreatedClaudeKeychain(replacing: installed, service: service, checkCancellation: checkCancellation)
     }
   }
 
@@ -276,7 +278,8 @@ extension AccountSwitchService {
   func restoreClaudeKeychain(
     _ previous: Data,
     replacing installed: Data,
-    service: String
+    service: String,
+    checkCancellation: @Sendable () throws -> Void = {}
   ) throws {
     do {
       try requireCLIInactive(.claude)
@@ -293,6 +296,7 @@ extension AccountSwitchService {
     }
     var operationError: Error?
     do {
+      try checkCancellation()
       try keychainWrite(previous, service)
     } catch {
       operationError = error
@@ -310,7 +314,8 @@ extension AccountSwitchService {
 
   func removeCreatedClaudeKeychain(
     replacing installed: Data,
-    service: String
+    service: String,
+    checkCancellation: @Sendable () throws -> Void = {}
   ) throws {
     do {
       try requireCLIInactive(.claude)
@@ -327,6 +332,7 @@ extension AccountSwitchService {
     }
     var operationError: Error?
     do {
+      try checkCancellation()
       try keychainDelete(service)
     } catch {
       operationError = error
@@ -359,7 +365,8 @@ extension AccountSwitchService {
       try restoreClaudeKeychainIfNeeded(
         installation.previous.keychain,
         replacing: installation.replacement.keychain,
-        service: installation.service
+        service: installation.service,
+        checkCancellation: installation.checkCancellation
       )
       throw AccountSwitchError.writeFailed(
         underlying: "Claude's final credentials-file state couldn't be verified; "
@@ -370,7 +377,8 @@ extension AccountSwitchService {
       try restoreClaudeKeychainIfNeeded(
         installation.previous.keychain,
         replacing: installation.replacement.keychain,
-        service: installation.service
+        service: installation.service,
+        checkCancellation: installation.checkCancellation
       )
       throw AccountSwitchError.concurrentCredentialChange
     }
