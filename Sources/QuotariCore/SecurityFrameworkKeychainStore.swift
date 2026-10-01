@@ -8,11 +8,20 @@ struct KeychainSecurityOperations: @unchecked Sendable {
   var add: (CFDictionary, UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus
   var delete: (CFDictionary) -> OSStatus
 
-  static let live = Self(
+  static let live = LiveKeychainAccess.isAllowed ? Self(
     copyMatching: SecItemCopyMatching,
     update: SecItemUpdate,
     add: SecItemAdd,
     delete: SecItemDelete
+  ) : refused
+
+  /// Behaves like an empty keychain that rejects new items, so a test process
+  /// never reaches the user's real items.
+  static let refused = Self(
+    copyMatching: { _, _ in errSecItemNotFound },
+    update: { _, _ in errSecItemNotFound },
+    add: { _, _ in LiveKeychainAccess.refusedStatus },
+    delete: { _ in errSecItemNotFound }
   )
 }
 

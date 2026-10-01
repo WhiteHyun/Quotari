@@ -11,7 +11,8 @@ extension LocalUsageCostScanner {
     var searchStart = pending.index(pending.startIndex, offsetBy: boundedSearchOffset)
     while let newline = pending[searchStart...].firstIndex(of: 0x0A) {
       guard !Task.isCancelled else { return .cancelled }
-      let line = normalizedLine(pending.subdata(in: lineStart ..< newline))
+      // A slice shares `pending`'s storage, so lines the filter skips are never copied.
+      let line = normalizedLine(pending[lineStart ..< newline])
       guard line.isEmpty || autoreleasepool(invoking: { body(line) }) else {
         return .failure
       }

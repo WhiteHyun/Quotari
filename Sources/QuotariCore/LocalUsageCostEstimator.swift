@@ -11,6 +11,7 @@ public struct LocalUsageCostEstimator: UsageCostEstimating, UsageInsightsAnalyzi
   let scopeIdentityStore: LocalUsageScopeIdentityStore
   let cacheMutationHook: (@Sendable () -> Void)?
   let localUsageScanHook: (@Sendable () -> Void)?
+  let fileScanMemo = LocalUsageFileScanMemo()
 
   public init(
     environment: [String: String] = ProcessInfo.processInfo.environment,
@@ -165,6 +166,8 @@ struct LocalUsageCostScanner {
   let homeDirectory: URL
   let fileManager: FileManager
   let fileScanCache: LocalUsageFileScanCache?
+  let fileScanMemo: LocalUsageFileScanMemo?
+  let diskCachePruneInterval: TimeInterval
   let onFileParsed: (@Sendable (URL) -> Void)?
   let onCacheLoaded: (@Sendable (URL) -> Void)?
   private let calendar: Calendar
@@ -175,6 +178,8 @@ struct LocalUsageCostScanner {
     fileManager: FileManager = .default,
     calendar: Calendar = Calendar(identifier: .gregorian),
     fileScanCacheDirectory: URL? = nil,
+    fileScanMemo: LocalUsageFileScanMemo? = nil,
+    diskCachePruneInterval: TimeInterval = LocalUsageFileScanCache.defaultPruneInterval,
     onFileParsed: (@Sendable (URL) -> Void)? = nil,
     onCacheLoaded: (@Sendable (URL) -> Void)? = nil
   ) {
@@ -185,6 +190,8 @@ struct LocalUsageCostScanner {
     fileScanCache = fileScanCacheDirectory.map {
       LocalUsageFileScanCache(cacheDirectory: $0, fileManager: fileManager)
     }
+    self.fileScanMemo = fileScanMemo
+    self.diskCachePruneInterval = diskCachePruneInterval
     self.onFileParsed = onFileParsed
     self.onCacheLoaded = onCacheLoaded
   }
@@ -240,6 +247,9 @@ struct LocalUsageCostScanner {
     guard !roots.isEmpty else { return .noLocalLogs }
     let existingRoots = roots.filter { fileManager.fileExists(atPath: $0.path) }
     guard !existingRoots.isEmpty else { return .noLocalLogs }
+    // Relief walks every malloc zone, so its cost grows with the heap; once per scan (including a
+    // cancelled one) returns parse garbage without turning a scan into files x heap size.
+    defer { malloc_zone_pressure_relief(nil, 0) }
 
     var scans: [LocalUsageFileScan] = []
     for root in existingRoots {
@@ -252,7 +262,8 @@ struct LocalUsageCostScanner {
         return .failure
       }
     }
-    fileScanCache?.prune(olderThan: range.start)
+    fileScanCache?.prune(olderThan: range.start, interval: diskCachePruneInterval)
+    fileScanMemo?.prune(provider: provider, olderThan: range.start)
 
     return aggregate(scans)
   }
@@ -272,7 +283,6 @@ struct LocalUsageCostScanner {
       let outcome = autoreleasepool {
         scanFile(file, provider: provider, range: range, parser: parser)
       }
-      malloc_zone_pressure_relief(nil, 0)
       switch outcome {
       case let .success(scan):
         scans.append(scan)

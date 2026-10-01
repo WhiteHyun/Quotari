@@ -1,7 +1,31 @@
 import Foundation
 
 enum ClaudeDesktopProjectRoots {
-  static func locate(homeDirectory: URL, fileManager: FileManager = .default) -> [URL] {
+  /// Every log-change event resolves scope roots on the main actor and again
+  /// in the background scan; the walk below is a bounded directory crawl, so
+  /// its result is shared for a short window instead of repeated per call.
+  /// New desktop sessions therefore appear within `cacheLifetime`.
+  static let cacheLifetime: TimeInterval = 30
+  private static let cache = LocatedRootsCache()
+
+  static func locate(
+    homeDirectory: URL,
+    fileManager: FileManager = .default,
+    now: Date = Date()
+  ) -> [URL] {
+    guard fileManager === FileManager.default else {
+      return uncachedLocate(homeDirectory: homeDirectory, fileManager: fileManager)
+    }
+    return cache.roots(
+      for: homeDirectory.standardizedFileURL.path,
+      now: now,
+      lifetime: cacheLifetime
+    ) {
+      uncachedLocate(homeDirectory: homeDirectory, fileManager: fileManager)
+    }
+  }
+
+  static func uncachedLocate(homeDirectory: URL, fileManager: FileManager) -> [URL] {
     var roots: [URL] = []
     var queue = sessionRoots(homeDirectory: homeDirectory)
       .map { (url: $0.standardizedFileURL, depth: 0) }
@@ -72,5 +96,26 @@ enum ClaudeDesktopProjectRoots {
       else { return nil }
       return child
     }
+  }
+}
+
+private final class LocatedRootsCache: @unchecked Sendable {
+  private let lock = NSLock()
+  private var entries: [String: (roots: [URL], locatedAt: Date)] = [:]
+
+  func roots(
+    for home: String,
+    now: Date,
+    lifetime: TimeInterval,
+    locate: () -> [URL]
+  ) -> [URL] {
+    if let entry = lock.withLock({ entries[home] }),
+       now >= entry.locatedAt,
+       now.timeIntervalSince(entry.locatedAt) < lifetime {
+      return entry.roots
+    }
+    let roots = locate()
+    lock.withLock { entries[home] = (roots, now) }
+    return roots
   }
 }

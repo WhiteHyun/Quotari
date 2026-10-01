@@ -11,6 +11,10 @@ struct LocalUsageFileFingerprint: Codable, Equatable, Sendable {
   init?(handle: FileHandle) {
     var metadata = stat()
     guard fstat(handle.fileDescriptor, &metadata) == 0 else { return nil }
+    self.init(metadata: metadata)
+  }
+
+  init(metadata: stat) {
     byteCount = metadata.st_size
     modifiedAt = Self.date(metadata.st_mtimespec)
     statusChangedAt = Self.date(metadata.st_ctimespec)
@@ -54,26 +58,15 @@ final class LocalUsageFileSnapshot {
   }
 }
 
-struct LocalUsageFileScanRange: Codable, Equatable, Sendable {
-  let start: Date
-  let end: Date
-
-  init(_ range: DayRange) {
-    start = range.start
-    end = range.end
-  }
-}
-
 struct LocalUsageFileScanCacheIdentity: Sendable {
   let provider: UsageProvider
   let sourcePath: String
   let fingerprint: LocalUsageFileFingerprint
   let timeZoneIdentifier: String
-  let scanRange: LocalUsageFileScanRange?
 }
 
 struct LocalUsageFileScanCache: @unchecked Sendable {
-  static let schemaVersion = 6
+  static let schemaVersion = 7
 
   private let cacheDirectory: URL
   private let fileManager: FileManager
@@ -97,8 +90,7 @@ struct LocalUsageFileScanCache: @unchecked Sendable {
           entry.provider == identity.provider,
           entry.sourcePath == identity.sourcePath,
           entry.fingerprint == identity.fingerprint,
-          entry.timeZoneIdentifier == identity.timeZoneIdentifier,
-          entry.scanRange == identity.scanRange
+          entry.timeZoneIdentifier == identity.timeZoneIdentifier
     else { return nil }
     return entry.scan
   }
@@ -113,7 +105,6 @@ struct LocalUsageFileScanCache: @unchecked Sendable {
       sourcePath: identity.sourcePath,
       fingerprint: identity.fingerprint,
       timeZoneIdentifier: identity.timeZoneIdentifier,
-      scanRange: identity.scanRange,
       scan: scan
     )
     guard let data = try? JSONEncoder().encode(entry) else { return }
@@ -124,7 +115,31 @@ struct LocalUsageFileScanCache: @unchecked Sendable {
     )
   }
 
-  func prune(olderThan cutoff: Date) {
+  static let defaultPruneInterval: TimeInterval = 24 * 60 * 60
+
+  /// Pruning decodes every entry, so it runs at most once per `interval`
+  /// (tracked by a marker file that survives relaunches) instead of on every
+  /// log-change rescan. Stale entries in between are harmless: a lookup
+  /// still has to match the source's current fingerprint.
+  func prune(olderThan cutoff: Date, now: Date = Date(), interval: TimeInterval = defaultPruneInterval) {
+    let marker = cacheDirectory.appendingPathComponent(".last-prune", isDirectory: false)
+    if interval > 0,
+       let lastPrune = (try? fileManager.attributesOfItem(atPath: marker.path))?[.modificationDate] as? Date,
+       now.timeIntervalSince(lastPrune) < interval,
+       lastPrune <= now {
+      return
+    }
+    prune(olderThan: cutoff)
+    guard !Task.isCancelled else { return }
+    try? fileManager.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+    if fileManager.fileExists(atPath: marker.path) {
+      try? fileManager.setAttributes([.modificationDate: now], ofItemAtPath: marker.path)
+    } else {
+      fileManager.createFile(atPath: marker.path, contents: nil, attributes: [.modificationDate: now])
+    }
+  }
+
+  private func prune(olderThan cutoff: Date) {
     guard let urls = try? fileManager.contentsOfDirectory(
       at: cacheDirectory,
       includingPropertiesForKeys: nil,
@@ -167,7 +182,6 @@ struct LocalUsageFileScanCache: @unchecked Sendable {
     let sourcePath: String
     let fingerprint: LocalUsageFileFingerprint
     let timeZoneIdentifier: String
-    let scanRange: LocalUsageFileScanRange?
     let scan: LocalUsageFileScan
   }
 }

@@ -145,6 +145,7 @@ public enum ClaudeCredentialsStore {
   /// Security.framework: the ACL consent then sticks to the stable system
   /// binary, so rebuilt dev binaries don't re-prompt on every run.
   static func keychainItem(service: String = keychainService) -> Data? {
+    guard LiveKeychainAccess.isAllowed else { return nil }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
     process.arguments = ["find-generic-password", "-s", service, "-w"]

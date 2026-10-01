@@ -243,7 +243,8 @@ extension LocalUsageCostEstimator {
         environment: environment,
         homeDirectory: homeDirectory,
         fileScanCacheDirectory: insightsCacheDirectory
-          .appendingPathComponent("file-scans", isDirectory: true)
+          .appendingPathComponent("file-scans", isDirectory: true),
+        fileScanMemo: fileScanMemo
       )
       .scan(provider: provider, account: account, now: now, historyDays: historyDays)
     }

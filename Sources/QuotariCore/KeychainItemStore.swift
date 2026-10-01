@@ -37,12 +37,39 @@ public struct KeychainItemStore: Sendable {
   /// A direct Security.framework backend for items owned by Quotari. Unlike
   /// `security -i`, it does not impose a command-line parser limit on payloads.
   public static func appOwned(account: String = NSUserName()) -> Self {
-    let keychain = SecurityFrameworkKeychainStore()
-    return Self(
+    appOwned(account: account, keychain: SecurityFrameworkKeychainStore(), cache: .shared)
+  }
+
+  static func appOwned(
+    account: String,
+    keychain: SecurityFrameworkKeychainStore,
+    cache: KeychainReadCache
+  ) -> Self {
+    Self(
       account: account,
-      read: { service in try keychain.read(account: account, service: service) },
-      write: { data, service in try keychain.write(data, account: account, service: service) },
-      delete: { service in try keychain.delete(account: account, service: service) }
+      read: { service in
+        try cache.read(account: account, service: service) {
+          try keychain.read(account: account, service: service)
+        }
+      },
+      write: { data, service in
+        do {
+          try keychain.write(data, account: account, service: service)
+          cache.store(data, account: account, service: service)
+        } catch {
+          cache.invalidate(account: account, service: service)
+          throw error
+        }
+      },
+      delete: { service in
+        do {
+          try keychain.delete(account: account, service: service)
+          cache.store(nil, account: account, service: service)
+        } catch {
+          cache.invalidate(account: account, service: service)
+          throw error
+        }
+      }
     )
   }
 
@@ -63,6 +90,7 @@ public struct KeychainItemStore: Sendable {
   /// matching how Claude Code's credential item is discovered — but throwing
   /// so callers can fail closed. `nil` only for a genuine not-found (exit 44).
   public static func readByService(_ service: String) throws -> Data? {
+    guard LiveKeychainAccess.isAllowed else { return nil }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
     process.arguments = ["find-generic-password", "-s", service, "-w"]
@@ -120,6 +148,7 @@ public struct KeychainItemStore: Sendable {
   /// only when no item exists (exit 44); throws on a command failure or an
   /// item whose account can't be parsed, so callers can fail closed.
   private static func accountForService(_ service: String) throws -> String? {
+    guard LiveKeychainAccess.isAllowed else { return nil }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
     process.arguments = ["find-generic-password", "-s", service]
@@ -149,6 +178,7 @@ public struct KeychainItemStore: Sendable {
   }
 
   private static func securityRead(account: String, service: String) throws -> Data? {
+    guard LiveKeychainAccess.isAllowed else { return nil }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
     process.arguments = ["find-generic-password", "-a", account, "-s", service, "-w"]
@@ -179,6 +209,9 @@ public struct KeychainItemStore: Sendable {
   /// with `security -i` so a bearer-token blob never appears in the process
   /// argument list.
   private static func securityWrite(_ data: Data, account: String, service: String) throws {
+    guard LiveKeychainAccess.isAllowed else {
+      throw KeychainError.commandFailed(status: LiveKeychainAccess.refusedStatus)
+    }
     guard let payload = String(data: data, encoding: .utf8) else {
       throw KeychainError.malformedPayload
     }
@@ -206,6 +239,7 @@ public struct KeychainItemStore: Sendable {
   }
 
   private static func securityDelete(account: String, service: String) throws {
+    guard LiveKeychainAccess.isAllowed else { return }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/security")
     process.arguments = ["delete-generic-password", "-a", account, "-s", service]

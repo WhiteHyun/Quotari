@@ -36,6 +36,7 @@ final class FSEventsUsageInsightsChangeMonitor: UsageInsightsChangeMonitoring, @
   private let maximumDelay: UInt64
   private let reconciliationInterval: UInt64
   private let streamStartGate: (@Sendable () -> Bool)?
+  private let isLowPowerModeEnabled: @Sendable () -> Bool
   private var stream: FSEventStreamRef?
   private var observations: [UsageInsightsLogObservation] = []
   private var registry = UsageInsightsObservationRegistry(observations: [])
@@ -50,12 +51,14 @@ final class FSEventsUsageInsightsChangeMonitor: UsageInsightsChangeMonitoring, @
     quietPeriod: Duration = .seconds(2),
     maximumDelay: Duration = .seconds(30),
     reconciliationInterval: Duration = .seconds(30),
-    streamStartGate: (@Sendable () -> Bool)? = nil
+    streamStartGate: (@Sendable () -> Bool)? = nil,
+    isLowPowerModeEnabled: @escaping @Sendable () -> Bool = { ProcessInfo.processInfo.isLowPowerModeEnabled }
   ) {
     self.quietPeriod = quietPeriod.nanosecondsClamped
     self.maximumDelay = max(self.quietPeriod, maximumDelay.nanosecondsClamped)
     self.reconciliationInterval = max(1, reconciliationInterval.nanosecondsClamped)
     self.streamStartGate = streamStartGate
+    self.isLowPowerModeEnabled = isLowPowerModeEnabled
     queue.setSpecific(key: queueKey, value: 1)
   }
 
@@ -235,11 +238,16 @@ final class FSEventsUsageInsightsChangeMonitor: UsageInsightsChangeMonitoring, @
 
   private func enqueue(_ keys: Set<UsageInsightsObservationKey>) {
     let now = DispatchTime.now().uptimeNanoseconds
+    let timing = UsageInsightsBatchTiming.effective(
+      quietPeriod: quietPeriod,
+      maximumDelay: maximumDelay,
+      isLowPowerModeEnabled: isLowPowerModeEnabled()
+    )
     let deadline = batchPolicy.record(
       keys,
       now: now,
-      quietPeriod: quietPeriod,
-      maximumDelay: maximumDelay
+      quietPeriod: timing.quietPeriod,
+      maximumDelay: timing.maximumDelay
     )
     batchWorkItem?.cancel()
     batchGeneration &+= 1
