@@ -2,134 +2,6 @@ import CryptoKit
 import Foundation
 import os
 
-public struct CredentialLifecycleEvent: Codable, Equatable, Sendable {
-  public static let currentSchemaVersion = 1
-
-  public enum Kind: String, Codable, Sendable {
-    case monitoringPass
-    case validationStarted
-    case validationSucceeded
-    case validationFailed
-    case pendingGrantFound
-    case pendingGrantReadFailed
-    case refreshSelected
-    case refreshStarted
-    case refreshSucceeded
-    case refreshFailed
-    case persistenceSucceeded
-    case persistenceDeferred
-    case persistenceFailed
-    case switchStarted
-    case switchCredentialsWritten
-    case switchVerified
-    case switchFailed
-    case automaticCLIRecoverySucceeded
-    case automaticCLIRecoveryFailed
-    case postSwitchRefreshScheduled
-    case postSwitchRefreshStarted
-    case postSwitchRefreshCompleted
-    case postSwitchRefreshCancelled
-  }
-
-  public enum Source: String, Codable, Sendable {
-    case codexFile
-    case codexKeychain
-    case claudeEnvironment
-    case claudeKeychain
-    case claudeFile
-    case quotariRegistry
-
-    init(_ source: ProviderCredentialSource) {
-      self = switch source {
-      case .codexAuthFile: .codexFile
-      case .codexKeychain: .codexKeychain
-      case .claudeEnvironment: .claudeEnvironment
-      case .claudeKeychain: .claudeKeychain
-      case .claudeCredentialsFile: .claudeFile
-      case .quotariRegistry: .quotariRegistry
-      }
-    }
-  }
-
-  public enum Interaction: String, Codable, Sendable {
-    case background
-    case userInitiated
-
-    init(_ interaction: ProviderFetchInteraction) {
-      self = switch interaction {
-      case .background: .background
-      case .userInitiated: .userInitiated
-      }
-    }
-  }
-
-  public enum Reason: String, Codable, Sendable {
-    case expired
-    case unauthorized
-    case pendingGrant
-    case scheduled
-    case forced
-    case delayedAfterSwitch
-    case immediateAfterSwitch
-    case concurrentCredentialChange
-  }
-
-  public enum Failure: String, Codable, Sendable {
-    case reauthenticationRequired
-    case unauthorized
-    case rateLimited
-    case credentialUnavailable
-    case cancelled
-    case staleSource
-    case persistence
-    case cliActive
-    case concurrentCredentialChange
-    case verification
-    case malformedResponse
-    case inputOutput
-    case unknown
-  }
-
-  public let schemaVersion: Int
-  public let timestamp: Date
-  public let provider: UsageProvider
-  public let kind: Kind
-  public let source: Source?
-  /// An installation-salted digest. Never an email, provider account ID,
-  /// registry ID, filesystem path, keychain label, or credential fingerprint.
-  public let accountID: String?
-  public let interaction: Interaction?
-  public let reason: Reason?
-  public let failure: Failure?
-  public let monitoredAccountCount: Int?
-  public let eligibleAccountCount: Int?
-
-  init(
-    timestamp: Date,
-    provider: UsageProvider,
-    kind: Kind,
-    source: Source? = nil,
-    accountID: String? = nil,
-    interaction: Interaction? = nil,
-    reason: Reason? = nil,
-    failure: Failure? = nil,
-    monitoredAccountCount: Int? = nil,
-    eligibleAccountCount: Int? = nil
-  ) {
-    schemaVersion = Self.currentSchemaVersion
-    self.timestamp = timestamp
-    self.provider = provider
-    self.kind = kind
-    self.source = source
-    self.accountID = accountID
-    self.interaction = interaction
-    self.reason = reason
-    self.failure = failure
-    self.monitoredAccountCount = monitoredAccountCount
-    self.eligibleAccountCount = eligibleAccountCount
-  }
-}
-
 public struct CredentialLifecycleLogger: Sendable {
   private static let osLogger = Logger(
     subsystem: "com.quotari.QuotariCore",
@@ -151,6 +23,7 @@ public struct CredentialLifecycleLogger: Sendable {
       opaqueAccountID: { rawIdentifier in
         store.opaqueIdentifier(for: rawIdentifier)
       },
+      tokenFingerprint: { store.tokenFingerprint(for: $0) },
       prepareLogForAccess: {
         await runtime.prepareLogForAccess()
       }
@@ -159,6 +32,8 @@ public struct CredentialLifecycleLogger: Sendable {
 
   public static let disabled = Self(record: { _ in })
 
+  private let sessionID = UUID()
+  let tokenFingerprintValue: @Sendable (String) -> String?
   private let recordValue: @Sendable (CredentialLifecycleEvent) -> Void
   private let opaqueAccountIDValue: @Sendable (String) -> String
   private let nowValue: @Sendable () -> Date
@@ -168,10 +43,12 @@ public struct CredentialLifecycleLogger: Sendable {
     record: @escaping @Sendable (CredentialLifecycleEvent) -> Void,
     opaqueAccountID: @escaping @Sendable (String) -> String = { _ in "test-account" },
     now: @escaping @Sendable () -> Date = Date.init,
+    tokenFingerprint: @escaping @Sendable (String) -> String? = { _ in nil },
     prepareLogForAccess: @escaping @Sendable () async -> URL = {
       CredentialLifecycleLogStore.defaultURL()
     }
   ) {
+    tokenFingerprintValue = tokenFingerprint
     recordValue = record
     opaqueAccountIDValue = opaqueAccountID
     nowValue = now
@@ -189,7 +66,8 @@ public struct CredentialLifecycleLogger: Sendable {
     failure: CredentialLifecycleEvent.Failure? = nil,
     monitoredAccountCount: Int? = nil,
     eligibleAccountCount: Int? = nil,
-    timestamp: Date? = nil
+    timestamp: Date? = nil,
+    diagnostic: CredentialLifecycleDiagnostic? = nil
   ) {
     let resolvedSource = source ?? account?.credentialSource
     let rawIdentifier = account?.id ?? (correlationSource ?? resolvedSource).map {
@@ -205,7 +83,14 @@ public struct CredentialLifecycleLogger: Sendable {
       reason: reason,
       failure: failure,
       monitoredAccountCount: monitoredAccountCount,
-      eligibleAccountCount: eligibleAccountCount
+      eligibleAccountCount: eligibleAccountCount,
+      diagnostic: diagnostic.map { value in
+        var value = value
+        value.sourceID = resolvedSource.map { opaqueAccountIDValue("source:\($0.stableID)") }
+        return value
+      },
+      sessionID: sessionID,
+      appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
     ))
   }
 
@@ -221,11 +106,11 @@ public final class CredentialLifecycleLogStore: @unchecked Sendable {
   public let url: URL
   public let saltURL: URL
 
-  private let retention: TimeInterval
-  private let maximumByteCount: Int
+  let retention: TimeInterval
+  let maximumByteCount: Int
   let compactionTargetByteCount: Int
-  private let now: @Sendable () -> Date
-  private let fileManager: FileManager
+  let now: @Sendable () -> Date
+  let fileManager: FileManager
   private let injectedSalt: Data?
   private let fallbackSalt = Data(SHA256.hash(data: Data(UUID().uuidString.utf8)))
   private let lock = NSLock()
@@ -280,6 +165,8 @@ public final class CredentialLifecycleLogStore: @unchecked Sendable {
     let line = try Self.makeEncoder().encode(event) + Data([0x0A])
     try Self.appendCompleteLine(line, to: url)
 
+    // Incident I/O must never prevent normal-log size enforcement.
+    try? preserveRejectionContext(event)
     let current = now()
     let fileSize = try fileManager.attributesOfItem(atPath: url.path)[.size] as? NSNumber
     let compactionDue = lastCompactionAt.map { current.timeIntervalSince($0) >= 24 * 60 * 60 } ?? true
@@ -296,6 +183,7 @@ public final class CredentialLifecycleLogStore: @unchecked Sendable {
   func performMaintenance() throws {
     lock.lock()
     defer { lock.unlock() }
+    try? pruneIncidentFiles()
     guard fileManager.fileExists(atPath: url.path) else { return }
     try maintainExistingLog()
   }
@@ -325,6 +213,14 @@ public final class CredentialLifecycleLogStore: @unchecked Sendable {
     defer { lock.unlock() }
     guard fileManager.fileExists(atPath: url.path) else { return [] }
     return try Self.decodeLines(Data(contentsOf: url))
+  }
+
+  func tokenFingerprint(for token: String) -> String {
+    lock.lock()
+    defer { lock.unlock() }
+    let key = SymmetricKey(data: resolvedSalt())
+    return HMAC<SHA256>.authenticationCode(for: Data("token-generation:\(token)".utf8), using: key)
+      .prefix(16).map { String(format: "%02x", $0) }.joined()
   }
 
   private func resolvedSalt() -> Data {
@@ -385,7 +281,7 @@ public final class CredentialLifecycleLogStore: @unchecked Sendable {
     try applyOwnerOnlyPermissions(to: url, directory: false)
   }
 
-  private func applyOwnerOnlyPermissions(to target: URL, directory: Bool) throws {
+  func applyOwnerOnlyPermissions(to target: URL, directory: Bool) throws {
     try fileManager.setAttributes(
       [.posixPermissions: directory ? 0o700 : 0o600],
       ofItemAtPath: target.path

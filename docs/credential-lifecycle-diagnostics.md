@@ -9,6 +9,7 @@ not change when or how tokens are refreshed.
 - File: `~/Library/Application Support/Quotari/Diagnostics/CredentialLifecycle.jsonl`
 - Retention: the newest 21 days, capped at 5 MB
 - Permissions: `0600` for the JSONL and salt files, `0700` for the diagnostics directory
+- First-rejection snapshots: sibling `CredentialIncidents/*.jsonl`, at most 8 files of 256 KiB each, retained for 21 days
 - Access: Settings → About → Reveal Diagnostic Log…
 
 Every line is an independently decodable JSON event. Malformed and expired lines are discarded during
@@ -19,11 +20,14 @@ appends do not rewrite the entire log on every event.
 ## Privacy boundary
 
 Allowed fields are limited to event type, provider, source category, interaction type, predefined reason
-or failure category, timestamp, and aggregate monitored/eligible counts. Account correlation uses a
-truncated SHA-256 digest with a random installation-local salt.
+or failure category, timestamp, aggregate monitored/eligible counts, process-session UUID, and app version.
+Account and source correlation use truncated SHA-256 digests with a random installation-local salt.
+Schema 2 also permits an exchange UUID, access-token expiry, installation-keyed HMAC-SHA256 token-generation
+IDs (128-bit truncation), HTTP status, an allowlisted OAuth error code, and a storage-read-failed flag.
+Unknown provider error strings become `other`; response bodies and descriptions are never copied.
 
 The log must never contain access or refresh tokens, provider account IDs, registry IDs, email addresses,
-credential fingerprints, keychain labels, filesystem paths, request or response bodies, prompts, or raw
+unsalted credential fingerprints, keychain labels, filesystem paths, request or response bodies, prompts, or raw
 error descriptions. Do not add arbitrary metadata or string-valued error fields to
 `CredentialLifecycleEvent`.
 
@@ -40,6 +44,39 @@ For a long-unused saved account, follow its opaque `accountID` through:
 `reauthenticationRequired` is the diagnostic equivalent of an invalid or revoked refresh grant. A usable
 saved credential for the same account can restore an expired CLI slot; if every copy is rejected, the
 account must be logged in and saved again.
+
+## Tracing a rejected Claude refresh token
+
+1. Find the first `refreshFailed` with `reauthenticationRequired`, preferably in `CredentialIncidents`.
+   Its snapshot includes up to 256 KiB of preceding complete records and the rejection itself. Repeated
+   failures for the same account and refresh-generation ID do not replace it, even after restart.
+   Snapshots expire after 21 days; adding a ninth incident evicts the oldest. They are not an unlimited archive.
+2. Follow `diagnostic.operationID` through `refreshStarted`, `tokenEndpointResponded`, `refreshSucceeded`
+   and persistence outcomes. `generation` is the attempted pair; `receivedGeneration` is the effective
+   pair returned by refresh (including an unchanged refresh token if omitted by the server).
+3. The post-persistence `credentialObserved` records an independent readback in `storedGeneration`, or
+   `storageReadFailed`. A successful write alone does not prove that the expected pair is still stored.
+   A rejected refresh also includes readback metadata, even when the stored access token is expired.
+4. Compare generation IDs across `diagnostic.sourceID` values. Discovery observes Keychain and the file
+   before deduplication, plus saved rows before hiding equivalent copies. Identical token IDs match across
+   sources on this installation. Changed generations are recorded immediately on the next observation;
+   unchanged discovery/fetch observations are sampled at most every 15 minutes per source and account.
+5. If a newer CLI generation exists while the registry stays old, investigate capture/synchronization.
+   If the returned pair differs from readback, investigate persistence or a concurrent writer. Multiple
+   operation IDs attempting the same refresh-generation ID are evidence for duplicate exchanges, though
+   ordering alone does not prove which exchange invalidated a token.
+
+`tokenEndpointResponded` records status and an allowlisted OAuth code only for the actual token exchange;
+network failures have no HTTP response. Synthetic refreshers may emit no endpoint event. Old schema-1
+records still decode, but cannot establish token lineage. Session IDs distinguish app runs; app version is
+present when supplied by the app bundle (command-line test executables may omit it).
+
+All observations describe local reads, not filesystem write notifications. An external change between
+reads may be missed, and the logger cannot attribute writes to another process or see remote-device token
+rotation/server-side revocation. Historical token lineage for incidents predating this change cannot be reconstructed.
+The new diagnostics start when a build containing this change is run. To collect evidence, reauthenticate a
+renewable account normally, leave monitoring enabled, and use/switch Claude CLI as usual. Inspect both the
+main JSONL and the incident directory if authentication is rejected again.
 
 ## Automatic Claude CLI recovery
 

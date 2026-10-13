@@ -3,6 +3,7 @@ import Foundation
 final class CredentialLifecycleLogRuntime: @unchecked Sendable {
   private static let maintenanceInterval = 24 * 60 * 60
 
+  private var observations: [String: CredentialLifecycleEvent] = [:]
   private let store: CredentialLifecycleLogStore
   private let queue: DispatchQueue
   private let maintenanceTimer: DispatchSourceTimer
@@ -30,7 +31,18 @@ final class CredentialLifecycleLogRuntime: @unchecked Sendable {
   }
 
   func record(_ event: CredentialLifecycleEvent) {
-    queue.async { [store] in
+    queue.async { [self] in
+      if event.kind == .credentialObserved, event.diagnostic?.operationID == nil {
+        let key = "\(event.provider.rawValue):\(event.accountID ?? ""):\(event.diagnostic?.sourceID ?? "")"
+        if let previous = observations[key], previous.diagnostic == event.diagnostic,
+           event.timestamp.timeIntervalSince(previous.timestamp) < 15 * 60 {
+          return
+        }
+        if observations.count >= 256 {
+          observations.removeAll(keepingCapacity: true)
+        }
+        observations[key] = event
+      }
       try? store.record(event)
     }
   }
