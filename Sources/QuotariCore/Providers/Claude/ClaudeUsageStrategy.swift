@@ -67,6 +67,7 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
       try recoverLinkedRegistryGrant(id: capturedRegistryID)
     }
     var resolved = try credentials(for: context)
+    credentialLifecycleLogger.observe(resolved.credentials, source: resolved.source)
     let refresh = await refreshResolutionIfExpired(
       resolved,
       now: context.now,

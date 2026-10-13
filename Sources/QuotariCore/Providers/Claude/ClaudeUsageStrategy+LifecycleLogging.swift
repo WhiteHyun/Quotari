@@ -13,7 +13,8 @@ extension ClaudeUsageStrategy {
     correlationSource: ProviderCredentialSource? = nil,
     reason: CredentialLifecycleEvent.Reason? = nil,
     failure: CredentialLifecycleEvent.Failure? = nil,
-    timestamp: Date? = nil
+    timestamp: Date? = nil,
+    diagnostic: CredentialLifecycleDiagnostic? = nil
   ) {
     credentialLifecycleLogger.record(
       kind,
@@ -22,7 +23,8 @@ extension ClaudeUsageStrategy {
       correlationSource: correlationSource,
       reason: reason,
       failure: failure,
-      timestamp: timestamp
+      timestamp: timestamp,
+      diagnostic: diagnostic
     )
   }
 

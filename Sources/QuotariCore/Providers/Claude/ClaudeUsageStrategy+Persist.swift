@@ -53,8 +53,18 @@ extension ClaudeUsageStrategy {
   func persisted(
     _ pending: ClaudePendingGrant,
     resolved: ResolvedClaudeCredentials,
-    correlationSource: ProviderCredentialSource? = nil
+    correlationSource: ProviderCredentialSource? = nil,
+    operationID: UUID? = nil
   ) async -> ClaudeRefreshResolution? {
+    let diagnostic = CredentialLifecycleDiagnostic(
+      operationID: operationID ?? UUID(),
+      generation: credentialLifecycleLogger.generation(resolved.credentials),
+      receivedGeneration: credentialLifecycleLogger.generation(inMemory(resolved, pending.grant).credentials)
+    )
+    // Read back after every outcome; this observation never changes auth decisions.
+    defer {
+      recordPersistenceReadback(diagnostic, source: resolved.source, correlationSource: correlationSource)
+    }
     do {
       try persister.persist(
         pending.grant,
@@ -64,19 +74,21 @@ extension ClaudeUsageStrategy {
       return successfulPersistenceResolution(
         pending,
         resolved: resolved,
-        correlationSource: correlationSource
+        correlationSource: correlationSource,
+        diagnostic: diagnostic
       )
     } catch ClaudeCredentialPersistError.obsoleteRecoveryCleanupPending {
-      return deferredPersistenceResolution(resolved, correlationSource: correlationSource)
+      return deferredPersistenceResolution(resolved, correlationSource: correlationSource, diagnostic: diagnostic)
     } catch ClaudeCredentialPersistError.mirrorRecoveryOwnerChanged {
-      return deferredPersistenceResolution(resolved, correlationSource: correlationSource)
+      return deferredPersistenceResolution(resolved, correlationSource: correlationSource, diagnostic: diagnostic)
     } catch ClaudeCredentialPersistError.staleSource {
       recordLifecycle(
         .persistenceDeferred,
         source: resolved.source,
         correlationSource: correlationSource,
         reason: .concurrentCredentialChange,
-        failure: .staleSource
+        failure: .staleSource,
+        diagnostic: diagnostic
       )
       return nil
     } catch {
@@ -84,20 +96,40 @@ extension ClaudeUsageStrategy {
         error,
         pending: pending,
         resolved: resolved,
-        correlationSource: correlationSource
+        correlationSource: correlationSource,
+        diagnostic: diagnostic
       )
     }
+  }
+
+  private func recordPersistenceReadback(
+    _ diagnostic: CredentialLifecycleDiagnostic,
+    source: ProviderCredentialSource,
+    correlationSource: ProviderCredentialSource?
+  ) {
+    var diagnostic = diagnostic
+    if let stored = try? reloadCredentials(source) {
+      diagnostic.storedGeneration = credentialLifecycleLogger.generation(stored)
+    } else {
+      diagnostic.storageReadFailed = true
+    }
+    recordLifecycle(
+      .credentialObserved, source: source,
+      correlationSource: correlationSource, diagnostic: diagnostic
+    )
   }
 
   private func successfulPersistenceResolution(
     _ pending: ClaudePendingGrant,
     resolved: ResolvedClaudeCredentials,
-    correlationSource: ProviderCredentialSource?
+    correlationSource: ProviderCredentialSource?,
+    diagnostic: CredentialLifecycleDiagnostic
   ) -> ClaudeRefreshResolution {
     recordLifecycle(
       .persistenceSucceeded,
       source: resolved.source,
-      correlationSource: correlationSource
+      correlationSource: correlationSource,
+      diagnostic: diagnostic
     )
     removeDurableGrantIfMatching(pending, source: resolved.source)
     let acceptedGrant: ClaudePendingGrant? = switch resolved.source {
@@ -109,13 +141,15 @@ extension ClaudeUsageStrategy {
 
   private func deferredPersistenceResolution(
     _ resolved: ResolvedClaudeCredentials,
-    correlationSource: ProviderCredentialSource?
+    correlationSource: ProviderCredentialSource?,
+    diagnostic: CredentialLifecycleDiagnostic
   ) -> ClaudeRefreshResolution {
     recordLifecycle(
       .persistenceDeferred,
       source: resolved.source,
       correlationSource: correlationSource,
-      reason: .concurrentCredentialChange
+      reason: .concurrentCredentialChange,
+      diagnostic: diagnostic
     )
     let authoritative = (try? reloadCredentials(resolved.source)).map {
       ResolvedClaudeCredentials(credentials: $0, source: resolved.source)
@@ -127,7 +161,8 @@ extension ClaudeUsageStrategy {
     _ error: Error,
     pending: ClaudePendingGrant,
     resolved: ResolvedClaudeCredentials,
-    correlationSource: ProviderCredentialSource?
+    correlationSource: ProviderCredentialSource?,
+    diagnostic: CredentialLifecycleDiagnostic
   ) async -> ClaudeRefreshResolution {
     let acceptedGrant: ClaudePendingGrant? = if let persistError = error as? ClaudeCredentialPersistError,
                                                 case .mirrorRecoveryPending = persistError,
@@ -141,7 +176,8 @@ extension ClaudeUsageStrategy {
       .persistenceFailed,
       source: resolved.source,
       correlationSource: correlationSource,
-      failure: .persistence
+      failure: .persistence,
+      diagnostic: diagnostic
     )
     await rememberPending(pending, source: resolved.source)
     return persistenceResolution(pending, resolved: resolved, acceptedGrant: acceptedGrant)

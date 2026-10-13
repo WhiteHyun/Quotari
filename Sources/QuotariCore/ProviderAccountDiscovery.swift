@@ -49,6 +49,7 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
   private let home: URL
   private let keychainData: @Sendable () -> Data?
   private let codexKeychainData: @Sendable (String, String) -> Data?
+  private let credentialLifecycleLogger: CredentialLifecycleLogger
   private let capturedAccounts: CapturedAccountStore
 
   public init(
@@ -56,8 +57,10 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
     home: URL = FileManager.default.homeDirectoryForCurrentUser,
     keychainData: (@Sendable () -> Data?)? = nil,
     codexKeychainData: (@Sendable (String, String) -> Data?)? = nil,
-    capturedAccounts: CapturedAccountStore = CapturedAccountStore()
+    capturedAccounts: CapturedAccountStore = CapturedAccountStore(),
+    credentialLifecycleLogger: CredentialLifecycleLogger = .disabled
   ) {
+    self.credentialLifecycleLogger = credentialLifecycleLogger
     self.environment = environment
     self.home = home
     self.keychainData = keychainData ?? { ClaudeCredentialsStore.keychainItem() }
@@ -79,6 +82,12 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
     let liveIdentities = Set(live.compactMap { renewableIdentity(of: $0.credentialSource, provider: provider) })
     let saved = capturedAccounts.load()
       .filter { $0.provider == provider }
+      .map { captured in
+        if provider == .claude, let credentials = try? ClaudeCredentialsStore.parse(captured.payload) {
+          credentialLifecycleLogger.observe(credentials, source: .quotariRegistry(id: captured.id))
+        }
+        return captured
+      }
       .filter { captured in
         guard let key = ProviderCredentialIdentity.key(provider: provider, payload: captured.payload)
         else { return true }
@@ -310,7 +319,8 @@ public struct ProviderAccountDiscovery: ProviderAccountDiscovering {
     detail: String,
     source: ProviderCredentialSource
   ) -> ProviderAccount {
-    ProviderAccount(
+    credentialLifecycleLogger.observe(credentials, source: source)
+    return ProviderAccount(
       provider: .claude,
       displayName: displayName,
       detail: detail,

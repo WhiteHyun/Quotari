@@ -82,6 +82,10 @@ public struct ClaudeTokenRefresher: ClaudeTokenRefreshing {
       "scope": scope,
     ])
     let (rawData, response) = try await transport.postJSONResponse(url: tokenURL, body: body)
+    let code = Self.oauthErrorCode(in: rawData).map {
+      CredentialLifecycleDiagnostic.OAuthError(rawValue: $0) ?? .other
+    }
+    ClaudeRefreshDiagnosticContext.current?.report(response.statusCode, code)
     if response.statusCode == 400 || response.statusCode == 401,
        Self.oauthErrorCode(in: rawData) == "invalid_grant" {
       throw ClaudeTokenRefreshError.reauthenticationRequired

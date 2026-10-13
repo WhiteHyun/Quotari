@@ -169,11 +169,15 @@ final class UsageStore {
 
   /// Tests inject fixture descriptors so results don't depend on credentials
   /// present on the machine running them.
+  private static func discovery(logger: CredentialLifecycleLogger) -> any ProviderAccountDiscovering {
+    ProviderAccountDiscovery(credentialLifecycleLogger: logger)
+  }
+
   init(
     providers: [ProviderDescriptor] = ProviderRegistry.all,
     costEstimator: any UsageCostEstimating = LocalUsageCostEstimator(),
     usageInsightsChangeMonitor: any UsageInsightsChangeMonitoring = FSEventsUsageInsightsChangeMonitor(),
-    accountDiscovery: any ProviderAccountDiscovering = ProviderAccountDiscovery(),
+    accountDiscovery: (any ProviderAccountDiscovering)? = nil,
     accountSelectionStore: ProviderAccountSelectionStore = ProviderAccountSelectionStore(),
     accountMonitoringStore: ProviderAccountMonitoringStore? = nil,
     accountCapture: AccountCaptureService = AccountCaptureService(),
@@ -204,7 +208,7 @@ final class UsageStore {
     self.providers = providers
     self.costEstimator = costEstimator
     self.usageInsightsChangeMonitor = usageInsightsChangeMonitor
-    self.accountDiscovery = accountDiscovery
+    self.accountDiscovery = accountDiscovery ?? Self.discovery(logger: credentialLifecycleLogger)
     self.accountSelectionStore = accountSelectionStore
     self.accountMonitoringStore = accountMonitoringStore ?? ProviderAccountMonitoringStore(
       url: accountSelectionStore.url
