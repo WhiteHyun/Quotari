@@ -1,15 +1,15 @@
 import Foundation
 
-/// Formats machine plan identifiers ("pro_lite", "default_claude_max_20x")
-/// into the marketing tier names, keeping the usage multiplier (5x/20x)
-/// visible when the tier carries one.
+/// Formats machine plan identifiers into marketing tier names.
+/// Usage multipliers are shown only when explicitly present in the identifier;
+/// a Codex Pro identifier alone does not establish a price or usage allowance.
 public enum PlanLabel {
   private static let codexExactNames: [String: String] = [
-    "pro": "Pro 20x",
-    "prolite": "Pro 5x",
-    "pro_lite": "Pro 5x",
-    "pro-lite": "Pro 5x",
-    "pro lite": "Pro 5x",
+    "pro": "Pro",
+    "prolite": "Pro",
+    "pro_lite": "Pro",
+    "pro-lite": "Pro",
+    "pro lite": "Pro",
   ]
 
   private static let claudeBaseTiers = ["max", "pro", "team", "enterprise", "ultra", "free"]

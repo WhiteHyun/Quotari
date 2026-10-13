@@ -93,7 +93,7 @@ struct CodexUsageTests {
     )
     let result = try await strategy.fetch(ProviderFetchContext(provider: .codex, now: Date()))
 
-    #expect(result.usage.plan == "Pro 20x")
+    #expect(result.usage.plan == "Pro")
     #expect(result.usage.account == "dev@example.com")
     #expect(result.usage.primary?.usedPercent == 73)
     #expect(result.usage.primary?.duration == TimeInterval(5 * 3600))
@@ -107,6 +107,34 @@ struct CodexUsageTests {
     let request = try #require(recorder.requests.first)
     #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer tok")
     #expect(request.value(forHTTPHeaderField: "chatgpt-account-id") == "acct-1")
+  }
+
+  @Test func proWithoutTierMetadataDoesNotInventAnAllowance() throws {
+    // Observed live response shape; values are synthetic and contain no account data.
+    let data = Data("""
+    {
+      "plan_type": "pro",
+      "rate_limit": {
+        "primary_window": {
+          "used_percent": 42, "limit_window_seconds": 18000,
+          "reset_after_seconds": 3600
+        },
+        "secondary_window": null
+      },
+      "additional_rate_limits": null,
+      "model_usage": { "gpt-6-astra": { "available": true } },
+      "credits": { "has_credits": true, "balance": "100" }
+    }
+    """.utf8)
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let usage = try CodexUsageParser.parse(data, provider: .codex, now: now)
+
+    #expect(usage.plan == "Pro")
+    #expect(usage.primary?.usedPercent == 42)
+    #expect(usage.primary?.duration == 18000)
+    #expect(usage.primary?.resetsAt == now.addingTimeInterval(3600))
+    #expect(usage.secondary == nil)
+    #expect(usage.extraWindows.isEmpty)
   }
 
   @Test func parsesLegacyRateLimitList() async throws {
@@ -282,11 +310,21 @@ struct ClaudeCredentialsTests {
 
 struct PlanLabelTests {
   @Test func codexTiers() {
-    #expect(PlanLabel.codex("pro") == "Pro 20x")
-    #expect(PlanLabel.codex("pro_lite") == "Pro 5x")
+    #expect(PlanLabel.codex("pro") == "Pro")
+    #expect(PlanLabel.codex("pro_lite") == "Pro")
     #expect(PlanLabel.codex("plus") == "Plus")
     #expect(PlanLabel.codex("free_workspace") == "Free Workspace")
     #expect(PlanLabel.codex(nil) == nil)
+  }
+
+  @Test(arguments: ["prolite", "pro_lite", "pro-lite", "pro lite", " PRO "])
+  func codexProAliasesDoNotInferMultipliers(raw: String) {
+    #expect(PlanLabel.codex(raw) == "Pro")
+  }
+
+  @Test(arguments: ["Pro 5x", "Pro 20x", "Pro 50x"])
+  func codexPreservesExplicitMultipliers(raw: String) {
+    #expect(PlanLabel.codex(raw) == raw)
   }
 
   @Test func claudeTiers() {
