@@ -6,7 +6,8 @@ struct DashboardView: View {
   @Environment(UsageStore.self) private var store
 
   /// The menu bar window resolves flexible height ranges to their minimum, so
-  /// the window height must be a single measured value, not a min/max span.
+  /// the window height must be a single measured value, not a min/max span. The
+  /// window only grows to fit it on its own; the presentation controller shrinks it.
   @State private var contentHeight: CGFloat = 100
   @State private var providerStatus = ProviderStatusController()
 
@@ -25,8 +26,15 @@ struct DashboardView: View {
       }
     }
     .frame(width: 300)
-    .frame(height: min(max(contentHeight, 100), 560))
+    .frame(height: windowHeight)
     .background(MenuVibrancyBackground())
+    .onChange(of: windowHeight, initial: true) { _, height in
+      menuBarPresentation.fitDashboardWindow(toHeight: height)
+    }
+  }
+
+  private var windowHeight: CGFloat {
+    min(max(contentHeight, 100), 560)
   }
 
   private func showSettings() {

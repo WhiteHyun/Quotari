@@ -16,6 +16,7 @@ final class MenuBarPresentationController {
   @ObservationIgnored private let shortcutRegistrar: ShortcutRegistrar?
   @ObservationIgnored private var didRegisterShortcut = false
   @ObservationIgnored private weak var dashboardWindow: NSWindow?
+  @ObservationIgnored private var dashboardHeight: CGFloat?
 
   init(registersShortcut: Bool = true) {
     shortcutRegistrar = registersShortcut
@@ -41,6 +42,29 @@ final class MenuBarPresentationController {
 
   func trackDashboardWindow(_ window: NSWindow) {
     dashboardWindow = window
+    applyDashboardHeight()
+  }
+
+  /// The menu bar panel only raises its minimum size as the dashboard grows and
+  /// never shrinks its frame, so once content reaches the height cap the window
+  /// keeps that height and centers shorter content in transparent space. Pin the
+  /// frame to the dashboard's height, keeping the top edge under the menu bar.
+  func fitDashboardWindow(toHeight height: CGFloat) {
+    dashboardHeight = height
+    applyDashboardHeight()
+  }
+
+  private func applyDashboardHeight() {
+    guard let window = dashboardWindow, let dashboardHeight else { return }
+    let contentRect = window.contentRect(forFrameRect: window.frame)
+    guard contentRect.height != dashboardHeight else { return }
+    let fittedContentRect = NSRect(
+      x: contentRect.minX,
+      y: contentRect.maxY - dashboardHeight,
+      width: contentRect.width,
+      height: dashboardHeight
+    )
+    window.setFrame(window.frameRect(forContentRect: fittedContentRect), display: true)
   }
 
   func dismissDashboard() {

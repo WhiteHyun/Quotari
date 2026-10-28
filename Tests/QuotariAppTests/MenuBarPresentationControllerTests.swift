@@ -42,6 +42,45 @@ struct MenuBarPresentationControllerTests {
     #expect(!controller.isPresented)
     #expect(window.didClose)
   }
+
+  @Test func fittingTheDashboardWindowShrinksItBelowTheMenuBar() {
+    let controller = MenuBarPresentationController(registersShortcut: false)
+    let window = dashboardWindow(height: 560)
+    controller.trackDashboardWindow(window)
+
+    controller.fitDashboardWindow(toHeight: 382)
+
+    #expect(window.frame == NSRect(x: 1021, y: 565, width: 300, height: 382))
+  }
+
+  @Test func fittingTheDashboardWindowGrowsItBelowTheMenuBar() {
+    let controller = MenuBarPresentationController(registersShortcut: false)
+    let window = dashboardWindow(height: 200)
+    controller.trackDashboardWindow(window)
+
+    controller.fitDashboardWindow(toHeight: 500)
+
+    #expect(window.frame == NSRect(x: 1021, y: 447, width: 300, height: 500))
+  }
+
+  @Test func heightMeasuredBeforeTheWindowIsTrackedIsAppliedOnTracking() {
+    let controller = MenuBarPresentationController(registersShortcut: false)
+    let window = dashboardWindow(height: 560)
+
+    controller.fitDashboardWindow(toHeight: 382)
+    controller.trackDashboardWindow(window)
+
+    #expect(window.frame == NSRect(x: 1021, y: 565, width: 300, height: 382))
+  }
+
+  private func dashboardWindow(height: CGFloat) -> NSWindow {
+    NSWindow(
+      contentRect: NSRect(x: 1021, y: 947 - height, width: 300, height: height),
+      styleMask: .borderless,
+      backing: .buffered,
+      defer: true
+    )
+  }
 }
 
 private final class CloseTrackingWindow: NSWindow {
