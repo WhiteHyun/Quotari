@@ -33,6 +33,9 @@ remaining quota, reset times, and estimated local API cost at a glance.
   built-in or user-created mascot animation, and a global dashboard shortcut.
 - Sends optional quota warning, critical, and reset notifications with
   per-provider controls.
+- Shows how many Claude Code and Codex sessions are running. Optional session
+  alerts add hooks to Claude Code's `settings.json` to notify you when a
+  session needs input or finishes; turning them off removes the hooks.
 - Integrates Sparkle update checks in packaged builds that include feed
   configuration; source and test builds keep update checks disabled.
 

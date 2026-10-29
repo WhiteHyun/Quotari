@@ -107,6 +107,7 @@ final class UsageStore {
   var storedQuotaHistory: QuotaHistory?
   @ObservationIgnored var quotaHistoryStore = QuotaHistoryStore()
   @ObservationIgnored let sharedUsageSnapshotPublisher = SharedUsageSnapshotPublisher()
+  @ObservationIgnored var sessionActivity = SessionActivityController()
   private var storedPaceCountsWeekdaysOnly: Bool?
   var paceCountsWeekdaysOnly: Bool {
     get { storedPaceCountsWeekdaysOnly ?? defaults.bool(forKey: Self.paceWeekdaysDefaultsKey) }
@@ -292,6 +293,7 @@ final class UsageStore {
     profileFetchAttempts = claudeProfiles.compactMapValues(\.fingerprint)
     if startsAutomatically {
       Task {
+        startSessionActivityMonitor()
         _ = await self.quotaNotifications.refreshAuthorizationStatus()
         await reloadAccounts()
         startTimer(reusesLatestAccountReloadForFirstRefresh: true)

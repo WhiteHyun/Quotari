@@ -136,6 +136,7 @@ struct ProviderCardView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
         }
+        RunningSessionsLabel(sessions: store.sessionActivity.runningCounts[descriptor.id] ?? 0)
         Spacer()
         ProviderStatusDisclosureButton(
           descriptor: descriptor,
@@ -234,11 +235,8 @@ struct ProviderCardView: View {
         accent: accent
       )
       if tracksHistory {
-        QuotaBurndownSparkline(
-          readings: store.quotaHistoryReadings(for: descriptor.id, window: window),
-          window: window,
-          accent: accent
-        )
+        let readings = store.quotaHistoryReadings(for: descriptor.id, window: window)
+        QuotaBurndownSparkline(readings: readings, window: window, accent: accent)
       }
       HStack(spacing: 6) {
         Text(L10n.string("\(LocalizedUsageFormatter.percent(window.remainingPercent)) left"))

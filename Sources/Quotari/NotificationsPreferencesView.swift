@@ -41,6 +41,11 @@ struct NotificationsPreferencesView: View {
         .disabled(!notifications.notificationsEnabled)
       }
 
+      SessionAlertsPreferencesCard(
+        sessionActivity: store.sessionActivity,
+        notificationsEnabled: notifications.notificationsEnabled
+      )
+
       PreferencesCard(
         L10n.string("Thresholds"),
         subtitle: L10n.string("Set the usage levels that trigger each alert.")

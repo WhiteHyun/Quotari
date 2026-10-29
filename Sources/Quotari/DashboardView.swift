@@ -30,6 +30,10 @@ struct DashboardView: View {
     .onChange(of: windowHeight, initial: true) { _, height in
       menuBarPresentation.fitDashboardWindow(toHeight: height)
     }
+    .task(id: menuBarPresentation.isPresented) {
+      guard menuBarPresentation.isPresented else { return }
+      await store.watchRunningSessions()
+    }
   }
 
   private var windowHeight: CGFloat {
