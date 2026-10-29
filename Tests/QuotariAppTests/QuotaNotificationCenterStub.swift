@@ -12,6 +12,7 @@ final class QuotaNotificationCenterStub: QuotaNotificationCenterTransport {
   var attemptedReminders: [ResetCreditReminder] = []
   var attemptedStatusAlerts: [ProviderStatusAlert] = []
   var attemptedSessionAlerts: [SessionActivityAlert] = []
+  var attemptedAccountSwitchAlerts: [AccountSwitchAlert] = []
   var pendingScheduledIDs: Set<String> = []
   var deliveredIDs: Set<String> = []
   var removedRequestIDs: [[String]] = []
@@ -78,6 +79,10 @@ final class QuotaNotificationCenterStub: QuotaNotificationCenterTransport {
 
   func addSessionActivityAlert(_ alert: SessionActivityAlert) async throws {
     attemptedSessionAlerts.append(alert)
+  }
+
+  func addAccountSwitchAlert(_ alert: AccountSwitchAlert) async throws {
+    attemptedAccountSwitchAlerts.append(alert)
   }
 
   func addResetCreditReminder(_ reminder: ResetCreditReminder) async throws {

@@ -29,6 +29,7 @@ protocol QuotaNotificationCenterTransport: AnyObject {
   func addResetCreditReminder(_ reminder: ResetCreditReminder) async throws
   func addProviderStatusAlert(_ alert: ProviderStatusAlert) async throws
   func addSessionActivityAlert(_ alert: SessionActivityAlert) async throws
+  func addAccountSwitchAlert(_ alert: AccountSwitchAlert) async throws
   func removePendingRequests(withIdentifiers identifiers: [String])
   func removeRequests(withIdentifiers identifiers: [String])
   func configureForegroundPresentation()
@@ -108,6 +109,22 @@ final class SystemQuotaNotificationCenter: QuotaNotificationCenterTransport {
     try await center.add(UNNotificationRequest(identifier: alert.requestID, content: content, trigger: nil))
   }
 
+  func addAccountSwitchAlert(_ alert: AccountSwitchAlert) async throws {
+    let content = UNMutableNotificationContent()
+    content.title = alert.notificationTitle
+    content.body = alert.notificationBody
+    content.sound = .default
+    if case .suggestion = alert.content {
+      content.categoryIdentifier = AccountSwitchAlert.categoryID
+      content.userInfo = [
+        UserInfoKey.kind: "accountSwitch",
+        AccountSwitchAlert.UserInfoKey.provider: alert.provider.rawValue,
+        AccountSwitchAlert.UserInfoKey.accountID: alert.accountID,
+      ]
+    }
+    try await center.add(UNNotificationRequest(identifier: alert.requestID, content: content, trigger: nil))
+  }
+
   nonisolated static func calendarTrigger(at date: Date) -> UNNotificationTrigger {
     let components = Calendar.current.dateComponents(
       [.calendar, .timeZone, .year, .month, .day, .hour, .minute, .second],
@@ -127,6 +144,17 @@ final class SystemQuotaNotificationCenter: QuotaNotificationCenterTransport {
 
   func configureForegroundPresentation() {
     center.delegate = foregroundDelegate
+    let switchAction = UNNotificationAction(
+      identifier: AccountSwitchAlert.switchActionID,
+      title: L10n.string("Switch Account")
+    )
+    center.setNotificationCategories([
+      UNNotificationCategory(
+        identifier: AccountSwitchAlert.categoryID,
+        actions: [switchAction],
+        intentIdentifiers: []
+      ),
+    ])
   }
 
   private enum UserInfoKey {
@@ -142,6 +170,27 @@ private final class QuotaNotificationForegroundDelegate: NSObject, UNUserNotific
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
     completionHandler([.banner, .sound])
+  }
+
+  /// Hands a Switch action to the store, which runs the usual switch flow.
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  ) {
+    let info = response.notification.request.content.userInfo
+    if response.actionIdentifier == AccountSwitchAlert.switchActionID,
+       let provider = info[AccountSwitchAlert.UserInfoKey.provider] as? String,
+       let accountID = info[AccountSwitchAlert.UserInfoKey.accountID] as? String {
+      let userInfo = [
+        AccountSwitchAlert.UserInfoKey.provider: provider,
+        AccountSwitchAlert.UserInfoKey.accountID: accountID,
+      ]
+      DispatchQueue.main.async {
+        NotificationCenter.default.post(name: AccountSwitchAlert.switchRequested, object: nil, userInfo: userInfo)
+      }
+    }
+    completionHandler()
   }
 }
 
@@ -238,6 +287,35 @@ private extension ProviderStatusAlert {
       L10n.string("\(title). Usage may fail or look stale until it's resolved.")
     case let .resolved(_, title):
       L10n.string("\(title) is resolved.")
+    }
+  }
+}
+
+extension AccountSwitchAlert {
+  enum UserInfoKey {
+    static let provider = "quotari.accountSwitch.provider"
+    static let accountID = "quotari.accountSwitch.accountID"
+  }
+}
+
+private extension AccountSwitchAlert {
+  var notificationTitle: String {
+    switch content {
+    case .suggestion(.session, _):
+      L10n.string("\(provider.notificationName) session quota is nearly out")
+    case .suggestion(.weekly, _):
+      L10n.string("\(provider.notificationName) weekly quota is nearly out")
+    case .failed:
+      L10n.string("Couldn't switch \(provider.notificationName) accounts")
+    }
+  }
+
+  var notificationBody: String {
+    switch content {
+    case let .suggestion(_, remaining):
+      L10n.string("\(accountName) has \(remaining)% left. Switch to keep working.")
+    case let .failed(reason):
+      reason
     }
   }
 }

@@ -294,6 +294,7 @@ final class UsageStore {
     if startsAutomatically {
       Task {
         startSessionActivityMonitor()
+        startAccountSwitchActionObserver()
         _ = await self.quotaNotifications.refreshAuthorizationStatus()
         await reloadAccounts()
         startTimer(reusesLatestAccountReloadForFirstRefresh: true)

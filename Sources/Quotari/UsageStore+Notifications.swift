@@ -59,7 +59,7 @@ extension UsageStore {
     quotaNotificationTask = Task { [weak self] in
       await previous?.value
       guard let self else { return }
-      await processQuotaNotification(
+      let result = await processQuotaNotification(
         QuotaNotificationDispatch(
           snapshot: snapshot,
           provider: provider,
@@ -70,15 +70,22 @@ extension UsageStore {
           updatesNotificationScope: updatesNotificationScope
         )
       )
+      await suggestAccountSwitch(
+        afterCriticalWindows: result?.acceptedCriticalWindows ?? [],
+        provider: provider,
+        account: account,
+        now: snapshot.updatedAt
+      )
     }
   }
 
-  private func processQuotaNotification(_ request: QuotaNotificationDispatch) async {
+  private func processQuotaNotification(_ request: QuotaNotificationDispatch) async
+    -> QuotaNotificationProcessingResult? {
     let provider = request.provider
     let revision = request.revision
     guard isProviderEnabled(provider),
           (accountRevisions[provider] ?? 0) == revision
-    else { return }
+    else { return nil }
     let resolution = await quotaNotificationAccountResolution(
       snapshot: request.snapshot,
       provider: provider,
@@ -88,8 +95,8 @@ extension UsageStore {
     )
     guard isProviderEnabled(provider),
           (accountRevisions[provider] ?? 0) == revision
-    else { return }
-    guard applyQuotaNotificationResolution(resolution, request: request) else { return }
+    else { return nil }
+    guard applyQuotaNotificationResolution(resolution, request: request) else { return nil }
 
     let logicalAccountID = resolution.logicalAccountID
     if let account = request.account, let logicalAccountID {
@@ -116,7 +123,7 @@ extension UsageStore {
       // explicit account only after its credential fetch succeeds.
       controller.addActiveLogicalAccountID(logicalAccountID, for: provider)
     }
-    _ = await controller.process(
+    return await controller.process(
       snapshot: request.snapshot,
       logicalAccountID: logicalAccountID,
       sourceKind: request.sourceKind,
