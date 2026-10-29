@@ -52,11 +52,35 @@ struct MenuBarQuotaPreferencesMigrationTests {
     let preferences = try JSONDecoder().decode(MenuBarPreferences.self, from: legacy)
 
     #expect(preferences == MenuBarPreferences(
-      showsRemainingPercent: true,
+      valueMode: .remainingQuota,
       usageSource: .provider(.codex),
       animatesMascot: false,
       quotaWindow: .automatic,
-      quotaPresentation: .remaining
+      quotaPresentation: .remaining,
+      costSource: nil
     ))
+  }
+
+  @Test func hiddenLegacyPercentageBecomesTheHiddenMode() throws {
+    let legacy = Data("""
+    { "showsRemainingPercent": false, "usageSource": { "mostConstrained": {} }, "animatesMascot": true }
+    """.utf8)
+
+    let preferences = try JSONDecoder().decode(MenuBarPreferences.self, from: legacy)
+
+    #expect(preferences.valueMode == .hidden)
+    #expect(preferences.costSource == nil)
+  }
+
+  @Test func savedPreferencesStayReadableByEarlierVersions() throws {
+    let preferences = MenuBarPreferences(valueMode: .todayCost, costSource: .claude)
+
+    let json = try #require(
+      JSONSerialization.jsonObject(with: JSONEncoder().encode(preferences)) as? [String: Any]
+    )
+
+    // Earlier versions require this key; a cost mode reads there as hidden.
+    #expect(json["showsRemainingPercent"] as? Bool == false)
+    #expect(try JSONDecoder().decode(MenuBarPreferences.self, from: JSONEncoder().encode(preferences)) == preferences)
   }
 }

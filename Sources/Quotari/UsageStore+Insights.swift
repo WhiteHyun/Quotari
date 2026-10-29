@@ -90,6 +90,9 @@ extension UsageStore {
         message: "Local insights refresh failed"
       )
     }
+    if case let .cost(cost) = MenuBarCostDisplay.resolve(usageInsightsState(for: provider), now: now) {
+      lastTodayCosts[provider] = cost
+    }
   }
 }
 

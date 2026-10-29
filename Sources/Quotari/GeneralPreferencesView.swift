@@ -49,10 +49,9 @@ struct GeneralPreferencesView: View {
         subtitle: L10n.string("Tune the compact status shown beside the Quotari mascot.")
       ) {
         VStack(spacing: 16) {
-          PreferencesToggleRow(
-            L10n.string("Show quota percentage"),
-            detail: L10n.string("Display the current quota percentage in the menu bar."),
-            isOn: $menuBarPreferences.showsRemainingPercent
+          MenuBarValueRows(
+            menuBarPreferences: menuBarPreferences,
+            enabledProviders: store.enabledProviderDescriptors
           )
           PreferencesRowDivider()
           PreferencesControlRow(

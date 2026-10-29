@@ -11,7 +11,7 @@ struct MenuBarPreferencesControllerTests {
 
     let controller = context.makeController()
 
-    #expect(!controller.preferences.showsRemainingPercent)
+    #expect(controller.preferences.valueMode == .hidden)
     #expect(controller.preferences.usageSource == .mostConstrained)
     #expect(controller.preferences.animatesMascot)
     #expect(controller.preferences.mascot == .builtIn)
@@ -22,14 +22,14 @@ struct MenuBarPreferencesControllerTests {
     defer { context.remove() }
     let controller = context.makeController()
 
-    controller.setShowsRemainingPercent(true)
+    controller.setValueMode(.remainingQuota)
     controller.setUsageSource(.provider(.claude))
     controller.setAnimatesMascot(false)
 
     let relaunched = context.makeController()
     #expect(
       relaunched.preferences == MenuBarPreferences(
-        showsRemainingPercent: true,
+        valueMode: .remainingQuota,
         usageSource: .provider(.claude),
         animatesMascot: false
       )
@@ -68,12 +68,12 @@ struct MenuBarPreferencesControllerTests {
     defer { context.remove() }
     let controller = context.makeController()
 
-    controller.showsRemainingPercent = true
+    controller.valueMode = .remainingQuota
     controller.usageSource = .provider(.codex)
     controller.animatesMascot = false
 
     let relaunched = context.makeController()
-    #expect(relaunched.showsRemainingPercent)
+    #expect(relaunched.valueMode == .remainingQuota)
     #expect(relaunched.usageSource == .provider(.codex))
     #expect(!relaunched.animatesMascot)
   }
