@@ -34,13 +34,14 @@ extension UsageStore {
     credentialTransition: UsageCostCredentialTransition?,
     now: Date
   ) -> CachedUsageInsights {
-    guard let summary = costEstimator.cachedInsights(
+    guard let fresh = costEstimator.cachedInsights(
       provider: provider,
       account: account,
       credentialTransition: credentialTransition,
       now: now,
       historyDays: 30
     ) else { return .missing }
+    let summary = dailyUsageArchive.keep(fresh)
     return summary.hasDisplayableActivity ? .loaded(summary) : .empty
   }
 

@@ -283,22 +283,26 @@ extension UsageStore {
       credentialLifecycleLogger: credentialLifecycleLogger,
       startsAutomatically: startsAutomatically
     )
-    // Tests never inspect the machine's real CLI processes.
-    store.cliActivityProbe = { _ in false }
-    store.quotaHistoryStore = QuotaHistoryStore(
-      url: FileManager.default.temporaryDirectory.appendingPathComponent("quota-history-\(UUID().uuidString).json")
-    )
-    store.sessionActivity = SessionActivityController(
+    store.isolateMachineState()
+    return store
+  }
+
+  /// Tests never inspect the machine's real CLI processes or write Quotari's
+  /// files in Application Support or Claude Code's settings.
+  private func isolateMachineState() {
+    let temporary = FileManager.default.temporaryDirectory
+    let id = UUID().uuidString
+    cliActivityProbe = { _ in false }
+    quotaHistoryStore = QuotaHistoryStore(url: temporary.appendingPathComponent("quota-history-\(id).json"))
+    sessionActivity = SessionActivityController(
       hookCommand: nil,
-      settingsFile: ClaudeCodeSettingsFile(
-        url: FileManager.default.temporaryDirectory.appendingPathComponent("claude-settings-\(UUID().uuidString).json")
-      ),
+      settingsFile: ClaudeCodeSettingsFile(url: temporary.appendingPathComponent("claude-settings-\(id).json")),
       countProbe: { _ in 0 }
     )
-    store.sharedUsageSnapshotPublisher.file = SharedUsageSnapshotFile(
-      url: FileManager.default.temporaryDirectory.appendingPathComponent("usage-snapshot-\(UUID().uuidString).json")
+    dailyUsageArchive.store = DailyUsageArchiveStore(url: temporary.appendingPathComponent("daily-usage-\(id).json"))
+    sharedUsageSnapshotPublisher.file = SharedUsageSnapshotFile(
+      url: temporary.appendingPathComponent("usage-snapshot-\(id).json")
     )
-    return store
   }
 
   /// Falling back to `.standard` here would silently restore the machine-state
