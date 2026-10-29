@@ -63,7 +63,7 @@ struct DashboardSnapshotTests {
     }
   }
 
-  private static func makeLoadedStore() async -> UsageStore {
+  static func makeLoadedStore() async -> UsageStore {
     let suiteName = "DashboardSnapshotTests.quota-markers"
     let defaults = UserDefaults(suiteName: suiteName)!
     defaults.removePersistentDomain(forName: suiteName)
@@ -185,12 +185,12 @@ struct DashboardSnapshotTests {
     )
   )
 
-  private static let appearances: [(name: String, appearance: NSAppearance)] = [
+  static let appearances: [(name: String, appearance: NSAppearance)] = [
     ("light", NSAppearance(named: .aqua)!),
     ("dark", NSAppearance(named: .darkAqua)!),
   ]
 
-  private static func outputDirectory() -> URL {
+  static func outputDirectory() -> URL {
     if let dir = ProcessInfo.processInfo.environment["QUOTARI_SNAPSHOT_DIR"], !dir.isEmpty {
       return URL(fileURLWithPath: dir, isDirectory: true)
     }

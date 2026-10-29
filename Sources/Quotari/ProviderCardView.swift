@@ -35,6 +35,7 @@ struct ProviderCardView: View {
   let providerStatus: ProviderStatusController
   @Binding var isInsightsExpanded: Bool
   var showSettings: () -> Void = {}
+  var openAnalytics: (AnalyticsContext) -> Void = { _ in }
 
   @State private var isShowingAccounts = false
   @State private var insightsPeriod = UsageInsightsPeriod.sevenDays
@@ -104,7 +105,8 @@ struct ProviderCardView: View {
         state: state,
         accent: accent,
         isExpanded: $isInsightsExpanded,
-        period: $insightsPeriod
+        period: $insightsPeriod,
+        openAnalytics: { openAnalytics(AnalyticsContext(provider: descriptor.id, period: insightsPeriod)) }
       )
     case .legacyCost:
       if let cost {
@@ -248,19 +250,8 @@ struct ProviderCardView: View {
           Text(L10n.string("Resets \(reset)")).font(.footnote).foregroundStyle(.secondary)
         }
       }
-      if window.usedPercent < 100, let pace,
-         LocalizedUsageFormatter.paceTrend(pace) != nil || pace.runsOutIn != nil {
-        HStack(spacing: 6) {
-          if let trend = LocalizedUsageFormatter.paceTrend(pace) {
-            Text(trend)
-              .font(.caption)
-              .foregroundStyle(.tertiary)
-          }
-          Spacer()
-          Text(LocalizedUsageFormatter.paceProjection(pace))
-            .font(.caption)
-            .foregroundStyle(.tertiary)
-        }
+      if window.usedPercent < 100, let pace {
+        QuotaPaceRow(pace: pace)
       }
     }
     .accessibilityElement(children: .ignore)

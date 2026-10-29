@@ -16,7 +16,8 @@ struct DashboardView: View {
     ScrollView {
       DashboardContent(
         providerStatus: store.providerStatus,
-        showSettings: showSettings
+        showSettings: showSettings,
+        openAnalytics: openAnalytics
       )
       .onGeometryChange(for: CGFloat.self) { proxy in
         proxy.size.height
@@ -44,6 +45,11 @@ struct DashboardView: View {
     menuBarPresentation.dismissDashboard()
     SettingsWindowController.shared.show(store: store)
   }
+
+  private func openAnalytics(_ context: AnalyticsContext) {
+    menuBarPresentation.dismissDashboard()
+    AnalyticsWindowController.shared.show(store: store, context: context)
+  }
 }
 
 /// The popover's content at its natural height (no scroll cap). `DashboardView`
@@ -55,13 +61,16 @@ struct DashboardContent: View {
 
   let providerStatus: ProviderStatusController
   var showSettings: () -> Void = {}
+  var openAnalytics: (AnalyticsContext) -> Void = { _ in }
 
   init(
     providerStatus: ProviderStatusController = ProviderStatusController(),
-    showSettings: @escaping () -> Void = {}
+    showSettings: @escaping () -> Void = {},
+    openAnalytics: @escaping (AnalyticsContext) -> Void = { _ in }
   ) {
     self.providerStatus = providerStatus
     self.showSettings = showSettings
+    self.openAnalytics = openAnalytics
   }
 
   var body: some View {
@@ -108,7 +117,8 @@ struct DashboardContent: View {
             error: store.errors[descriptor.id],
             providerStatus: providerStatus,
             isInsightsExpanded: insightsExpansionBinding(for: descriptor.id),
-            showSettings: showSettings
+            showSettings: showSettings,
+            openAnalytics: openAnalytics
           )
           if index < providers.count - 1 {
             Divider()

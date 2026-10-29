@@ -106,7 +106,7 @@ struct UsageInsightsPresentation: Equatable {
     period.spend.value != nil && period.pricingCoverage.availability != .unavailable
   }
 
-  private static func formattedSpend(
+  static func formattedSpend(
     _ metric: UsageMetric<Double>,
     currencyCode: String
   ) -> String {
@@ -119,7 +119,7 @@ struct UsageInsightsPresentation: Equatable {
     return prefix + LocalizedUsageFormatter.currency(value, code: currencyCode)
   }
 
-  private static func formattedTokens(_ metric: UsageMetric<Int>) -> String {
+  static func formattedTokens(_ metric: UsageMetric<Int>) -> String {
     guard let value = metric.value else { return "—" }
     let prefix = if case .partial = metric {
       "≈"

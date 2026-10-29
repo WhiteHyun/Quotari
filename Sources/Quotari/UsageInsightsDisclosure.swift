@@ -6,6 +6,7 @@ struct UsageInsightsDisclosure: View {
   let accent: Color
   @Binding var isExpanded: Bool
   @Binding var period: UsageInsightsPeriod
+  var openAnalytics: (() -> Void)?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
@@ -16,7 +17,8 @@ struct UsageInsightsDisclosure: View {
           isExpanded: $isExpanded,
           period: $period,
           isRefreshing: isRefreshing,
-          refreshFailed: refreshFailed
+          refreshFailed: refreshFailed,
+          openAnalytics: openAnalytics
         )
       } else {
         statusContent
@@ -94,6 +96,7 @@ private struct UsageInsightsSummaryView: View {
   @Binding var period: UsageInsightsPeriod
   let isRefreshing: Bool
   let refreshFailed: Bool
+  let openAnalytics: (() -> Void)?
 
   init(
     summary: UsageInsightsSummary,
@@ -101,7 +104,8 @@ private struct UsageInsightsSummaryView: View {
     isExpanded: Binding<Bool>,
     period: Binding<UsageInsightsPeriod>,
     isRefreshing: Bool,
-    refreshFailed: Bool
+    refreshFailed: Bool,
+    openAnalytics: (() -> Void)?
   ) {
     presentation = UsageInsightsPresentation(summary: summary, period: period.wrappedValue)
     self.accent = accent
@@ -109,6 +113,7 @@ private struct UsageInsightsSummaryView: View {
     _period = period
     self.isRefreshing = isRefreshing
     self.refreshFailed = refreshFailed
+    self.openAnalytics = openAnalytics
   }
 
   var body: some View {
@@ -206,6 +211,11 @@ private struct UsageInsightsSummaryView: View {
         insightGrid(presentation.insightCells)
       }
       coverage(presentation)
+      if let openAnalytics {
+        Button(L10n.string("Open Analytics…"), action: openAnalytics)
+          .buttonStyle(.link)
+          .font(.caption)
+      }
     }
   }
 

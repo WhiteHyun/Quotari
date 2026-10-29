@@ -4,6 +4,7 @@ import SwiftUI
 struct UsageInsightsChart: View {
   let presentation: UsageInsightsPresentation
   let accent: Color
+  var height: CGFloat = 96
 
   var body: some View {
     Chart {
@@ -58,7 +59,7 @@ struct UsageInsightsChart: View {
           .font(.caption2)
       }
     }
-    .frame(height: 96)
+    .frame(height: height)
     .accessibilityElement(children: .contain)
     .accessibilityLabel(L10n.string("Usage trend"))
   }
