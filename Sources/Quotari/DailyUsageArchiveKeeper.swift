@@ -28,12 +28,6 @@ extension UsageStore {
   /// Every archived day for the provider's current insights scope, ready to
   /// export.
   func usageExport(for provider: UsageProvider) -> UsageExport? {
-    guard let summary = usageInsightsState(for: provider).summary else { return nil }
-    return UsageExport(
-      provider: provider,
-      source: summary.source,
-      accountScope: summary.accountScope,
-      days: dailyUsageArchive.days(for: summary.scopeKey)
-    )
+    usageInsightsState(for: provider).summary.map(usageExport(for:))
   }
 }

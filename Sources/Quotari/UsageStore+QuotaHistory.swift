@@ -23,6 +23,11 @@ extension UsageStore {
     quotaHistory.currentCycle(for: quotaSeriesKey(provider: provider, window: window.kind), resetsAt: window.resetsAt)
   }
 
+  /// Every retained reading of the dashboard account's window, across resets.
+  func quotaHistoryObservations(for provider: UsageProvider, kind: UsageWindowKind) -> [QuotaObservation] {
+    quotaHistory.observations(for: quotaSeriesKey(provider: provider, window: kind))
+  }
+
   /// Pace from the window average, with run-out and headroom taken from the
   /// recent burn rate when history covers enough of the current cycle.
   func quotaPace(for provider: UsageProvider, window: RateWindow, now: Date) -> UsagePace? {
