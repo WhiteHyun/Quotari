@@ -18,7 +18,9 @@ struct UsageStoreMonitoringSelectionTests {
     ])
     #expect(fixture.store.isMonitoring(MonitoringFixture.work))
     #expect(fixture.store.isMonitoring(MonitoringFixture.personal))
-    #expect(await fixture.recorder.names == ["Personal", "Work"])
+    // Monitored accounts are fetched concurrently, so only which accounts
+    // were fetched (each exactly once) is stable, not their order.
+    #expect(await fixture.recorder.names.sorted() == ["Personal", "Work"])
   }
 
   @Test func legacyEmptySelectionMigratesToEveryDiscoveredAccount() async throws {
@@ -36,7 +38,9 @@ struct UsageStoreMonitoringSelectionTests {
       MonitoringFixture.personal,
       MonitoringFixture.work,
     ])
-    #expect(await fixture.recorder.names == ["Personal", "Work"])
+    // Monitored accounts are fetched concurrently, so only which accounts
+    // were fetched (each exactly once) is stable, not their order.
+    #expect(await fixture.recorder.names.sorted() == ["Personal", "Work"])
   }
 
   @Test func firstScanMonitorsEveryAccountAndPersistsManagedIdentity() async throws {
