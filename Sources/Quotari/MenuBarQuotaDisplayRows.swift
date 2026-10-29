@@ -30,6 +30,6 @@ struct MenuBarQuotaDisplayRows: View {
       .labelsHidden()
       .frame(width: 190, alignment: .trailing)
     }
-    .disabled(!menuBarPreferences.showsRemainingPercent)
+    .disabled(menuBarPreferences.valueMode != .remainingQuota)
   }
 }

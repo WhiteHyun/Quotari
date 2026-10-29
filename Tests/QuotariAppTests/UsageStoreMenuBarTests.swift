@@ -48,7 +48,7 @@ struct UsageStoreMenuBarTests {
       .codex: snapshot(provider: .codex, primary: 95, secondary: 80),
     ]
     context.store.menuBarPreferences.setUsageSource(.provider(.claude))
-    context.store.menuBarPreferences.setShowsRemainingPercent(true)
+    context.store.menuBarPreferences.setValueMode(.remainingQuota)
 
     #expect(context.store.menuBarUsedPercent == nil)
     #expect(context.store.menuBarRemainingPercent == nil)
@@ -65,7 +65,7 @@ struct UsageStoreMenuBarTests {
       .claude: snapshot(provider: .claude),
     ]
     context.store.menuBarPreferences.setUsageSource(.provider(.claude))
-    context.store.menuBarPreferences.setShowsRemainingPercent(true)
+    context.store.menuBarPreferences.setValueMode(.remainingQuota)
 
     #expect(context.store.menuBarUsedPercent == nil)
     #expect(context.store.menuBarRemainingPercent == nil)
@@ -83,10 +83,10 @@ struct UsageStoreMenuBarTests {
 
     #expect(context.store.menuBarQuotaText == nil)
 
-    context.store.menuBarPreferences.setShowsRemainingPercent(true)
+    context.store.menuBarPreferences.setValueMode(.remainingQuota)
     #expect(context.store.menuBarQuotaText == "27%")
 
-    context.store.menuBarPreferences.setShowsRemainingPercent(false)
+    context.store.menuBarPreferences.setValueMode(.hidden)
     #expect(context.store.menuBarQuotaText == nil)
   }
 
@@ -109,7 +109,7 @@ struct UsageStoreMenuBarTests {
         updatedAt: Date(timeIntervalSince1970: 1_800_000_000)
       ),
     ]
-    context.store.menuBarPreferences.setShowsRemainingPercent(true)
+    context.store.menuBarPreferences.setValueMode(.remainingQuota)
 
     #expect(context.store.menuBarUsedPercent == 64)
     #expect(context.store.menuBarQuotaText == "36%")
@@ -138,7 +138,7 @@ struct UsageStoreMenuBarTests {
     context.store.snapshots = [
       .codex: snapshot(provider: .codex, primary: 22, secondary: 76),
     ]
-    context.store.menuBarPreferences.setShowsRemainingPercent(true)
+    context.store.menuBarPreferences.setValueMode(.remainingQuota)
     context.store.menuBarPreferences.setQuotaWindow(.session)
     context.store.menuBarPreferences.setQuotaPresentation(.used)
 
@@ -170,6 +170,52 @@ struct UsageStoreMenuBarTests {
 
     #expect(context.store.menuBarUsedPercent == nil)
     #expect(context.store.menuBarAccessibilityLabel == "Quotari, no providers enabled")
+  }
+
+  @Test func todayCostWaitsForAnExplicitSourceThenShowsItsCost() throws {
+    let context = try makeStore("today-cost")
+    defer { context.removeDefaults() }
+    context.store.usageInsightsStates[.codex] = .loaded(Self.todaySummary(spend: .available(3.84)))
+    context.store.menuBarPreferences.setValueMode(.todayCost)
+
+    #expect(context.store.menuBarValueText == nil)
+    #expect(context.store.menuBarAccessibilityLabel == "Quotari, no cost source selected")
+
+    context.store.menuBarPreferences.setCostSource(.codex)
+
+    #expect(context.store.menuBarValueText == LocalizedUsageFormatter.currency(3.84, code: "USD"))
+  }
+
+  @Test func disablingTheCostSourceKeepsThePreferenceButShowsNoValue() throws {
+    let context = try makeStore("disabled-cost-source")
+    defer { context.removeDefaults() }
+    context.store.usageInsightsStates[.codex] = .loaded(Self.todaySummary(spend: .available(3.84)))
+    context.store.menuBarPreferences.setValueMode(.todayCost)
+    context.store.menuBarPreferences.setCostSource(.codex)
+
+    context.store.setProviderEnabled(.codex, enabled: false)
+
+    #expect(context.store.menuBarPreferences.preferences.costSource == .codex)
+    #expect(context.store.menuBarValueText == nil)
+  }
+
+  private static func todaySummary(spend: UsageMetric<Double>) -> UsageInsightsSummary {
+    let today = Calendar.current.startOfDay(for: Date())
+    let tokens = UsageTokenBreakdown(
+      input: .available(1), output: .available(1), cacheRead: .available(0),
+      cacheWrite: .available(0), total: .available(2)
+    )
+    return UsageInsightsSummary(
+      scopeKey: UsageInsightsScopeKey(provider: .codex, accountScopeID: "test"),
+      generatedAt: Date(),
+      source: .localCodexLogs,
+      accountScope: .exact,
+      sourceDescription: "Estimated from local Codex logs",
+      daily: [DailyUsageInsight(
+        date: today, spend: spend, tokens: tokens, sessionCount: .available(1), models: [],
+        pricingCoverage: CostEstimateCoverage(pricedTokens: 2, unpricedTokens: 0)
+      )]
+    )
   }
 
   @Test func disablingTheSelectedProviderResetsToMostConstrained() throws {

@@ -26,12 +26,35 @@ extension UsageStore {
   }
 
   var menuBarQuotaText: String? {
-    guard menuBarPreferences.preferences.showsRemainingPercent,
+    guard menuBarPreferences.preferences.valueMode == .remainingQuota,
           let usedPercent = menuBarUsedPercent
     else { return nil }
     return MenuBarQuotaDisplay.text(
       usedPercent: usedPercent,
       presentation: menuBarPreferences.preferences.quotaPresentation
+    )
+  }
+
+  /// The value beside the mascot for the chosen mode, or nil for the mascot alone.
+  var menuBarValueText: String? {
+    switch menuBarPreferences.preferences.valueMode {
+    case .hidden:
+      nil
+    case .remainingQuota:
+      menuBarQuotaText
+    case .todayCost:
+      menuBarTodayCost.map { MenuBarCostDisplay.text($0) }
+    }
+  }
+
+  /// Nil until a cost source is chosen, and while that provider is disabled.
+  var menuBarTodayCost: TodayCost? {
+    guard let provider = menuBarPreferences.preferences.costSource,
+          isProviderEnabled(provider)
+    else { return nil }
+    return MenuBarCostDisplay.current(
+      MenuBarCostDisplay.resolve(usageInsightsState(for: provider), now: Date()),
+      remembered: lastTodayCosts[provider]
     )
   }
 
@@ -50,6 +73,13 @@ extension UsageStore {
   var menuBarAccessibilityLabel: String {
     guard !enabledProviderDescriptors.isEmpty else {
       return L10n.string("Quotari, no providers enabled")
+    }
+    if menuBarPreferences.preferences.valueMode == .todayCost {
+      return MenuBarCostDisplay.accessibilityLabel(
+        providerName: menuBarPreferences.preferences.costSource.map(providerDisplayName),
+        cost: menuBarTodayCost,
+        now: Date()
+      )
     }
     guard let usedPercent = menuBarUsedPercent,
           let remaining = menuBarRemainingPercent

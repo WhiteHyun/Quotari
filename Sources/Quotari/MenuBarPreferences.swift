@@ -21,33 +21,60 @@ enum MenuBarQuotaPresentation: String, Codable, CaseIterable, Hashable, Sendable
   case used
 }
 
+/// What the menu bar shows beside the mascot.
+enum MenuBarValueMode: String, Codable, CaseIterable, Hashable, Sendable {
+  case hidden
+  case remainingQuota
+  case todayCost
+}
+
 struct MenuBarPreferences: Codable, Equatable, Hashable, Sendable {
-  var showsRemainingPercent: Bool
+  var valueMode: MenuBarValueMode
   var usageSource: MenuBarUsageSource
   var animatesMascot: Bool
   var mascot: MenuBarMascot
   var quotaWindow: MenuBarQuotaWindow
   var quotaPresentation: MenuBarQuotaPresentation
+  /// Nil until the user picks one; today's cost never picks a provider silently.
+  var costSource: UsageProvider?
 
   init(
-    showsRemainingPercent: Bool = false,
+    valueMode: MenuBarValueMode = .hidden,
     usageSource: MenuBarUsageSource = .mostConstrained,
     animatesMascot: Bool = true,
     mascot: MenuBarMascot = .builtIn,
     quotaWindow: MenuBarQuotaWindow = .automatic,
-    quotaPresentation: MenuBarQuotaPresentation = .remaining
+    quotaPresentation: MenuBarQuotaPresentation = .remaining,
+    costSource: UsageProvider? = nil
   ) {
-    self.showsRemainingPercent = showsRemainingPercent
+    self.valueMode = valueMode
     self.usageSource = usageSource
     self.animatesMascot = animatesMascot
     self.mascot = mascot
     self.quotaWindow = quotaWindow
     self.quotaPresentation = quotaPresentation
+    self.costSource = costSource
+  }
+
+  private enum CodingKeys: String, CodingKey {
+    case valueMode
+    case showsRemainingPercent
+    case usageSource
+    case animatesMascot
+    case mascot
+    case quotaWindow
+    case quotaPresentation
+    case costSource
   }
 
   init(from decoder: any Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    showsRemainingPercent = try container.decode(Bool.self, forKey: .showsRemainingPercent)
+    if let valueMode = try container.decodeIfPresent(MenuBarValueMode.self, forKey: .valueMode) {
+      self.valueMode = valueMode
+    } else {
+      let showsRemainingPercent = try container.decode(Bool.self, forKey: .showsRemainingPercent)
+      valueMode = showsRemainingPercent ? .remainingQuota : .hidden
+    }
     usageSource = try container.decode(MenuBarUsageSource.self, forKey: .usageSource)
     animatesMascot = try container.decode(Bool.self, forKey: .animatesMascot)
     mascot = try container.decodeIfPresent(MenuBarMascot.self, forKey: .mascot) ?? .builtIn
@@ -56,6 +83,20 @@ struct MenuBarPreferences: Codable, Equatable, Hashable, Sendable {
       MenuBarQuotaPresentation.self,
       forKey: .quotaPresentation
     ) ?? .remaining
+    costSource = try container.decodeIfPresent(UsageProvider.self, forKey: .costSource)
+  }
+
+  func encode(to encoder: any Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(valueMode, forKey: .valueMode)
+    // Earlier versions require this key, so a rollback keeps the preferences.
+    try container.encode(valueMode == .remainingQuota, forKey: .showsRemainingPercent)
+    try container.encode(usageSource, forKey: .usageSource)
+    try container.encode(animatesMascot, forKey: .animatesMascot)
+    try container.encode(mascot, forKey: .mascot)
+    try container.encode(quotaWindow, forKey: .quotaWindow)
+    try container.encode(quotaPresentation, forKey: .quotaPresentation)
+    try container.encodeIfPresent(costSource, forKey: .costSource)
   }
 }
 
@@ -75,9 +116,14 @@ final class MenuBarPreferencesController {
   @ObservationIgnored private var customMascotFrames: [NSImage] = []
   @ObservationIgnored private var customMascotRestoreTask: Task<Void, Never>?
 
-  var showsRemainingPercent: Bool {
-    get { preferences.showsRemainingPercent }
-    set { setShowsRemainingPercent(newValue) }
+  var valueMode: MenuBarValueMode {
+    get { preferences.valueMode }
+    set { setValueMode(newValue) }
+  }
+
+  var costSource: UsageProvider? {
+    get { preferences.costSource }
+    set { setCostSource(newValue) }
   }
 
   var usageSource: MenuBarUsageSource {
@@ -134,9 +180,15 @@ final class MenuBarPreferencesController {
     }
   }
 
-  func setShowsRemainingPercent(_ showsRemainingPercent: Bool) {
-    guard preferences.showsRemainingPercent != showsRemainingPercent else { return }
-    preferences.showsRemainingPercent = showsRemainingPercent
+  func setValueMode(_ valueMode: MenuBarValueMode) {
+    guard preferences.valueMode != valueMode else { return }
+    preferences.valueMode = valueMode
+    persist()
+  }
+
+  func setCostSource(_ costSource: UsageProvider?) {
+    guard preferences.costSource != costSource else { return }
+    preferences.costSource = costSource
     persist()
   }
 

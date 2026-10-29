@@ -8,6 +8,8 @@ import SwiftUI
 final class UsageStore {
   var snapshots: [UsageProvider: UsageSnapshot] = [:]
   var usageInsightsStates: [UsageProvider: UsageInsightsLoadState] = [:]
+  /// Last valid today's cost per provider, kept while a same-day row can't be priced.
+  @ObservationIgnored var lastTodayCosts: [UsageProvider: TodayCost] = [:]
   var errors: [UsageProvider: String] = [:]
   var sourceLabels: [UsageProvider: String] = [:]
   var accounts: [UsageProvider: [ProviderAccount]] = [:]
