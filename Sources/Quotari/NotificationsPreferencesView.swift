@@ -32,6 +32,13 @@ struct NotificationsPreferencesView: View {
           isOn: $notifications.remindsBeforeResetCreditsExpire
         )
         .disabled(!notifications.notificationsEnabled)
+        PreferencesRowDivider()
+        PreferencesToggleRow(
+          L10n.string("Outage alerts"),
+          detail: L10n.string("Notify when a provider reports a service incident and when it's resolved."),
+          isOn: $notifications.alertsOnProviderOutages
+        )
+        .disabled(!notifications.notificationsEnabled)
       }
 
       PreferencesCard(

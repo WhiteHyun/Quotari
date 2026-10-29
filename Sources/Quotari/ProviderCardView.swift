@@ -50,6 +50,7 @@ struct ProviderCardView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       header
+      ProviderIncidentNotice(outage: providerStatus.outage(for: descriptor.id))
       if let snapshot {
         if let primary = snapshot.primary {
           windowRow(L10n.string("Session"), primary)

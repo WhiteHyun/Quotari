@@ -48,4 +48,9 @@ extension QuotaNotificationController {
     get { preferences.remindsBeforeResetCreditsExpire }
     set { setResetCreditRemindersEnabled(newValue) }
   }
+
+  var alertsOnProviderOutages: Bool {
+    get { preferences.alertsOnProviderOutages }
+    set { setAlertsOnProviderOutages(newValue) }
+  }
 }

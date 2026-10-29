@@ -67,6 +67,26 @@ struct ProviderStatusControllerTests {
     #expect(ProviderStatusPresentation(state: .majorOutage).showsIssueBadge)
   }
 
+  @Test func refreshingIntoAnIncidentReportsTheOutage() async {
+    let incident = ProviderStatusIncident(
+      id: "incident-1", name: "Elevated errors", status: "investigating", impact: "minor",
+      url: UsageProvider.codex.statusPageURL
+    )
+    let service = RecordingProviderStatusService(results: [.codex: .success(ProviderServiceStatus(
+      provider: .codex,
+      state: .degradedPerformance,
+      updatedAt: Date(timeIntervalSince1970: 1_800_000_000),
+      statusPageURL: UsageProvider.codex.statusPageURL,
+      incident: incident
+    ))])
+    let controller = ProviderStatusController(service: service)
+
+    let event = await controller.refresh(.codex)
+
+    #expect(event == .started(provider: .codex, title: "Elevated errors"))
+    #expect(controller.outage(for: .codex)?.title == "Elevated errors")
+  }
+
   private static func status(
     provider: UsageProvider,
     state: ProviderServiceState

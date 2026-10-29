@@ -1,4 +1,5 @@
 import Foundation
+import QuotariCore
 import UserNotifications
 
 enum QuotaNotificationAuthorizationStatus: Equatable, Sendable {
@@ -25,6 +26,7 @@ protocol QuotaNotificationCenterTransport: AnyObject {
   func pendingScheduledRequestIdentifiers() async -> Set<String>
   func add(_ request: QuotaNotificationRequest) async throws
   func addResetCreditReminder(_ reminder: ResetCreditReminder) async throws
+  func addProviderStatusAlert(_ alert: ProviderStatusAlert) async throws
   func removePendingRequests(withIdentifiers identifiers: [String])
   func removeRequests(withIdentifiers identifiers: [String])
   func configureForegroundPresentation()
@@ -83,6 +85,15 @@ final class SystemQuotaNotificationCenter: QuotaNotificationCenterTransport {
       trigger: reminder.deliverAt.map(Self.calendarTrigger)
     )
     try await center.add(notification)
+  }
+
+  func addProviderStatusAlert(_ alert: ProviderStatusAlert) async throws {
+    let content = UNMutableNotificationContent()
+    content.title = alert.notificationTitle
+    content.body = alert.notificationBody
+    content.sound = .default
+    content.userInfo = [UserInfoKey.kind: "providerStatus"]
+    try await center.add(UNNotificationRequest(identifier: alert.requestID, content: content, trigger: nil))
   }
 
   nonisolated static func calendarTrigger(at date: Date) -> UNNotificationTrigger {
@@ -193,6 +204,35 @@ private extension ResetCreditReminder {
 
   private var providerName: String {
     switch provider {
+    case .codex: "Codex"
+    case .claude: "Claude"
+    }
+  }
+}
+
+private extension ProviderStatusAlert {
+  var notificationTitle: String {
+    switch event {
+    case let .started(provider, _):
+      L10n.string("\(provider.notificationName) service incident")
+    case let .resolved(provider, _):
+      L10n.string("\(provider.notificationName) service restored")
+    }
+  }
+
+  var notificationBody: String {
+    switch event {
+    case let .started(_, title):
+      L10n.string("\(title). Usage may fail or look stale until it's resolved.")
+    case let .resolved(_, title):
+      L10n.string("\(title) is resolved.")
+    }
+  }
+}
+
+private extension UsageProvider {
+  var notificationName: String {
+    switch self {
     case .codex: "Codex"
     case .claude: "Claude"
     }

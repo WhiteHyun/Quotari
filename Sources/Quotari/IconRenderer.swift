@@ -35,6 +35,20 @@ enum IconRenderer {
       == resourceURL.standardizedFileURL
   }
 
+  /// The menu-bar icon with a small red dot in its top-right corner, shown
+  /// while an enabled provider reports a service incident.
+  static func withIncidentBadge(_ icon: NSImage) -> NSImage {
+    let size = icon.size
+    return NSImage(size: size, flipped: false) { rect in
+      icon.draw(in: rect)
+      let diameter = min(6, size.height / 3)
+      let badge = NSRect(x: size.width - diameter, y: size.height - diameter, width: diameter, height: diameter)
+      NSColor.systemRed.setFill()
+      NSBezierPath(ovalIn: badge).fill()
+      return true
+    }
+  }
+
   static func mascotIcon(frame: Int) -> NSImage {
     guard !frames.isEmpty else { return NSImage(size: iconSize) }
     return frames[frame % frames.count]
