@@ -25,11 +25,14 @@ extension UsageStore {
     menuBarUsedPercent.map { Int((100 - $0).rounded()) }
   }
 
-  var menuBarRemainingText: String? {
+  var menuBarQuotaText: String? {
     guard menuBarPreferences.preferences.showsRemainingPercent,
-          let remaining = menuBarRemainingPercent
+          let usedPercent = menuBarUsedPercent
     else { return nil }
-    return "\(remaining)%"
+    return MenuBarQuotaDisplay.text(
+      usedPercent: usedPercent,
+      presentation: menuBarPreferences.preferences.quotaPresentation
+    )
   }
 
   func menuBarIcon(frame: Int) -> NSImage {
@@ -58,22 +61,29 @@ extension UsageStore {
         L10n.string("Quotari, loading \(providerDisplayName(provider)) usage")
       }
     }
-    let source = switch menuBarPreferences.preferences.usageSource {
-    case .mostConstrained:
+    let preferences = menuBarPreferences.preferences
+    let showsUsed = preferences.quotaPresentation == .used
+    let quota = switch (preferences.usageSource, showsUsed) {
+    case (.mostConstrained, false):
       L10n.string("lowest remaining quota")
-    case let .provider(provider):
+    case (.mostConstrained, true):
+      L10n.string("highest used quota")
+    case let (.provider(provider), false):
       L10n.string("\(providerDisplayName(provider)) remaining quota")
+    case let (.provider(provider), true):
+      L10n.string("\(providerDisplayName(provider)) used quota")
     }
-    return L10n.string("Quotari, \(source) \(remaining) percent, \(Theme.statusWord(usedPercent))")
+    let source = switch preferences.quotaWindow {
+    case .automatic: quota
+    case .session: L10n.string("\(quota), session window")
+    case .weekly: L10n.string("\(quota), weekly window")
+    }
+    let value = showsUsed ? Int(usedPercent.rounded()) : remaining
+    return L10n.string("Quotari, \(source) \(value) percent, \(Theme.statusWord(usedPercent))")
   }
 
   private func menuBarUsedPercent(for snapshot: UsageSnapshot) -> Double? {
-    if let standardWindowPercent = [snapshot.primary?.usedPercent, snapshot.secondary?.usedPercent]
-      .compactMap(\.self)
-      .max() {
-      return standardWindowPercent
-    }
-    return snapshot.extraWindows.map(\.window.usedPercent).max()
+    MenuBarQuotaDisplay.usedPercent(in: snapshot, window: menuBarPreferences.preferences.quotaWindow)
   }
 
   private func providerDisplayName(_ provider: UsageProvider) -> String {

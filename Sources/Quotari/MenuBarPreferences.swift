@@ -8,22 +8,41 @@ enum MenuBarUsageSource: Codable, Equatable, Hashable, Sendable {
   case provider(UsageProvider)
 }
 
+/// Which quota window drives the menu-bar value.
+enum MenuBarQuotaWindow: String, Codable, CaseIterable, Hashable, Sendable {
+  /// The most constrained of the session and weekly windows.
+  case automatic
+  case session
+  case weekly
+}
+
+enum MenuBarQuotaPresentation: String, Codable, CaseIterable, Hashable, Sendable {
+  case remaining
+  case used
+}
+
 struct MenuBarPreferences: Codable, Equatable, Hashable, Sendable {
   var showsRemainingPercent: Bool
   var usageSource: MenuBarUsageSource
   var animatesMascot: Bool
   var mascot: MenuBarMascot
+  var quotaWindow: MenuBarQuotaWindow
+  var quotaPresentation: MenuBarQuotaPresentation
 
   init(
     showsRemainingPercent: Bool = false,
     usageSource: MenuBarUsageSource = .mostConstrained,
     animatesMascot: Bool = true,
-    mascot: MenuBarMascot = .builtIn
+    mascot: MenuBarMascot = .builtIn,
+    quotaWindow: MenuBarQuotaWindow = .automatic,
+    quotaPresentation: MenuBarQuotaPresentation = .remaining
   ) {
     self.showsRemainingPercent = showsRemainingPercent
     self.usageSource = usageSource
     self.animatesMascot = animatesMascot
     self.mascot = mascot
+    self.quotaWindow = quotaWindow
+    self.quotaPresentation = quotaPresentation
   }
 
   init(from decoder: any Decoder) throws {
@@ -32,6 +51,11 @@ struct MenuBarPreferences: Codable, Equatable, Hashable, Sendable {
     usageSource = try container.decode(MenuBarUsageSource.self, forKey: .usageSource)
     animatesMascot = try container.decode(Bool.self, forKey: .animatesMascot)
     mascot = try container.decodeIfPresent(MenuBarMascot.self, forKey: .mascot) ?? .builtIn
+    quotaWindow = try container.decodeIfPresent(MenuBarQuotaWindow.self, forKey: .quotaWindow) ?? .automatic
+    quotaPresentation = try container.decodeIfPresent(
+      MenuBarQuotaPresentation.self,
+      forKey: .quotaPresentation
+    ) ?? .remaining
   }
 }
 
@@ -59,6 +83,16 @@ final class MenuBarPreferencesController {
   var usageSource: MenuBarUsageSource {
     get { preferences.usageSource }
     set { setUsageSource(newValue) }
+  }
+
+  var quotaWindow: MenuBarQuotaWindow {
+    get { preferences.quotaWindow }
+    set { setQuotaWindow(newValue) }
+  }
+
+  var quotaPresentation: MenuBarQuotaPresentation {
+    get { preferences.quotaPresentation }
+    set { setQuotaPresentation(newValue) }
   }
 
   var animatesMascot: Bool {
@@ -109,6 +143,18 @@ final class MenuBarPreferencesController {
   func setUsageSource(_ usageSource: MenuBarUsageSource) {
     guard preferences.usageSource != usageSource else { return }
     preferences.usageSource = usageSource
+    persist()
+  }
+
+  func setQuotaWindow(_ quotaWindow: MenuBarQuotaWindow) {
+    guard preferences.quotaWindow != quotaWindow else { return }
+    preferences.quotaWindow = quotaWindow
+    persist()
+  }
+
+  func setQuotaPresentation(_ quotaPresentation: MenuBarQuotaPresentation) {
+    guard preferences.quotaPresentation != quotaPresentation else { return }
+    preferences.quotaPresentation = quotaPresentation
     persist()
   }
 

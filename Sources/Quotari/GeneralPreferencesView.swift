@@ -50,8 +50,8 @@ struct GeneralPreferencesView: View {
       ) {
         VStack(spacing: 16) {
           PreferencesToggleRow(
-            L10n.string("Show remaining quota"),
-            detail: L10n.string("Display the current remaining percentage in the menu bar."),
+            L10n.string("Show quota percentage"),
+            detail: L10n.string("Display the current quota percentage in the menu bar."),
             isOn: $menuBarPreferences.showsRemainingPercent
           )
           PreferencesRowDivider()
@@ -70,6 +70,8 @@ struct GeneralPreferencesView: View {
             .labelsHidden()
             .frame(width: 190, alignment: .trailing)
           }
+          PreferencesRowDivider()
+          MenuBarQuotaDisplayRows(menuBarPreferences: menuBarPreferences)
           PreferencesRowDivider()
           PreferencesToggleRow(
             L10n.string("Animate mascot"),
