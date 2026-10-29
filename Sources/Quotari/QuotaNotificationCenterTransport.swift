@@ -24,6 +24,7 @@ protocol QuotaNotificationCenterTransport: AnyObject {
   func requestAuthorization() async throws -> Bool
   func pendingScheduledRequestIdentifiers() async -> Set<String>
   func add(_ request: QuotaNotificationRequest) async throws
+  func addResetCreditReminder(_ reminder: ResetCreditReminder) async throws
   func removePendingRequests(withIdentifiers identifiers: [String])
   func removeRequests(withIdentifiers identifiers: [String])
   func configureForegroundPresentation()
@@ -67,6 +68,29 @@ final class SystemQuotaNotificationCenter: QuotaNotificationCenterTransport {
       trigger: request.notificationTrigger
     )
     try await center.add(notification)
+  }
+
+  func addResetCreditReminder(_ reminder: ResetCreditReminder) async throws {
+    let content = UNMutableNotificationContent()
+    content.title = reminder.notificationTitle
+    content.body = reminder.notificationBody
+    content.sound = .default
+    // A distinct kind keeps reminders out of the weekly-reset reconciliation.
+    content.userInfo = [UserInfoKey.kind: "resetCreditExpiring"]
+    let notification = UNNotificationRequest(
+      identifier: reminder.requestID,
+      content: content,
+      trigger: reminder.deliverAt.map(Self.calendarTrigger)
+    )
+    try await center.add(notification)
+  }
+
+  nonisolated static func calendarTrigger(at date: Date) -> UNNotificationTrigger {
+    let components = Calendar.current.dateComponents(
+      [.calendar, .timeZone, .year, .month, .day, .hour, .minute, .second],
+      from: date
+    )
+    return UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
   }
 
   func removePendingRequests(withIdentifiers identifiers: [String]) {
@@ -140,12 +164,7 @@ private extension QuotaNotificationRequest {
   }
 
   var notificationTrigger: UNNotificationTrigger? {
-    guard let deliverAt else { return nil }
-    let components = Calendar.current.dateComponents(
-      [.calendar, .timeZone, .year, .month, .day, .hour, .minute, .second],
-      from: deliverAt
-    )
-    return UNCalendarNotificationTrigger(dateMatching: components, repeats: false)
+    deliverAt.map(SystemQuotaNotificationCenter.calendarTrigger)
   }
 
   private var providerName: String {
@@ -159,6 +178,23 @@ private extension QuotaNotificationRequest {
     switch key.window {
     case .session: L10n.string("Session")
     case .weekly: L10n.string("Weekly")
+    }
+  }
+}
+
+private extension ResetCreditReminder {
+  var notificationTitle: String {
+    L10n.string("\(providerName) reset credit expiring")
+  }
+
+  var notificationBody: String {
+    L10n.string("A reset credit expires within a day. Redeem it in \(providerName) before it does.")
+  }
+
+  private var providerName: String {
+    switch provider {
+    case .codex: "Codex"
+    case .claude: "Claude"
     }
   }
 }

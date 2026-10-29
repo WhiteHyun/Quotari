@@ -63,6 +63,17 @@ public struct ExtraUsage: Codable, Equatable, Sendable {
   }
 }
 
+/// When one available rate-limit reset credit expires.
+public struct ResetCreditExpiry: Codable, Equatable, Sendable {
+  public var id: String
+  public var expiresAt: Date
+
+  public init(id: String, expiresAt: Date) {
+    self.id = id
+    self.expiresAt = expiresAt
+  }
+}
+
 /// Prepaid credits the provider reports for the account.
 public struct CreditBalance: Codable, Equatable, Sendable {
   public var balance: Double?
@@ -86,6 +97,8 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
   public var credits: CreditBalance?
   /// Rate-limit resets the user can redeem; Quotari only displays them.
   public var availableResetCredits: Int?
+  /// Expiry times of available reset credits, soonest first. Nil when unknown.
+  public var resetCreditExpiries: [ResetCreditExpiry]?
   public var updatedAt: Date
 
   public init(
@@ -99,6 +112,7 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
     extraUsage: ExtraUsage? = nil,
     credits: CreditBalance? = nil,
     availableResetCredits: Int? = nil,
+    resetCreditExpiries: [ResetCreditExpiry]? = nil,
     updatedAt: Date
   ) {
     self.provider = provider
@@ -111,6 +125,7 @@ public struct UsageSnapshot: Codable, Equatable, Sendable {
     self.extraUsage = extraUsage
     self.credits = credits
     self.availableResetCredits = availableResetCredits
+    self.resetCreditExpiries = resetCreditExpiries
     self.updatedAt = updatedAt
   }
 

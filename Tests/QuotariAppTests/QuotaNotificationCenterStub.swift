@@ -9,6 +9,7 @@ final class QuotaNotificationCenterStub: QuotaNotificationCenterTransport {
   var authorizationRequestCount = 0
   var failuresRemaining = 0
   var attemptedRequests: [QuotaNotificationRequest] = []
+  var attemptedReminders: [ResetCreditReminder] = []
   var pendingScheduledIDs: Set<String> = []
   var deliveredIDs: Set<String> = []
   var removedRequestIDs: [[String]] = []
@@ -66,6 +67,15 @@ final class QuotaNotificationCenterStub: QuotaNotificationCenterTransport {
       pendingScheduledIDs.insert(request.requestID)
     } else {
       deliveredIDs.insert(request.requestID)
+    }
+  }
+
+  func addResetCreditReminder(_ reminder: ResetCreditReminder) async throws {
+    attemptedReminders.append(reminder)
+    if reminder.deliverAt != nil {
+      pendingScheduledIDs.insert(reminder.requestID)
+    } else {
+      deliveredIDs.insert(reminder.requestID)
     }
   }
 

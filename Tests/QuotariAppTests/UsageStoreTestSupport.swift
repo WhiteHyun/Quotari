@@ -309,6 +309,8 @@ private final class UnavailableQuotaNotificationCenter: QuotaNotificationCenterT
 
   func add(_ request: QuotaNotificationRequest) async throws {}
 
+  func addResetCreditReminder(_ reminder: ResetCreditReminder) async throws {}
+
   func removePendingRequests(withIdentifiers identifiers: [String]) {}
 
   func removeRequests(withIdentifiers identifiers: [String]) {}
