@@ -124,7 +124,6 @@ struct CostSectionView: View {
         L10n.string("Saved account — local Codex cost estimate unavailable"),
       "Saved account — local Claude cost estimate unavailable":
         L10n.string("Saved account — local Claude cost estimate unavailable"),
-      "Reported usage credits": L10n.string("Reported usage credits"),
       "Reported by provider": L10n.string("Reported by provider"),
     ]
     return localizedValues[value] ?? value

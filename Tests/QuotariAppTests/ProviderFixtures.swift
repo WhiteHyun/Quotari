@@ -34,6 +34,8 @@ private struct FixtureUsageStrategy: ProviderFetchStrategy {
         account: "preview@example.com",
         primary: window(.session, used: 73, resetIn: 104 * 60, duration: 5 * 3600, now: context.now),
         secondary: window(.weekly, used: 34, resetIn: 6 * 86400, duration: 7 * 86400, now: context.now),
+        credits: CreditBalance(balance: 1250, isUnlimited: false),
+        availableResetCredits: 2,
         updatedAt: context.now
       )
     case .claude:
@@ -43,6 +45,7 @@ private struct FixtureUsageStrategy: ProviderFetchStrategy {
         account: "team@example.com",
         primary: window(.session, used: 32, resetIn: 223 * 60, duration: 5 * 3600, now: context.now),
         secondary: window(.weekly, used: 76, resetIn: 4 * 86400, duration: 7 * 86400, now: context.now),
+        extraUsage: ExtraUsage(used: 12.5, limit: 50, utilization: 25, currencyCode: "USD"),
         updatedAt: context.now
       )
     }

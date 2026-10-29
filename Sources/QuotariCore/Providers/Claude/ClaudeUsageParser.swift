@@ -34,7 +34,22 @@ public enum ClaudeUsageParser {
       secondary: mapped.secondary,
       extraWindows: mapped.extraWindows,
       cost: LiveCostSummaryParser.parse(root, now: now),
+      extraUsage: extraUsage(from: root),
       updatedAt: now
+    )
+  }
+
+  /// `extra_usage` amounts arrive in cents.
+  private static func extraUsage(from root: [String: Any]) -> ExtraUsage? {
+    guard let fields = root["extra_usage"] as? [String: Any],
+          fields["is_enabled"] as? Bool == true,
+          let usedCents = number(fields["used_credits"])
+    else { return nil }
+    return ExtraUsage(
+      used: usedCents / 100,
+      limit: number(fields["monthly_limit"]).map { $0 / 100 },
+      utilization: number(fields["utilization"]),
+      currencyCode: string(fields["currency"]) ?? "USD"
     )
   }
 

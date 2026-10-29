@@ -8,17 +8,6 @@ enum LiveCostSummaryParser {
       return summary
     }
 
-    if let extra = root["extra_usage"] as? [String: Any],
-       let usedCredits = number(extra["used_credits"]),
-       let summary = reportedSpendSummary(
-         amount: usedCredits,
-         currencyCode: string(extra["currency"]) ?? "USD",
-         now: now,
-         sourceDescription: "Reported usage credits"
-       ) {
-      return summary
-    }
-
     return nil
   }
 
