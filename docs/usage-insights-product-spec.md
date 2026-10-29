@@ -2,7 +2,7 @@
 
 Status: Proposed
 
-Last updated: 2026-07-23
+Last updated: 2026-10-29
 
 ![Usage Insights popover concept](assets/usage-insights-popover-concept.png)
 
@@ -103,6 +103,13 @@ The first release does not include:
 - additional AI providers;
 - a replacement for provider-reported live quota;
 - lifetime or yearly history.
+
+After the first release, two of these limits are lifted:
+
+- Daily aggregates are kept after their source session logs are deleted, so
+  history can extend past the logs' retention. Aggregates never include
+  prompts, responses, or paths.
+- The Analytics window can export those aggregates as CSV or JSON.
 
 Project and tool analytics may be reconsidered after the local aggregation and
 privacy model are proven.
