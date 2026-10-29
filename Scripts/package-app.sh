@@ -50,7 +50,10 @@ if (( ${#BINARY_PATHS[@]} == 1 )); then
 else
   lipo -create "${BINARY_PATHS[@]}" -output "$APP/Contents/MacOS/Quotari"
 fi
-lipo "$APP/Contents/MacOS/Quotari" -verify_arch "${ARCH_LIST[@]}"
+# Xcode 27's lipo rejects -verify_arch with more than one architecture.
+for arch in "${ARCH_LIST[@]}"; do
+  lipo "$APP/Contents/MacOS/Quotari" -verify_arch "$arch"
+done
 
 echo "▸ embedding SwiftPM resources"
 if [[ ! -d "$RESOURCE_BUNDLE" ]]; then
