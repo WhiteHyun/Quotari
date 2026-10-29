@@ -15,9 +15,9 @@ final class QuotaNotificationController {
 
   private(set) var preferences: QuotaNotificationPreferences
   private(set) var authorizationStatus: QuotaNotificationAuthorizationStatus = .notDetermined
-  private(set) var lastError: String?
+  var lastError: String?
 
-  @ObservationIgnored private let center: any QuotaNotificationCenterTransport
+  @ObservationIgnored let center: any QuotaNotificationCenterTransport
   @ObservationIgnored private let defaults: UserDefaults
   @ObservationIgnored private var policy: QuotaNotificationPolicy
   @ObservationIgnored private let resetCreditReminders: ResetCreditReminderScheduler
@@ -155,6 +155,11 @@ final class QuotaNotificationController {
     center.removePendingRequests(withIdentifiers: identifiers)
     persistLedger()
     return (identifiers + reminders).sorted()
+  }
+
+  func setAlertsOnProviderOutages(_ enabled: Bool) {
+    preferences.alertsOnProviderOutages = enabled
+    persistPreferences()
   }
 
   func setResetCreditRemindersEnabled(_ enabled: Bool) {

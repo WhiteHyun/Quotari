@@ -123,6 +123,8 @@ final class UsageNotificationCenterStub: QuotaNotificationCenterTransport {
 
   func addResetCreditReminder(_ reminder: ResetCreditReminder) async throws {}
 
+  func addProviderStatusAlert(_ alert: ProviderStatusAlert) async throws {}
+
   func removePendingRequests(withIdentifiers identifiers: [String]) {
     pendingIDs.subtract(identifiers)
   }

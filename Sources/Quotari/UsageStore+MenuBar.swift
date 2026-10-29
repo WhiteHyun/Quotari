@@ -59,7 +59,8 @@ extension UsageStore {
   }
 
   func menuBarIcon(frame: Int) -> NSImage {
-    menuBarPreferences.mascotIcon(frame: frame)
+    let icon = menuBarPreferences.mascotIcon(frame: frame)
+    return hasActiveProviderOutage ? IconRenderer.withIncidentBadge(icon) : icon
   }
 
   var menuBarMascotFrameCount: Int {
@@ -71,6 +72,11 @@ extension UsageStore {
   }
 
   var menuBarAccessibilityLabel: String {
+    let label = menuBarValueAccessibilityLabel
+    return hasActiveProviderOutage ? L10n.string("\(label), service incident") : label
+  }
+
+  private var menuBarValueAccessibilityLabel: String {
     guard !enabledProviderDescriptors.isEmpty else {
       return L10n.string("Quotari, no providers enabled")
     }

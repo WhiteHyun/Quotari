@@ -104,6 +104,7 @@ final class UsageStore {
   let providerActivation: ProviderActivationController
   let menuBarPreferences: MenuBarPreferencesController
   let quotaNotifications: QuotaNotificationController
+  let providerStatus: ProviderStatusController
   let credentialLifecycleLogger: CredentialLifecycleLogger
   let codexCredentialLoader: @Sendable (ProviderCredentialSource) -> CodexCredentials?
   let claudeCredentialLoader: @Sendable (ProviderCredentialSource) -> ClaudeCredentials?
@@ -198,6 +199,7 @@ final class UsageStore {
     providerActivation: ProviderActivationController? = nil,
     menuBarPreferences: MenuBarPreferencesController? = nil,
     quotaNotifications: QuotaNotificationController? = nil,
+    providerStatus: ProviderStatusController? = nil,
     postCredentialRefreshDelay: Duration = .seconds(30),
     postCredentialRefreshSleep: @escaping @Sendable (Duration) async throws -> Void = {
       try await Task.sleep(for: $0)
@@ -231,6 +233,7 @@ final class UsageStore {
     self.providerActivation = providerActivation ?? ProviderActivationController(defaults: defaults)
     self.menuBarPreferences = menuBarPreferences ?? MenuBarPreferencesController(defaults: defaults)
     self.quotaNotifications = quotaNotifications ?? QuotaNotificationController(defaults: defaults)
+    self.providerStatus = providerStatus ?? ProviderStatusController()
     self.postCredentialRefreshDelay = postCredentialRefreshDelay
     self.postCredentialRefreshSleep = postCredentialRefreshSleep
     (self.currentDate, self.credentialLifecycleLogger) = (currentDate, credentialLifecycleLogger)
@@ -247,11 +250,7 @@ final class UsageStore {
     // refreshInterval has no inline default: its first assignment runs the
     // @Observable-generated init accessor instead of the setter, so restoring
     // here neither rewrites defaults nor starts the timer via didSet.
-    let savedInterval = defaults.double(forKey: Self.refreshIntervalDefaultsKey)
-    let range = Self.refreshIntervalRange
-    refreshInterval = savedInterval > 0
-      ? min(max(savedInterval, range.lowerBound), range.upperBound)
-      : 60
+    refreshInterval = Self.restoredRefreshInterval(from: defaults)
     reconcileMenuBarUsageSource()
     // Seed attempts from the cache so a stable account isn't re-fetched on
     // every launch — only when its credential fingerprint changes.
@@ -261,6 +260,7 @@ final class UsageStore {
         _ = await self.quotaNotifications.refreshAuthorizationStatus()
         await reloadAccounts()
         startTimer(reusesLatestAccountReloadForFirstRefresh: true)
+        startProviderStatusMonitor()
       }
     }
   }
@@ -271,6 +271,14 @@ final class UsageStore {
 }
 
 private extension UsageStore {
+  static func restoredRefreshInterval(from defaults: UserDefaults) -> TimeInterval {
+    let savedInterval = defaults.double(forKey: refreshIntervalDefaultsKey)
+    let range = refreshIntervalRange
+    return savedInterval > 0
+      ? min(max(savedInterval, range.lowerBound), range.upperBound)
+      : 60
+  }
+
   static func restoredSelections(
     from store: ProviderAccountSelectionStore
   ) -> ([UsageProvider: ProviderAccount], Bool) {

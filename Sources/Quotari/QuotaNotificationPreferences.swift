@@ -7,19 +7,22 @@ struct QuotaNotificationPreferences: Codable, Equatable, Sendable {
   var criticalThreshold: Int
   var enabledProviders: Set<UsageProvider>
   var remindsBeforeResetCreditsExpire: Bool
+  var alertsOnProviderOutages: Bool
 
   init(
     isEnabled: Bool = false,
     warningThreshold: Int = 80,
     criticalThreshold: Int = 95,
     enabledProviders: Set<UsageProvider> = Set(UsageProvider.allCases),
-    remindsBeforeResetCreditsExpire: Bool = true
+    remindsBeforeResetCreditsExpire: Bool = true,
+    alertsOnProviderOutages: Bool = false
   ) {
     self.isEnabled = isEnabled
     self.warningThreshold = warningThreshold
     self.criticalThreshold = criticalThreshold
     self.enabledProviders = enabledProviders
     self.remindsBeforeResetCreditsExpire = remindsBeforeResetCreditsExpire
+    self.alertsOnProviderOutages = alertsOnProviderOutages
   }
 
   /// Fields added after release decode with their defaults, so preferences saved
@@ -34,5 +37,9 @@ struct QuotaNotificationPreferences: Codable, Equatable, Sendable {
       Bool.self,
       forKey: .remindsBeforeResetCreditsExpire
     ) ?? true
+    alertsOnProviderOutages = try container.decodeIfPresent(
+      Bool.self,
+      forKey: .alertsOnProviderOutages
+    ) ?? false
   }
 }

@@ -234,6 +234,7 @@ extension UsageStore {
     defaults: UserDefaults? = nil,
     menuBarPreferences: MenuBarPreferencesController? = nil,
     quotaNotifications: QuotaNotificationController? = nil,
+    providerStatus: ProviderStatusController? = nil,
     postCredentialRefreshDelay: Duration = .seconds(30),
     postCredentialRefreshSleep: @escaping @Sendable (Duration) async throws -> Void = {
       try await Task.sleep(for: $0)
@@ -274,6 +275,7 @@ extension UsageStore {
       defaults: isolatedDefaults,
       menuBarPreferences: menuBarPreferences ?? .isolatedForTesting(defaults: isolatedDefaults),
       quotaNotifications: isolatedNotifications,
+      providerStatus: providerStatus ?? ProviderStatusController(service: OfflineProviderStatusService()),
       postCredentialRefreshDelay: postCredentialRefreshDelay,
       postCredentialRefreshSleep: postCredentialRefreshSleep,
       currentDate: currentDate,
@@ -291,31 +293,6 @@ extension UsageStore {
     }
     return defaults
   }
-}
-
-@MainActor
-private final class UnavailableQuotaNotificationCenter: QuotaNotificationCenterTransport {
-  func authorizationStatus() async -> QuotaNotificationAuthorizationStatus {
-    .denied
-  }
-
-  func requestAuthorization() async throws -> Bool {
-    false
-  }
-
-  func pendingScheduledRequestIdentifiers() async -> Set<String> {
-    []
-  }
-
-  func add(_ request: QuotaNotificationRequest) async throws {}
-
-  func addResetCreditReminder(_ reminder: ResetCreditReminder) async throws {}
-
-  func removePendingRequests(withIdentifiers identifiers: [String]) {}
-
-  func removeRequests(withIdentifiers identifiers: [String]) {}
-
-  func configureForegroundPresentation() {}
 }
 
 struct EmptyCostEstimator: UsageCostEstimating {

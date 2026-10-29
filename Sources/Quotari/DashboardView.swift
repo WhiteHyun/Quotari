@@ -9,14 +9,13 @@ struct DashboardView: View {
   /// the window height must be a single measured value, not a min/max span. The
   /// window only grows to fit it on its own; the presentation controller shrinks it.
   @State private var contentHeight: CGFloat = 100
-  @State private var providerStatus = ProviderStatusController()
 
   let menuBarPresentation: MenuBarPresentationController
 
   var body: some View {
     ScrollView {
       DashboardContent(
-        providerStatus: providerStatus,
+        providerStatus: store.providerStatus,
         showSettings: showSettings
       )
       .onGeometryChange(for: CGFloat.self) { proxy in

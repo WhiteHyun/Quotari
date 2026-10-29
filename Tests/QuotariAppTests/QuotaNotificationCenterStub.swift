@@ -10,6 +10,7 @@ final class QuotaNotificationCenterStub: QuotaNotificationCenterTransport {
   var failuresRemaining = 0
   var attemptedRequests: [QuotaNotificationRequest] = []
   var attemptedReminders: [ResetCreditReminder] = []
+  var attemptedStatusAlerts: [ProviderStatusAlert] = []
   var pendingScheduledIDs: Set<String> = []
   var deliveredIDs: Set<String> = []
   var removedRequestIDs: [[String]] = []
@@ -68,6 +69,10 @@ final class QuotaNotificationCenterStub: QuotaNotificationCenterTransport {
     } else {
       deliveredIDs.insert(request.requestID)
     }
+  }
+
+  func addProviderStatusAlert(_ alert: ProviderStatusAlert) async throws {
+    attemptedStatusAlerts.append(alert)
   }
 
   func addResetCreditReminder(_ reminder: ResetCreditReminder) async throws {
