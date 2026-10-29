@@ -100,13 +100,14 @@ extension UsageStore {
       var reusesLatestAccountReload = reusesLatestAccountReloadForFirstRefresh
       while !Task.isCancelled {
         guard let self else { break }
+        let quotaBefore = quotaReadings
         beginRefresh(
           reusesLatestAccountReload: reusesLatestAccountReload,
           interaction: .background
         )
         reusesLatestAccountReload = false
         await inFlightRefresh?.value
-        let interval = refreshInterval
+        let interval = nextRefreshInterval(quotaMoved: quotaReadings != quotaBefore)
         try? await Task.sleep(for: .seconds(interval))
       }
     }
@@ -344,6 +345,7 @@ extension UsageStore {
       }
       applySuccessfulFetch(value, provider: provider, account: account)
     case let .failure(error):
+      noteFetchFailure(error)
       errors[provider] = error.localizedDescription // keep any prior snapshot
       recordAccountUsageFailure(error, provider: provider, account: account)
     }

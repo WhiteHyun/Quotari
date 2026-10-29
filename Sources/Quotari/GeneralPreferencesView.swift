@@ -41,6 +41,7 @@ struct GeneralPreferencesView: View {
           Text(L10n.string("Every \(Int(intervalMinutes)) minute(s)"))
             .font(.caption)
             .foregroundStyle(.secondary)
+          RefreshModeRow(store: store)
         }
       }
 

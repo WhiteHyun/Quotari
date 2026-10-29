@@ -257,7 +257,7 @@ extension UsageStore {
       center: UnavailableQuotaNotificationCenter(),
       defaults: isolatedDefaults
     )
-    return UsageStore(
+    let store = UsageStore(
       providers: providers,
       costEstimator: costEstimator,
       usageInsightsChangeMonitor: usageInsightsChangeMonitor,
@@ -282,6 +282,9 @@ extension UsageStore {
       credentialLifecycleLogger: credentialLifecycleLogger,
       startsAutomatically: startsAutomatically
     )
+    // Tests never inspect the machine's real CLI processes.
+    store.cliActivityProbe = { _ in false }
+    return store
   }
 
   /// Falling back to `.standard` here would silently restore the machine-state

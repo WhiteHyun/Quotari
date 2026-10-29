@@ -85,8 +85,26 @@ final class UsageStore {
     }
   }
 
+  /// Nil until first read; then the mode restored from or written to defaults.
+  private var storedRefreshMode: RefreshMode?
+  var refreshMode: RefreshMode {
+    get {
+      storedRefreshMode
+        ?? RefreshMode(rawValue: defaults.string(forKey: Self.refreshModeDefaultsKey) ?? "")
+        ?? .adaptive
+    }
+    set {
+      storedRefreshMode = newValue
+      defaults.set(newValue.rawValue, forKey: Self.refreshModeDefaultsKey)
+    }
+  }
+
+  @ObservationIgnored var wasRateLimitedSinceLastCycle = false
+  @ObservationIgnored var cliActivityProbe: @MainActor (UsageProvider) -> Bool = UsageStore.hasActiveCLISession
+
   static let localCostScanThrottle: TimeInterval = 15 * 60
   static let refreshIntervalDefaultsKey = "refreshIntervalSeconds"
+  static let refreshModeDefaultsKey = "refreshMode"
   static let refreshIntervalRange: ClosedRange<TimeInterval> = 60 ... 1800
 
   let providers: [ProviderDescriptor]
