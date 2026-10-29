@@ -1,6 +1,7 @@
 import Foundation
 @testable import Quotari
 @testable import QuotariCore
+import QuotariSharedSnapshot
 
 /// Discovery stub: returns exactly the accounts a test provides, never the
 /// credentials of the machine running the tests.
@@ -286,6 +287,9 @@ extension UsageStore {
     store.cliActivityProbe = { _ in false }
     store.quotaHistoryStore = QuotaHistoryStore(
       url: FileManager.default.temporaryDirectory.appendingPathComponent("quota-history-\(UUID().uuidString).json")
+    )
+    store.sharedUsageSnapshotPublisher.file = SharedUsageSnapshotFile(
+      url: FileManager.default.temporaryDirectory.appendingPathComponent("usage-snapshot-\(UUID().uuidString).json")
     )
     return store
   }
