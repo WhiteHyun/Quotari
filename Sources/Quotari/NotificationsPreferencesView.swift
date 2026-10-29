@@ -25,6 +25,13 @@ struct NotificationsPreferencesView: View {
             .font(.caption)
             .foregroundStyle(.red)
         }
+        PreferencesRowDivider()
+        PreferencesToggleRow(
+          L10n.string("Reset credit reminders"),
+          detail: L10n.string("Remind me a day before a Codex reset credit expires."),
+          isOn: $notifications.remindsBeforeResetCreditsExpire
+        )
+        .disabled(!notifications.notificationsEnabled)
       }
 
       PreferencesCard(

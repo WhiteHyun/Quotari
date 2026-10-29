@@ -36,6 +36,9 @@ private struct FixtureUsageStrategy: ProviderFetchStrategy {
         secondary: window(.weekly, used: 34, resetIn: 6 * 86400, duration: 7 * 86400, now: context.now),
         credits: CreditBalance(balance: 1250, isUnlimited: false),
         availableResetCredits: 2,
+        resetCreditExpiries: [
+          ResetCreditExpiry(id: "fixture-credit", expiresAt: context.now.addingTimeInterval((3 * 24 + 4) * 3600)),
+        ],
         updatedAt: context.now
       )
     case .claude:

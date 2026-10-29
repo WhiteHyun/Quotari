@@ -24,6 +24,7 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
   private let transport: any ProviderHTTPTransport
   private let loadAutomaticCredentials: @Sendable () throws -> LoadedCodexCredentials
   private let usageURL: URL
+  private let resetCreditsURL: URL
   private let refresher: (any CodexTokenRefreshing)?
   let persister: any CodexCredentialPersisting
   let capturedAccounts: CapturedAccountStore
@@ -33,6 +34,7 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
   public init(
     transport: any ProviderHTTPTransport = URLSession.shared,
     usageURL: URL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!,
+    resetCreditsURL: URL = URL(string: "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits")!,
     loadCredentials: (@Sendable () throws -> CodexCredentials)? = nil,
     environment: [String: String] = ProcessInfo.processInfo.environment,
     home: URL = FileManager.default.homeDirectoryForCurrentUser,
@@ -54,6 +56,7 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
     let fallbackSource = ProviderCredentialSource.codexAuthFile(path: storage.authFileURL.path)
     self.transport = transport
     self.usageURL = usageURL
+    self.resetCreditsURL = resetCreditsURL
     if let loadCredentials {
       loadAutomaticCredentials = {
         try LoadedCodexCredentials(credentials: loadCredentials(), source: fallbackSource)
@@ -131,6 +134,14 @@ public struct CodexUsageStrategy: ProviderFetchStrategy {
     }
     let data = try await transport.getJSON(url: usageURL, bearer: credentials.accessToken, headers: headers)
     var usage = try CodexUsageParser.parse(data, provider: context.provider, now: context.now)
+    if let available = usage.availableResetCredits {
+      // Expiry details are optional; a failure here must not fail the usage fetch.
+      usage.resetCreditExpiries = available > 0
+        ? try? await CodexResetCreditsParser.parse(
+          transport.getJSON(url: resetCreditsURL, bearer: credentials.accessToken, headers: headers)
+        )
+        : []
+    }
     if usage.account == nil {
       usage.account = credentials.email
     }

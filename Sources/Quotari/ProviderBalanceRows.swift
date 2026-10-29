@@ -31,7 +31,11 @@ struct ProviderBalanceRow: Equatable {
 /// Provider-reported balances for a card. They come from the live usage
 /// response, so they appear whether or not local Usage Insights exist.
 enum ProviderBalanceRows {
-  static func rows(for snapshot: UsageSnapshot, locale: Locale? = nil) -> [ProviderBalanceRow] {
+  static func rows(
+    for snapshot: UsageSnapshot,
+    locale: Locale? = nil,
+    now: Date = Date()
+  ) -> [ProviderBalanceRow] {
     var rows: [ProviderBalanceRow] = []
     if let extra = snapshot.extraUsage {
       rows.append(ProviderBalanceRow(
@@ -45,10 +49,26 @@ enum ProviderBalanceRows {
     if let resets = snapshot.availableResetCredits, resets > 0 {
       rows.append(ProviderBalanceRow(
         title: L10n.string("Reset credits", locale: locale),
-        value: L10n.string("\(resets) available", locale: locale)
+        value: resetCreditsValue(resets, expiries: snapshot.resetCreditExpiries, locale: locale, now: now)
       ))
     }
     return rows
+  }
+
+  private static func resetCreditsValue(
+    _ count: Int,
+    expiries: [ResetCreditExpiry]?,
+    locale: Locale?,
+    now: Date
+  ) -> String {
+    let available = L10n.string("\(count) available", locale: locale)
+    guard let soonest = expiries?.first(where: { $0.expiresAt > now }),
+          let remaining = LocalizedUsageFormatter.compactDuration(
+            soonest.expiresAt.timeIntervalSince(now),
+            locale: locale
+          )
+    else { return available }
+    return L10n.string("\(available) · first expires in \(remaining)", locale: locale)
   }
 
   private static func creditsValue(_ credits: CreditBalance, locale: Locale?) -> String? {

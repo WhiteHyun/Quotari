@@ -20,6 +20,7 @@ final class QuotaNotificationController {
   @ObservationIgnored private let center: any QuotaNotificationCenterTransport
   @ObservationIgnored private let defaults: UserDefaults
   @ObservationIgnored private var policy: QuotaNotificationPolicy
+  @ObservationIgnored private let resetCreditReminders: ResetCreditReminderScheduler
   @ObservationIgnored private var processingTail: Task<QuotaNotificationProcessingResult, Never>?
   @ObservationIgnored private var inFlightRequestIDs = Set<String>()
   @ObservationIgnored private var scheduledRequestRevision: UInt = 0
@@ -28,47 +29,6 @@ final class QuotaNotificationController {
 
   var ledger: QuotaNotificationLedger {
     policy.ledger
-  }
-
-  var authorizationMessage: String? {
-    authorizationStatus == .denied
-      ? L10n.string("Allow notifications for Quotari in System Settings to enable quota alerts.")
-      : nil
-  }
-
-  var notificationsEnabled: Bool {
-    get { preferences.isEnabled }
-    set {
-      guard newValue != preferences.isEnabled else { return }
-      Task { @MainActor [weak self] in
-        await self?.setNotificationsEnabled(newValue)
-      }
-    }
-  }
-
-  var warningThreshold: Int {
-    get { preferences.warningThreshold }
-    set {
-      _ = updateThresholds(
-        warning: newValue,
-        critical: preferences.criticalThreshold
-      )
-    }
-  }
-
-  var criticalThreshold: Int {
-    get { preferences.criticalThreshold }
-    set {
-      _ = updateThresholds(
-        warning: preferences.warningThreshold,
-        critical: newValue
-      )
-    }
-  }
-
-  subscript(providerEnabled provider: UsageProvider) -> Bool {
-    get { preferences.enabledProviders.contains(provider) }
-    set { setProvider(provider, enabled: newValue) }
   }
 
   init(
@@ -89,6 +49,7 @@ final class QuotaNotificationController {
       defaults: defaults
     ) ?? QuotaNotificationLedger()
     policy = QuotaNotificationPolicy(ledger: ledger)
+    resetCreditReminders = ResetCreditReminderScheduler(center: center, defaults: defaults)
     if preferences != loadedPreferences {
       Self.save(preferences, key: PersistenceKey.preferences, defaults: defaults)
     }
@@ -156,7 +117,7 @@ final class QuotaNotificationController {
       preferences.enabledProviders.insert(provider)
     } else {
       preferences.enabledProviders.remove(provider)
-      cancelScheduled(where: { $0.provider == provider })
+      cancelScheduled(where: { $0 == provider })
     }
     persistPreferences()
   }
@@ -187,10 +148,21 @@ final class QuotaNotificationController {
       for: provider,
       keeping: logicalAccountIDs
     )
-    guard !identifiers.isEmpty else { return [] }
+    let reminders = resetCreditReminders.cancel { reminderProvider, accountID in
+      reminderProvider == provider && !logicalAccountIDs.contains(accountID)
+    }
+    guard !identifiers.isEmpty else { return reminders }
     center.removePendingRequests(withIdentifiers: identifiers)
     persistLedger()
-    return identifiers
+    return (identifiers + reminders).sorted()
+  }
+
+  func setResetCreditRemindersEnabled(_ enabled: Bool) {
+    preferences.remindsBeforeResetCreditsExpire = enabled
+    persistPreferences()
+    if !enabled {
+      resetCreditReminders.cancel { _, _ in true }
+    }
   }
 
   @discardableResult
@@ -268,7 +240,25 @@ final class QuotaNotificationController {
       preferences: preferences,
       now: now
     )
-    return await deliver(evaluation, isCurrent: isCurrent)
+    var result = await deliver(evaluation, isCurrent: isCurrent)
+    guard isCurrent() else { return result }
+    let provider = snapshot.provider
+    let reminders = await resetCreditReminders.process(
+      snapshot: snapshot,
+      logicalAccountID: logicalAccountID,
+      now: now,
+      isEnabled: { [unowned self] in
+        preferences.remindsBeforeResetCreditsExpire && deliveryIsEnabled(for: provider)
+      },
+      isCurrent: isCurrent
+    )
+    result.acceptedRequestIDs += reminders.result.acceptedRequestIDs
+    result.failedRequestIDs += reminders.result.failedRequestIDs
+    result.cancelledRequestIDs = (result.cancelledRequestIDs + reminders.result.cancelledRequestIDs).sorted()
+    if let error = reminders.latestError, isCurrent() {
+      lastError = error
+    }
+    return result
   }
 }
 
@@ -324,13 +314,14 @@ private extension QuotaNotificationController {
 
   @discardableResult
   func cancelScheduled(
-    where shouldCancel: (QuotaNotificationWindowKey) -> Bool
+    where shouldCancel: (UsageProvider) -> Bool
   ) -> [String] {
     let identifiers = policy.ledger.windows
-      .filter { shouldCancel($0.key) }
+      .filter { shouldCancel($0.key.provider) }
       .compactMap(\.value.scheduledReset?.requestID)
       .sorted()
-    return cancel(identifiers)
+    let reminders = resetCreditReminders.cancel { provider, _ in shouldCancel(provider) }
+    return (cancel(identifiers) + reminders).sorted()
   }
 
   func cancel(_ identifiers: [String]) -> [String] {
