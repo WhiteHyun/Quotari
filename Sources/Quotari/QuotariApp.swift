@@ -99,11 +99,12 @@ private struct MenuBarMascotLabel: View {
   var body: some View {
     HStack(spacing: 2) {
       Image(nsImage: store.menuBarIcon(frame: frameIndex))
-      if let remaining = store.menuBarRemainingText {
-        Text(remaining)
+      if let quota = store.menuBarQuotaText {
+        Text(quota)
           .font(.system(size: 11, weight: .medium, design: .monospaced))
           .monospacedDigit()
-          .frame(width: 32, alignment: .trailing)
+          // Used values carry an arrow, so "↑100%" needs one more character.
+          .frame(width: showsUsedQuota ? 40 : 32, alignment: .trailing)
       }
     }
     .accessibilityElement(children: .ignore)
@@ -126,6 +127,10 @@ private struct MenuBarMascotLabel: View {
         frameIndex = (frameIndex + 1) % store.menuBarMascotFrameCount
       }
     }
+  }
+
+  private var showsUsedQuota: Bool {
+    store.menuBarPreferences.preferences.quotaPresentation == .used
   }
 
   private var animationConfiguration: AnimationConfiguration {

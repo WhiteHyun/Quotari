@@ -16,7 +16,7 @@ struct UsageStoreMenuBarTests {
     #expect(context.store.menuBarPreferences.preferences.usageSource == .mostConstrained)
     #expect(context.store.menuBarUsedPercent == 91)
     #expect(context.store.menuBarRemainingPercent == 9)
-    #expect(context.store.menuBarRemainingText == nil)
+    #expect(context.store.menuBarQuotaText == nil)
     #expect(
       context.store.menuBarAnimationInterval
         == IconRenderer.animationInterval(usedPercent: 91)
@@ -52,7 +52,7 @@ struct UsageStoreMenuBarTests {
 
     #expect(context.store.menuBarUsedPercent == nil)
     #expect(context.store.menuBarRemainingPercent == nil)
-    #expect(context.store.menuBarRemainingText == nil)
+    #expect(context.store.menuBarQuotaText == nil)
     #expect(context.store.menuBarAccessibilityLabel.localizedCaseInsensitiveContains("loading"))
     #expect(context.store.menuBarAccessibilityLabel.contains("Claude"))
   }
@@ -69,7 +69,7 @@ struct UsageStoreMenuBarTests {
 
     #expect(context.store.menuBarUsedPercent == nil)
     #expect(context.store.menuBarRemainingPercent == nil)
-    #expect(context.store.menuBarRemainingText == nil)
+    #expect(context.store.menuBarQuotaText == nil)
     #expect(context.store.menuBarAccessibilityLabel.localizedCaseInsensitiveContains("loading"))
     #expect(context.store.menuBarAccessibilityLabel.contains("Claude"))
   }
@@ -81,13 +81,13 @@ struct UsageStoreMenuBarTests {
       .codex: snapshot(provider: .codex, primary: 73, secondary: 30),
     ]
 
-    #expect(context.store.menuBarRemainingText == nil)
+    #expect(context.store.menuBarQuotaText == nil)
 
     context.store.menuBarPreferences.setShowsRemainingPercent(true)
-    #expect(context.store.menuBarRemainingText == "27%")
+    #expect(context.store.menuBarQuotaText == "27%")
 
     context.store.menuBarPreferences.setShowsRemainingPercent(false)
-    #expect(context.store.menuBarRemainingText == nil)
+    #expect(context.store.menuBarQuotaText == nil)
   }
 
   @Test func extraOnlyUsageFallsBackToTheMostConstrainedNamedWindow() throws {
@@ -112,7 +112,7 @@ struct UsageStoreMenuBarTests {
     context.store.menuBarPreferences.setShowsRemainingPercent(true)
 
     #expect(context.store.menuBarUsedPercent == 64)
-    #expect(context.store.menuBarRemainingText == "36%")
+    #expect(context.store.menuBarQuotaText == "36%")
     #expect(!context.store.menuBarAccessibilityLabel.localizedCaseInsensitiveContains("loading"))
   }
 
@@ -130,6 +130,22 @@ struct UsageStoreMenuBarTests {
     #expect(label.contains("Codex"))
     #expect(!label.contains("Claude"))
     #expect(label.contains("40 percent"))
+  }
+
+  @Test func chosenWindowAndUsedPresentationDriveTextAndAccessibility() throws {
+    let context = try makeStore("session-used")
+    defer { context.removeDefaults() }
+    context.store.snapshots = [
+      .codex: snapshot(provider: .codex, primary: 22, secondary: 76),
+    ]
+    context.store.menuBarPreferences.setShowsRemainingPercent(true)
+    context.store.menuBarPreferences.setQuotaWindow(.session)
+    context.store.menuBarPreferences.setQuotaPresentation(.used)
+
+    #expect(context.store.menuBarUsedPercent == 22)
+    #expect(context.store.menuBarQuotaText == "↑22%")
+    let label = context.store.menuBarAccessibilityLabel
+    #expect(label.contains("highest used quota, session window 22 percent"))
   }
 
   @Test func disabledProviderSnapshotsDoNotContributeToMenuBarUsage() throws {
@@ -185,7 +201,7 @@ struct UsageStoreMenuBarTests {
 
     #expect(context.store.menuBarUsedPercent == nil)
     #expect(context.store.menuBarRemainingPercent == nil)
-    #expect(context.store.menuBarRemainingText == nil)
+    #expect(context.store.menuBarQuotaText == nil)
   }
 }
 
