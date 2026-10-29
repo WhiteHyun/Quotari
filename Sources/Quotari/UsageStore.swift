@@ -108,6 +108,7 @@ final class UsageStore {
   @ObservationIgnored var quotaHistoryStore = QuotaHistoryStore()
   @ObservationIgnored let sharedUsageSnapshotPublisher = SharedUsageSnapshotPublisher()
   @ObservationIgnored var sessionActivity = SessionActivityController()
+  @ObservationIgnored let dailyUsageArchive = DailyUsageArchiveKeeper()
   private var storedPaceCountsWeekdaysOnly: Bool?
   var paceCountsWeekdaysOnly: Bool {
     get { storedPaceCountsWeekdaysOnly ?? defaults.bool(forKey: Self.paceWeekdaysDefaultsKey) }
