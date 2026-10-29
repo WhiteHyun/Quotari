@@ -30,6 +30,7 @@ Scripts/check-localizations.sh
 echo "▸ building release binary"
 ARCH_LIST=(${(z)ARCHS})
 BINARY_PATHS=()
+CLI_PATHS=()
 RESOURCE_BUNDLE=""
 for arch in "${ARCH_LIST[@]}"; do
   echo "  • $arch"
@@ -37,6 +38,7 @@ for arch in "${ARCH_LIST[@]}"; do
   swift build -c release --arch "$arch" --scratch-path "$SCRATCH_PATH"
   BIN=$(swift build -c release --arch "$arch" --scratch-path "$SCRATCH_PATH" --show-bin-path)
   BINARY_PATHS+=("$BIN/Quotari")
+  CLI_PATHS+=("$BIN/QuotariCLI")
   if [[ -z "$RESOURCE_BUNDLE" ]]; then
     RESOURCE_BUNDLE="$BIN/Quotari_Quotari.bundle"
   fi
@@ -44,15 +46,20 @@ done
 
 APP=dist/Quotari.app
 rm -rf dist
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
+# The CLI lives in Helpers: "quotari" and "Quotari" would collide in MacOS on a
+# case-insensitive volume.
 if (( ${#BINARY_PATHS[@]} == 1 )); then
   cp "${BINARY_PATHS[1]}" "$APP/Contents/MacOS/Quotari"
+  cp "${CLI_PATHS[1]}" "$APP/Contents/Helpers/quotari"
 else
   lipo -create "${BINARY_PATHS[@]}" -output "$APP/Contents/MacOS/Quotari"
+  lipo -create "${CLI_PATHS[@]}" -output "$APP/Contents/Helpers/quotari"
 fi
 # Xcode 27's lipo rejects -verify_arch with more than one architecture.
 for arch in "${ARCH_LIST[@]}"; do
   lipo "$APP/Contents/MacOS/Quotari" -verify_arch "$arch"
+  lipo "$APP/Contents/Helpers/quotari" -verify_arch "$arch"
 done
 
 echo "▸ embedding SwiftPM resources"
@@ -129,6 +136,8 @@ codesign --force --sign "$IDENTITY" "${SIGN_OPTIONS[@]}" --preserve-metadata=ent
 codesign --force --sign "$IDENTITY" "${SIGN_OPTIONS[@]}" "$SPARKLE_VERSION/Autoupdate"
 codesign --force --sign "$IDENTITY" "${SIGN_OPTIONS[@]}" "$SPARKLE_VERSION/Updater.app"
 codesign --force --sign "$IDENTITY" "${SIGN_OPTIONS[@]}" "$SPARKLE_FRAMEWORK"
+codesign --force --sign "$IDENTITY" "${SIGN_OPTIONS[@]}" --identifier "${BUNDLE_ID}.cli" \
+  "$APP/Contents/Helpers/quotari"
 codesign --force --sign "$IDENTITY" "${SIGN_OPTIONS[@]}" "$APP"
 codesign --verify --deep --strict "$APP"
 
@@ -142,6 +151,7 @@ codesign --verify --deep --strict "$VERIFY_APP"
 "$VERIFY_APP/Contents/MacOS/Quotari" --verify-packaged-settings
 "$VERIFY_APP/Contents/MacOS/Quotari" -AppleLanguages '(ko)' --verify-korean-localization
 "$VERIFY_APP/Contents/MacOS/Quotari" -AppleLanguages '(ko)' --verify-packaged-settings
+"$VERIFY_APP/Contents/Helpers/quotari" --help >/dev/null
 rm -rf "$VERIFY_ROOT"
 trap - EXIT
 

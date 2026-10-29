@@ -36,6 +36,43 @@ remaining quota, reset times, and estimated local API cost at a glance.
 - Integrates Sparkle update checks in packaged builds that include feed
   configuration; source and test builds keep update checks disabled.
 
+## Command line
+
+The app writes its latest live readings to
+`~/Library/Application Support/Quotari/UsageSnapshot.json`, a versioned JSON
+file without tokens or account emails. The `quotari` command reads that file:
+
+```sh
+quotari                              # each provider's quota windows and resets
+quotari statusline                   # Claude 5h 58% · 7d 82% left | Codex 5h 90% · 7d 67% left
+quotari statusline --provider claude # one provider
+quotari --json                       # the snapshot as JSON
+```
+
+The Homebrew cask puts `quotari` on your `PATH`. With a direct download, run it
+from `/Applications/Quotari.app/Contents/Helpers/quotari`.
+
+The command never reads credentials or calls a provider. It shows what the app
+last fetched and marks readings older than an hour with their age, so keep
+Quotari running for current numbers.
+
+### Claude Code statusline
+
+Quotari never edits Claude Code's settings for this. To show quota in Claude
+Code's statusline, add the command to `~/.claude/settings.json`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "quotari statusline --provider claude"
+  }
+}
+```
+
+If you already use a statusline script, print `quotari statusline` from it
+instead.
+
 ## Run
 
 Quotari requires macOS 14 or later and Swift 6.2.
@@ -127,6 +164,8 @@ Sources/
 │   ├── ModelPricingCatalog.swift        # bundled model prices
 │   ├── RemoteModelPricingCatalogStore.swift # cached remote price updates
 │   └── Usage*.swift                     # provider identity, snapshots, pace, formatting
+├── QuotariSharedSnapshot/               # usage snapshot file shared with other tools
+├── QuotariCLI/                          # read-only `quotari` command
 └── Quotari/                              # SwiftUI menu-bar application
     ├── QuotariApp.swift                  # MenuBarExtra entry point
     ├── UsageStore*.swift                 # refresh, account, cost, provider, and alert state
@@ -142,7 +181,8 @@ Sources/
 
 `QuotariCore` is a library target so provider, account, usage, and cost logic
 remain independent of the macOS UI. `Quotari` owns app lifecycle, presentation,
-preferences, and user notifications.
+preferences, and user notifications. `QuotariCLI` depends only on
+`QuotariSharedSnapshot`, so the command links no provider or credential code.
 
 ## Adding a provider
 

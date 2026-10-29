@@ -6,7 +6,10 @@ import SwiftUI
 @MainActor
 @Observable
 final class UsageStore {
-  var snapshots: [UsageProvider: UsageSnapshot] = [:]
+  var snapshots: [UsageProvider: UsageSnapshot] = [:] {
+    didSet { publishSharedUsageSnapshot() }
+  }
+
   var usageInsightsStates: [UsageProvider: UsageInsightsLoadState] = [:]
   /// Last valid today's cost per provider, kept while a same-day row can't be priced.
   @ObservationIgnored var lastTodayCosts: [UsageProvider: TodayCost] = [:]
@@ -103,6 +106,7 @@ final class UsageStore {
   /// Read through `quotaHistory`; nil until the first reading loads the file.
   var storedQuotaHistory: QuotaHistory?
   @ObservationIgnored var quotaHistoryStore = QuotaHistoryStore()
+  @ObservationIgnored let sharedUsageSnapshotPublisher = SharedUsageSnapshotPublisher()
   private var storedPaceCountsWeekdaysOnly: Bool?
   var paceCountsWeekdaysOnly: Bool {
     get { storedPaceCountsWeekdaysOnly ?? defaults.bool(forKey: Self.paceWeekdaysDefaultsKey) }

@@ -10,6 +10,7 @@ let package = Package(
   products: [
     .library(name: "QuotariCore", targets: ["QuotariCore"]),
     .executable(name: "Quotari", targets: ["Quotari"]),
+    .executable(name: "QuotariCLI", targets: ["QuotariCLI"]),
   ],
   dependencies: [
     .package(url: "https://github.com/orchetect/MenuBarExtraAccess", from: "1.3.1"),
@@ -30,11 +31,28 @@ let package = Package(
         .plugin(name: "SwiftLintBuildToolPlugin", package: "SwiftLintPlugins"),
       ]
     ),
+    // The usage snapshot the app shares with other tools. It has no
+    // dependencies, so the CLI links no provider or credential code.
+    .target(
+      name: "QuotariSharedSnapshot",
+      plugins: [
+        .plugin(name: "SwiftLintBuildToolPlugin", package: "SwiftLintPlugins"),
+      ]
+    ),
+    // The read-only `quotari` command, packaged as Contents/Helpers/quotari.
+    .executableTarget(
+      name: "QuotariCLI",
+      dependencies: ["QuotariSharedSnapshot"],
+      plugins: [
+        .plugin(name: "SwiftLintBuildToolPlugin", package: "SwiftLintPlugins"),
+      ]
+    ),
     // The menu-bar app (SwiftUI MenuBarExtra + a hand-rendered CG icon).
     .executableTarget(
       name: "Quotari",
       dependencies: [
         "QuotariCore",
+        "QuotariSharedSnapshot",
         .product(name: "KeyboardShortcuts", package: "KeyboardShortcuts"),
         .product(name: "MenuBarExtraAccess", package: "MenuBarExtraAccess"),
         .product(name: "Sparkle", package: "Sparkle"),
@@ -61,12 +79,20 @@ let package = Package(
         .plugin(name: "SwiftLintBuildToolPlugin", package: "SwiftLintPlugins"),
       ]
     ),
+    .testTarget(
+      name: "QuotariCLITests",
+      dependencies: ["QuotariCLI", "QuotariSharedSnapshot"],
+      plugins: [
+        .plugin(name: "SwiftLintBuildToolPlugin", package: "SwiftLintPlugins"),
+      ]
+    ),
     // macOS-only: renders the SwiftUI dashboard to PNGs for visual review.
     .testTarget(
       name: "QuotariAppTests",
       dependencies: [
         "Quotari",
         "QuotariCore",
+        "QuotariSharedSnapshot",
         .product(name: "CustomDump", package: "swift-custom-dump"),
       ],
       plugins: [
