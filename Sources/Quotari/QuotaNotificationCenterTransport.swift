@@ -1,5 +1,6 @@
 import Foundation
 import QuotariCore
+import QuotariSharedSnapshot
 import UserNotifications
 
 enum QuotaNotificationAuthorizationStatus: Equatable, Sendable {
@@ -27,6 +28,7 @@ protocol QuotaNotificationCenterTransport: AnyObject {
   func add(_ request: QuotaNotificationRequest) async throws
   func addResetCreditReminder(_ reminder: ResetCreditReminder) async throws
   func addProviderStatusAlert(_ alert: ProviderStatusAlert) async throws
+  func addSessionActivityAlert(_ alert: SessionActivityAlert) async throws
   func removePendingRequests(withIdentifiers identifiers: [String])
   func removeRequests(withIdentifiers identifiers: [String])
   func configureForegroundPresentation()
@@ -93,6 +95,16 @@ final class SystemQuotaNotificationCenter: QuotaNotificationCenterTransport {
     content.body = alert.notificationBody
     content.sound = .default
     content.userInfo = [UserInfoKey.kind: "providerStatus"]
+    try await center.add(UNNotificationRequest(identifier: alert.requestID, content: content, trigger: nil))
+  }
+
+  func addSessionActivityAlert(_ alert: SessionActivityAlert) async throws {
+    let content = UNMutableNotificationContent()
+    content.title = alert.notificationTitle
+    content.body = alert.notificationBody
+    content.sound = .default
+    content.threadIdentifier = alert.requestID
+    content.userInfo = [UserInfoKey.kind: "sessionActivity"]
     try await center.add(UNNotificationRequest(identifier: alert.requestID, content: content, trigger: nil))
   }
 
@@ -227,6 +239,20 @@ private extension ProviderStatusAlert {
     case let .resolved(_, title):
       L10n.string("\(title) is resolved.")
     }
+  }
+}
+
+private extension SessionActivityAlert {
+  var notificationTitle: String {
+    switch event.kind {
+    case .needsInput: L10n.string("Claude Code needs your input")
+    case .finished: L10n.string("Claude Code finished")
+    }
+  }
+
+  var notificationBody: String {
+    guard let project = event.project else { return L10n.string("A session is waiting for you.") }
+    return L10n.string("Session in \(project)")
   }
 }
 

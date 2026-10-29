@@ -288,6 +288,13 @@ extension UsageStore {
     store.quotaHistoryStore = QuotaHistoryStore(
       url: FileManager.default.temporaryDirectory.appendingPathComponent("quota-history-\(UUID().uuidString).json")
     )
+    store.sessionActivity = SessionActivityController(
+      hookCommand: nil,
+      settingsFile: ClaudeCodeSettingsFile(
+        url: FileManager.default.temporaryDirectory.appendingPathComponent("claude-settings-\(UUID().uuidString).json")
+      ),
+      countProbe: { _ in 0 }
+    )
     store.sharedUsageSnapshotPublisher.file = SharedUsageSnapshotFile(
       url: FileManager.default.temporaryDirectory.appendingPathComponent("usage-snapshot-\(UUID().uuidString).json")
     )

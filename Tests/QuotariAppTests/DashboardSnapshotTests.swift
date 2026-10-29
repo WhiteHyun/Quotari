@@ -92,6 +92,12 @@ struct DashboardSnapshotTests {
       loadedStore.usageInsightsState(for: $0.id).summary != nil
     })
     seedQuotaHistory(loadedStore)
+    loadedStore.sessionActivity = SessionActivityController(
+      hookCommand: nil,
+      settingsFile: ClaudeCodeSettingsFile(url: URL(fileURLWithPath: "/dev/null")),
+      countProbe: { $0 == .claude ? 2 : 0 }
+    )
+    await loadedStore.sessionActivity.refreshRunningCounts(for: [.claude, .codex])
     return loadedStore
   }
 

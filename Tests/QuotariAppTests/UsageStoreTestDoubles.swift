@@ -29,6 +29,8 @@ final class UnavailableQuotaNotificationCenter: QuotaNotificationCenterTransport
 
   func addProviderStatusAlert(_ alert: ProviderStatusAlert) async throws {}
 
+  func addSessionActivityAlert(_ alert: SessionActivityAlert) async throws {}
+
   func removePendingRequests(withIdentifiers identifiers: [String]) {}
 
   func removeRequests(withIdentifiers identifiers: [String]) {}
