@@ -127,6 +127,8 @@ final class UsageNotificationCenterStub: QuotaNotificationCenterTransport {
 
   func addSessionActivityAlert(_ alert: SessionActivityAlert) async throws {}
 
+  func addAccountSwitchAlert(_ alert: AccountSwitchAlert) async throws {}
+
   func removePendingRequests(withIdentifiers identifiers: [String]) {
     pendingIDs.subtract(identifiers)
   }

@@ -6,6 +6,8 @@ struct QuotaNotificationProcessingResult: Equatable, Sendable {
   var acceptedRequestIDs: [String] = []
   var failedRequestIDs: [String] = []
   var cancelledRequestIDs: [String] = []
+  /// Windows whose critical alert was delivered in this pass.
+  var acceptedCriticalWindows: [QuotaNotificationWindow] = []
 }
 
 @MainActor
@@ -162,6 +164,11 @@ final class QuotaNotificationController {
     persistPreferences()
   }
 
+  func setSuggestsAccountSwitch(_ enabled: Bool) {
+    preferences.suggestsAccountSwitch = enabled
+    persistPreferences()
+  }
+
   func setResetCreditRemindersEnabled(_ enabled: Bool) {
     preferences.remindsBeforeResetCreditsExpire = enabled
     persistPreferences()
@@ -299,6 +306,9 @@ private extension QuotaNotificationController {
         }
         persistLedger()
         result.acceptedRequestIDs.append(request.requestID)
+        if request.kind == .critical {
+          result.acceptedCriticalWindows.append(request.key.window)
+        }
       } catch {
         guard isCurrent() else { break }
         latestError = error.localizedDescription

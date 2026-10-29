@@ -53,4 +53,9 @@ extension QuotaNotificationController {
     get { preferences.alertsOnProviderOutages }
     set { setAlertsOnProviderOutages(newValue) }
   }
+
+  var suggestsAccountSwitch: Bool {
+    get { preferences.suggestsAccountSwitch }
+    set { setSuggestsAccountSwitch(newValue) }
+  }
 }

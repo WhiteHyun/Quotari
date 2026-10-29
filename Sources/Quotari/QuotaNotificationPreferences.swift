@@ -8,6 +8,9 @@ struct QuotaNotificationPreferences: Codable, Equatable, Sendable {
   var enabledProviders: Set<UsageProvider>
   var remindsBeforeResetCreditsExpire: Bool
   var alertsOnProviderOutages: Bool
+  /// Off by default: suggest a monitored saved account when the active one
+  /// reaches the critical threshold.
+  var suggestsAccountSwitch: Bool
 
   init(
     isEnabled: Bool = false,
@@ -15,7 +18,8 @@ struct QuotaNotificationPreferences: Codable, Equatable, Sendable {
     criticalThreshold: Int = 95,
     enabledProviders: Set<UsageProvider> = Set(UsageProvider.allCases),
     remindsBeforeResetCreditsExpire: Bool = true,
-    alertsOnProviderOutages: Bool = false
+    alertsOnProviderOutages: Bool = false,
+    suggestsAccountSwitch: Bool = false
   ) {
     self.isEnabled = isEnabled
     self.warningThreshold = warningThreshold
@@ -23,6 +27,7 @@ struct QuotaNotificationPreferences: Codable, Equatable, Sendable {
     self.enabledProviders = enabledProviders
     self.remindsBeforeResetCreditsExpire = remindsBeforeResetCreditsExpire
     self.alertsOnProviderOutages = alertsOnProviderOutages
+    self.suggestsAccountSwitch = suggestsAccountSwitch
   }
 
   /// Fields added after release decode with their defaults, so preferences saved
@@ -41,5 +46,6 @@ struct QuotaNotificationPreferences: Codable, Equatable, Sendable {
       Bool.self,
       forKey: .alertsOnProviderOutages
     ) ?? false
+    suggestsAccountSwitch = try container.decodeIfPresent(Bool.self, forKey: .suggestsAccountSwitch) ?? false
   }
 }

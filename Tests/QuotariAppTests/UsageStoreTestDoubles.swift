@@ -31,6 +31,8 @@ final class UnavailableQuotaNotificationCenter: QuotaNotificationCenterTransport
 
   func addSessionActivityAlert(_ alert: SessionActivityAlert) async throws {}
 
+  func addAccountSwitchAlert(_ alert: AccountSwitchAlert) async throws {}
+
   func removePendingRequests(withIdentifiers identifiers: [String]) {}
 
   func removeRequests(withIdentifiers identifiers: [String]) {}

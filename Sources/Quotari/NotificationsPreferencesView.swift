@@ -39,6 +39,18 @@ struct NotificationsPreferencesView: View {
           isOn: $notifications.alertsOnProviderOutages
         )
         .disabled(!notifications.notificationsEnabled)
+        PreferencesRowDivider()
+        PreferencesToggleRow(
+          L10n.string("Account switch suggestions"),
+          detail: L10n.string(
+            """
+            When the active CLI account hits the critical threshold, suggest a monitored saved account with room. \
+            Quotari never switches on its own.
+            """
+          ),
+          isOn: $notifications.suggestsAccountSwitch
+        )
+        .disabled(!notifications.notificationsEnabled)
       }
 
       SessionAlertsPreferencesCard(
