@@ -100,11 +100,24 @@ final class UsageStore {
   }
 
   @ObservationIgnored var wasRateLimitedSinceLastCycle = false
+  /// Read through `quotaHistory`; nil until the first reading loads the file.
+  var storedQuotaHistory: QuotaHistory?
+  @ObservationIgnored var quotaHistoryStore = QuotaHistoryStore()
+  private var storedPaceCountsWeekdaysOnly: Bool?
+  var paceCountsWeekdaysOnly: Bool {
+    get { storedPaceCountsWeekdaysOnly ?? defaults.bool(forKey: Self.paceWeekdaysDefaultsKey) }
+    set {
+      storedPaceCountsWeekdaysOnly = newValue
+      defaults.set(newValue, forKey: Self.paceWeekdaysDefaultsKey)
+    }
+  }
+
   @ObservationIgnored var cliActivityProbe: @MainActor (UsageProvider) -> Bool = UsageStore.hasActiveCLISession
 
   static let localCostScanThrottle: TimeInterval = 15 * 60
   static let refreshIntervalDefaultsKey = "refreshIntervalSeconds"
   static let refreshModeDefaultsKey = "refreshMode"
+  static let paceWeekdaysDefaultsKey = "paceCountsWeekdaysOnly"
   static let refreshIntervalRange: ClosedRange<TimeInterval> = 60 ... 1800
 
   let providers: [ProviderDescriptor]

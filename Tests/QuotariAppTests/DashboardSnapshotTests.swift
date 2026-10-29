@@ -91,7 +91,23 @@ struct DashboardSnapshotTests {
     #expect(ProviderRegistry.all.allSatisfy {
       loadedStore.usageInsightsState(for: $0.id).summary != nil
     })
+    seedQuotaHistory(loadedStore)
     return loadedStore
+  }
+
+  /// Earlier readings in each current cycle, with a 20-minute gap, so the
+  /// burndown sparkline renders.
+  private static func seedQuotaHistory(_ store: UsageStore) {
+    store.storedQuotaHistory = QuotaHistory()
+    for (provider, latest) in store.snapshots {
+      for step in [12, 11, 10, 9, 5, 4, 3, 2, 1, 0] {
+        var reading = latest
+        reading.updatedAt = latest.updatedAt.addingTimeInterval(-Double(step) * 5 * 60)
+        reading.primary?.usedPercent = max(0, (latest.primary?.usedPercent ?? 0) - Double(step) * 1.5)
+        reading.secondary?.usedPercent = max(0, (latest.secondary?.usedPercent ?? 0) - Double(step) * 0.2)
+        store.recordQuotaHistory(reading, provider: provider)
+      }
+    }
   }
 
   private static func makeStaleStore() async -> UsageStore {

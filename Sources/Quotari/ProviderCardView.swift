@@ -53,10 +53,10 @@ struct ProviderCardView: View {
       ProviderIncidentNotice(outage: providerStatus.outage(for: descriptor.id))
       if let snapshot {
         if let primary = snapshot.primary {
-          windowRow(L10n.string("Session"), primary)
+          windowRow(L10n.string("Session"), primary, tracksHistory: true)
         }
         if let secondary = snapshot.secondary {
-          windowRow(L10n.string("Weekly"), secondary)
+          windowRow(L10n.string("Weekly"), secondary, tracksHistory: true)
         }
         ForEach(snapshot.extraWindows) { named in windowRow(named.title, named.window) }
         ProviderBalanceRowsView(rows: ProviderBalanceRows.rows(for: snapshot))
@@ -219,8 +219,12 @@ struct ProviderCardView: View {
   }
 
   @ViewBuilder
-  private func windowRow(_ title: String, _ window: RateWindow) -> some View {
-    let pace = UsagePace.compute(window: window, now: Date())
+  private func windowRow(_ title: String, _ window: RateWindow, tracksHistory: Bool = false) -> some View {
+    // Only the session and weekly windows have recorded history; named extras
+    // share a window kind with them and keep the window-average pace.
+    let pace = tracksHistory
+      ? store.quotaPace(for: descriptor.id, window: window, now: Date())
+      : UsagePace.compute(window: window, now: Date())
     let thresholds = activeQuotaThresholds?.applicable(to: window.kind)
     VStack(alignment: .leading, spacing: 5) {
       Text(title).font(.subheadline)
@@ -229,6 +233,13 @@ struct ProviderCardView: View {
         thresholds: thresholds,
         accent: accent
       )
+      if tracksHistory {
+        QuotaBurndownSparkline(
+          readings: store.quotaHistoryReadings(for: descriptor.id, window: window),
+          window: window,
+          accent: accent
+        )
+      }
       HStack(spacing: 6) {
         Text(L10n.string("\(LocalizedUsageFormatter.percent(window.remainingPercent)) left"))
           .font(.footnote)

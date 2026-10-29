@@ -67,6 +67,7 @@ extension UsageStore {
       cachedCost: cachedUsage.cost,
       prefersLocalCost: needsLocalCost
     )
+    recordQuotaHistory(usage, provider: provider)
     if let cachedInsightsState = cachedUsage.insights.loadState {
       usageInsightsStates[provider] = cachedInsightsState
     }

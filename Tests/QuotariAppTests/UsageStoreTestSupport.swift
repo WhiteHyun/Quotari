@@ -284,6 +284,9 @@ extension UsageStore {
     )
     // Tests never inspect the machine's real CLI processes.
     store.cliActivityProbe = { _ in false }
+    store.quotaHistoryStore = QuotaHistoryStore(
+      url: FileManager.default.temporaryDirectory.appendingPathComponent("quota-history-\(UUID().uuidString).json")
+    )
     return store
   }
 

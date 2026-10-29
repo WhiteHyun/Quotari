@@ -24,7 +24,17 @@ public struct UsagePace: Sendable, Equatable {
   }
 
   /// Requires `resetsAt` and `duration`; returns `nil` when pace can't be derived.
-  public static func compute(window: RateWindow, now: Date) -> UsagePace? {
+  /// `recentBurnRate` (percent per wall-clock second, from quota history)
+  /// replaces the window average for run-out and headroom. Weekday-only pace
+  /// applies to weekly windows and leaves weekends out of elapsed and
+  /// remaining time.
+  public static func compute(
+    window: RateWindow,
+    now: Date,
+    recentBurnRate: Double? = nil,
+    countsWeekdaysOnly: Bool = false,
+    calendar: Calendar = .current
+  ) -> UsagePace? {
     guard let resetsAt = window.resetsAt,
           let duration = window.duration, duration > 0
     else { return nil }
@@ -32,31 +42,83 @@ public struct UsagePace: Sendable, Equatable {
     let timeUntilReset = resetsAt.timeIntervalSince(now)
     guard timeUntilReset > 0 else { return nil }
 
-    let elapsed = min(max(duration - timeUntilReset, 0), duration)
-    guard elapsed > 0 else {
+    let clock = PaceClock(weekdaysOnly: countsWeekdaysOnly && window.kind == .weekly, calendar: calendar)
+    let start = resetsAt.addingTimeInterval(-duration)
+    let total = clock.seconds(from: start, to: resetsAt)
+    let elapsed = min(max(clock.seconds(from: start, to: now), 0), total)
+    guard total > 0, elapsed > 0 else {
       return UsagePace(deltaPercent: 0, runsOutIn: nil, headroomMultiplier: nil)
     }
 
     let used = min(max(window.usedPercent, 0), 100)
-    let expected = elapsed / duration * 100
-    let delta = used - expected
-
-    let ratePerSecond = used / elapsed
+    let delta = used - elapsed / total * 100
     let remaining = 100 - used
 
-    var runsOutIn: TimeInterval?
-    var headroom: Double?
-    if ratePerSecond > 0 {
-      let eta = remaining / ratePerSecond
-      if eta < timeUntilReset {
-        runsOutIn = eta
-      }
-      let projectedRemainingUse = ratePerSecond * timeUntilReset
-      if projectedRemainingUse > 0 {
-        headroom = remaining / projectedRemainingUse
-      }
+    if let recentBurnRate {
+      return UsagePace(
+        deltaPercent: delta,
+        runsOutIn: recentBurnRate > 0 && remaining / recentBurnRate < timeUntilReset
+          ? remaining / recentBurnRate
+          : nil,
+        headroomMultiplier: recentBurnRate > 0 ? remaining / (recentBurnRate * timeUntilReset) : nil
+      )
     }
 
-    return UsagePace(deltaPercent: delta, runsOutIn: runsOutIn, headroomMultiplier: headroom)
+    let rate = used / elapsed
+    let remainingTime = clock.seconds(from: now, to: resetsAt)
+    guard rate > 0 else {
+      return UsagePace(deltaPercent: delta, runsOutIn: nil, headroomMultiplier: nil)
+    }
+    let eta = remaining / rate
+    let projectedRemainingUse = rate * remainingTime
+    return UsagePace(
+      deltaPercent: delta,
+      runsOutIn: eta < remainingTime ? clock.wallInterval(from: now, covering: eta) : nil,
+      headroomMultiplier: projectedRemainingUse > 0 ? remaining / projectedRemainingUse : nil
+    )
+  }
+}
+
+/// Measures time either on the wall clock or on weekdays only.
+private struct PaceClock {
+  let weekdaysOnly: Bool
+  let calendar: Calendar
+
+  func seconds(from start: Date, to end: Date) -> TimeInterval {
+    guard weekdaysOnly else { return end.timeIntervalSince(start) }
+    var total: TimeInterval = 0
+    var cursor = start
+    while cursor < end {
+      let next = min(nextDay(after: cursor), end)
+      if !calendar.isDateInWeekend(cursor) {
+        total += next.timeIntervalSince(cursor)
+      }
+      cursor = next
+    }
+    return total
+  }
+
+  /// The wall-clock time from `start` until `seconds` of counted time pass.
+  func wallInterval(from start: Date, covering seconds: TimeInterval) -> TimeInterval {
+    guard weekdaysOnly else { return seconds }
+    var remaining = seconds
+    var cursor = start
+    while remaining > 0 {
+      let next = nextDay(after: cursor)
+      if !calendar.isDateInWeekend(cursor) {
+        let available = next.timeIntervalSince(cursor)
+        if remaining <= available {
+          return cursor.addingTimeInterval(remaining).timeIntervalSince(start)
+        }
+        remaining -= available
+      }
+      cursor = next
+    }
+    return cursor.timeIntervalSince(start)
+  }
+
+  private func nextDay(after date: Date) -> Date {
+    let startOfDay = calendar.startOfDay(for: date)
+    return calendar.date(byAdding: .day, value: 1, to: startOfDay) ?? date.addingTimeInterval(86400)
   }
 }
