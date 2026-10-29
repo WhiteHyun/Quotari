@@ -34,8 +34,19 @@ public enum CodexUsageParser {
       secondary: mapped.secondary,
       extraWindows: mapped.extraWindows,
       cost: LiveCostSummaryParser.parse(root, now: now),
+      credits: credits(from: root),
+      availableResetCredits: (root["rate_limit_reset_credits"] as? [String: Any])
+        .flatMap { number($0["available_count"]) }
+        .map { Int($0) },
       updatedAt: now
     )
+  }
+
+  private static func credits(from root: [String: Any]) -> CreditBalance? {
+    guard let fields = root["credits"] as? [String: Any] else { return nil }
+    let isUnlimited = fields["unlimited"] as? Bool == true
+    guard isUnlimited || fields["has_credits"] as? Bool == true else { return nil }
+    return CreditBalance(balance: number(fields["balance"]), isUnlimited: isUnlimited)
   }
 
   // MARK: - Observed shape

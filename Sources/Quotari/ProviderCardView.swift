@@ -58,6 +58,7 @@ struct ProviderCardView: View {
           windowRow(L10n.string("Weekly"), secondary)
         }
         ForEach(snapshot.extraWindows) { named in windowRow(named.title, named.window) }
+        ProviderBalanceRowsView(rows: ProviderBalanceRows.rows(for: snapshot))
         usageSection(cost: snapshot.cost)
         if let error {
           ProviderStaleDataNotice(message: error, retry: retry)
