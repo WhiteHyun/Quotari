@@ -44,14 +44,16 @@ extension AccountSwitchService {
       expectedFile: installation.previous.file
     )
     try installation.checkCancellation()
-    if let replacementKeychain = installation.replacement.keychain {
+    // Never rewrite an unchanged store; it would only open a race with CLI writes.
+    if let replacementKeychain = installation.replacement.keychain,
+       replacementKeychain != installation.previous.keychain {
       try writeClaudeKeychain(
         replacementKeychain,
         replacing: installation.previous.keychain,
         service: installation.service
       )
     }
-    if let preparedFile {
+    if let preparedFile, installation.replacement.file != installation.previous.file {
       try commitClaudeFile(preparedFile, installation: installation)
     }
     try verifyAppliedClaudeSlots(installation)
@@ -115,7 +117,8 @@ extension AccountSwitchService {
     try requireCLIInactive(.claude)
     try installation.checkCancellation()
     var rollbackErrors: [String] = []
-    if let replacementFile = installation.replacement.file {
+    if let replacementFile = installation.replacement.file,
+       replacementFile != installation.previous.file {
       do {
         guard try readFile(installation.fileURL) == replacementFile,
               let preparedFileRollback
@@ -225,7 +228,7 @@ extension AccountSwitchService {
     service: String,
     checkCancellation: @Sendable () throws -> Void = {}
   ) throws {
-    guard let installed else { return }
+    guard let installed, installed != previous else { return }
     if let previous {
       try restoreClaudeKeychain(previous, replacing: installed, service: service, checkCancellation: checkCancellation)
     } else {

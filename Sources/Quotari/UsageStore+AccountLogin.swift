@@ -130,6 +130,7 @@ extension UsageStore {
         L10n.string("Account login was cancelled."),
         restorationError: restorationError
       )
+      accountLoginOutputs[provider] = nil
     } catch {
       let restorationError = await restoreClaudeAccountIfNeeded(
         preservingDashboardSelection: persistableSelections()[provider],
@@ -140,7 +141,20 @@ extension UsageStore {
         error.localizedDescription,
         restorationError: restorationError
       )
+      if !Self.loginOutputExplainsFailure(error) {
+        accountLoginOutputs[provider] = nil
+      }
     }
+  }
+
+  /// The CLI transcript (sign-in URL, "Paste code here" prompt) belongs to the
+  /// login in progress. Once it ends it is stale and misleading, except when
+  /// the CLI itself exited with a failure: its output is the only diagnostic.
+  private static func loginOutputExplainsFailure(_ error: Error) -> Bool {
+    if case .commandFailed = error as? AccountLoginError {
+      return true
+    }
+    return false
   }
 
   private func endAccountLoginCredentialGate(ifOwnedBy ownsCredentialGate: inout Bool) {

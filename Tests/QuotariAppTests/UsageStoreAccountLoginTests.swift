@@ -140,6 +140,23 @@ struct UsageStoreAccountLoginTests {
     #expect(store.accountLoginErrors[.codex]?.contains("status 1") == true)
   }
 
+  @Test func staleLoginOutputIsClearedAfterTimeout() async {
+    let login = AccountLoginService(streamingOperation: { provider, onOutput in
+      await onOutput?("If your browser did not open, visit https://example.com/device\nPaste code here if prompted >")
+      throw AccountLoginError.loginTimedOut(provider)
+    })
+    let store = UsageStore.isolatedForTesting(
+      providers: [codexDescriptor()],
+      accountLogin: login,
+      startsAutomatically: false
+    )
+
+    await store.addAccount(for: .codex)
+
+    #expect(store.accountLoginOutputs[.codex] == nil)
+    #expect(store.accountLoginErrors[.codex]?.contains("timed out") == true)
+  }
+
   @Test func unrenewableLoginIsRejected() async {
     let registry = CapturedAccountStore.inMemoryForTesting()
     let login = AccountLoginService { provider in

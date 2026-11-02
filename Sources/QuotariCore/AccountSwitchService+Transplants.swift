@@ -13,6 +13,20 @@ extension AccountSwitchService {
     return try JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])
   }
 
+  /// The bytes to install into a live Claude store. When the transplant would
+  /// leave the store's JSON unchanged (e.g. syncing the login the CLI itself
+  /// just wrote), the live bytes are kept so the install is a true no-op and
+  /// never races the CLI's own writes to the same keychain item.
+  static func claudeReplacement(saved: Data, live: Data?) throws -> Data {
+    let merged = try transplantClaude(saved: saved, intoLive: live)
+    guard let live,
+          let liveRoot = (try? JSONSerialization.jsonObject(with: live)) as? NSDictionary,
+          let mergedRoot = (try? JSONSerialization.jsonObject(with: merged)) as? NSDictionary,
+          liveRoot.isEqual(mergedRoot)
+    else { return merged }
+    return live
+  }
+
   /// Same rule for Codex: the saved `tokens` object replaces the live one,
   /// while unrelated root siblings stay — but the auth mode is forced to the
   /// ChatGPT login the tokens represent. `last_refresh` belongs to the token
