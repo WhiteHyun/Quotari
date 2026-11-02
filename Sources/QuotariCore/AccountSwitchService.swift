@@ -150,8 +150,8 @@ extension AccountSwitchService {
     let mergedKeychain: Data?
     let mergedFile: Data?
     do {
-      mergedKeychain = writeKeychain ? try Self.transplantClaude(saved: savedPayload, intoLive: keychainNow) : nil
-      mergedFile = writeFile ? try Self.transplantClaude(saved: savedPayload, intoLive: fileNow) : nil
+      mergedKeychain = writeKeychain ? try Self.claudeReplacement(saved: savedPayload, live: keychainNow) : nil
+      mergedFile = writeFile ? try Self.claudeReplacement(saved: savedPayload, live: fileNow) : nil
     } catch {
       throw AccountSwitchError.writeFailed(underlying: error.localizedDescription)
     }
