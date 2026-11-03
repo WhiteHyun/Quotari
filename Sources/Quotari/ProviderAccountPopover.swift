@@ -103,7 +103,8 @@ struct ProviderAccountPopover: View {
         isCLIActive: isCLIActive,
         isLoading: store.refreshingAccountUsageProviders.contains(descriptor.id) && usage == nil,
         isSwitching: switchCoordinator.switchingAccountID == account.id,
-        accent: accent
+        accent: accent,
+        resetTimeStyle: store.resetTimeStyle
       )
     }
     .buttonStyle(.plain)
@@ -198,6 +199,7 @@ private struct ProviderAccountUsageRow: View {
   let isLoading: Bool
   let isSwitching: Bool
   let accent: Color
+  let resetTimeStyle: ResetTimeStyle
 
   var body: some View {
     VStack(alignment: .leading, spacing: 9) {
@@ -303,8 +305,10 @@ private struct ProviderAccountUsageRow: View {
       HStack(spacing: 6) {
         Text(L10n.string("\(LocalizedUsageFormatter.percent(window.remainingPercent)) left"))
         Spacer()
-        if let reset = LocalizedUsageFormatter.resetCountdown(to: window.resetsAt) {
+        if let reset = LocalizedUsageFormatter.resetPhrase(to: window.resetsAt, style: resetTimeStyle) {
           Text(L10n.string("Resets \(reset)"))
+            .lineLimit(1)
+            .truncationMode(.tail)
         }
       }
       .font(.caption)

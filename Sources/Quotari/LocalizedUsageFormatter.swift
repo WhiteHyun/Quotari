@@ -38,6 +38,67 @@ enum LocalizedUsageFormatter {
     }
   }
 
+  /// The phrase that fills "Resets %@" in the chosen style. A reset that has
+  /// already passed reads "now" in every style.
+  static func resetPhrase(
+    to date: Date?,
+    style: ResetTimeStyle,
+    now: Date = Date(),
+    locale: Locale? = nil,
+    calendar: Calendar = .autoupdatingCurrent
+  ) -> String? {
+    guard let date else { return nil }
+    guard date > now else { return L10n.string("now", locale: locale) }
+    let countdown = resetCountdown(to: date, now: now, locale: locale)
+    switch style {
+    case .countdown:
+      return countdown
+    case .clockTime:
+      return resetClockTime(date, now: now, locale: locale, calendar: calendar)
+    case .both:
+      let clock = resetClockTime(date, now: now, locale: locale, calendar: calendar)
+      return countdown.map { "\($0) · \(clock)" } ?? clock
+    }
+  }
+
+  /// The reset's wall-clock time, coarser the further away it is: a time
+  /// today, "tomorrow" and a time, a weekday and a time within the week, then
+  /// a date.
+  static func resetClockTime(
+    _ date: Date,
+    now: Date,
+    locale: Locale? = nil,
+    calendar: Calendar = .autoupdatingCurrent
+  ) -> String {
+    let formattingLocale = locale ?? L10n.formattingLocale
+    var calendar = calendar
+    calendar.locale = formattingLocale
+    func style(_ base: Date.FormatStyle) -> Date.FormatStyle {
+      var style = base
+      style.locale = formattingLocale
+      style.calendar = calendar
+      style.timeZone = calendar.timeZone
+      return style
+    }
+    let time = date.formatted(style(Date.FormatStyle(date: .omitted, time: .shortened)))
+    let days = calendar.dateComponents(
+      [.day],
+      from: calendar.startOfDay(for: now),
+      to: calendar.startOfDay(for: date)
+    ).day ?? 0
+    switch days {
+    case ...0:
+      return time
+    case 1:
+      return L10n.string("tomorrow \(time)", locale: locale)
+    case 2 ..< 7:
+      let weekday = date.formatted(style(Date.FormatStyle().weekday(.abbreviated)))
+      return "\(weekday) \(time)"
+    default:
+      return date.formatted(style(Date.FormatStyle().month(.abbreviated).day()))
+    }
+  }
+
   static func paceTrend(
     _ pace: UsagePace,
     locale: Locale? = nil

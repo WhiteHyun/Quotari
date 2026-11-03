@@ -47,6 +47,8 @@ struct GeneralPreferencesView: View {
 
       PacePreferencesCard(store: store)
 
+      ResetTimePreferencesCard(store: store)
+
       PreferencesCard(
         L10n.string("Menu Bar"),
         subtitle: L10n.string("Tune the compact status shown beside the Quotari mascot.")

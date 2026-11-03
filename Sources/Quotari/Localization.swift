@@ -12,6 +12,14 @@ enum L10n {
     )
   }
 
+  /// The app's language with the user's region and clock preferences, so
+  /// dates and times follow the system 12/24-hour setting.
+  static var formattingLocale: Locale {
+    var components = Locale.Components(locale: .autoupdatingCurrent)
+    components.languageComponents = Locale.Language.Components(identifier: appLocale.identifier)
+    return Locale(components: components)
+  }
+
   static var supportedLanguageCodes: [String] {
     ([sourceLanguage] + IconRenderer.resourceBundle.localizations).reduce(into: []) { languages, localization in
       let language = Locale(identifier: localization).language.languageCode?.identifier ?? localization
