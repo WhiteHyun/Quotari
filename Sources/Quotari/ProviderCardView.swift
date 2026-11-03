@@ -236,10 +236,6 @@ struct ProviderCardView: View {
         thresholds: thresholds,
         accent: accent
       )
-      if tracksHistory {
-        let readings = store.quotaHistoryReadings(for: descriptor.id, window: window)
-        QuotaBurndownSparkline(readings: readings, window: window, accent: accent)
-      }
       HStack(spacing: 6) {
         Text(L10n.string("\(LocalizedUsageFormatter.percent(window.remainingPercent)) left"))
           .font(.footnote)
