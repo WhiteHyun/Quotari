@@ -102,7 +102,7 @@ struct DashboardSnapshotTests {
   }
 
   /// Earlier readings in each current cycle, with a 20-minute gap, so the
-  /// burndown sparkline renders.
+  /// pace rows forecast from the recent burn rate.
   private static func seedQuotaHistory(_ store: UsageStore) {
     store.storedQuotaHistory = QuotaHistory()
     for (provider, latest) in store.snapshots {
