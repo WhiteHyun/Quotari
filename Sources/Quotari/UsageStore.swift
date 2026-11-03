@@ -118,12 +118,15 @@ final class UsageStore {
     }
   }
 
+  /// Read through `resetTimeStyle`; nil until first read.
+  var storedResetTimeStyle: ResetTimeStyle?
   @ObservationIgnored var cliActivityProbe: @MainActor (UsageProvider) -> Bool = UsageStore.hasActiveCLISession
 
   static let localCostScanThrottle: TimeInterval = 15 * 60
   static let refreshIntervalDefaultsKey = "refreshIntervalSeconds"
   static let refreshModeDefaultsKey = "refreshMode"
   static let paceWeekdaysDefaultsKey = "paceCountsWeekdaysOnly"
+  static let resetTimeStyleDefaultsKey = "resetTimeStyle"
   static let refreshIntervalRange: ClosedRange<TimeInterval> = 60 ... 1800
 
   let providers: [ProviderDescriptor]
@@ -145,7 +148,7 @@ final class UsageStore {
   let credentialLifecycleLogger: CredentialLifecycleLogger
   let codexCredentialLoader: @Sendable (ProviderCredentialSource) -> CodexCredentials?
   let claudeCredentialLoader: @Sendable (ProviderCredentialSource) -> ClaudeCredentials?
-  private let defaults: UserDefaults
+  let defaults: UserDefaults
   var captureErrors: [UsageProvider: String] = [:]
   var captureWarnings: [UsageProvider: String] = [:]
   /// Fetched Claude account profiles keyed by `ProviderAccount.id`, used to

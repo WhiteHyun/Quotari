@@ -205,6 +205,11 @@
     "Operational" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"정상"}}}},
     "Outage alerts" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"장애 알림"}}}},
     "Output" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"출력"}}}},
+    "Dashboard" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"대시보드"}}}},
+    "Choose how quota rows show when they reset." : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"사용량 행에 초기화 시점을 표시하는 방식을 고릅니다."}}}},
+    "Countdown" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"남은 시간"}}}},
+    "Clock time" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"시각"}}}},
+    "Both" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"둘 다"}}}},
     "Pace" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"페이스"}}}},
     "Partial estimate%@" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"일부 추정%@"}}}},
     "Partial estimate" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"일부 추정"}}}},
@@ -266,6 +271,7 @@
     "Reported by provider" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"서비스에서 보고"}}}},
     "Reset credit reminders" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"리셋 크레딧 만료 알림"}}}},
     "Reset credits" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"리셋 크레딧"}}}},
+    "Reset time" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"초기화 시각"}}}},
     "Resets %@" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"%@에 초기화"}}}},
     "Restoring the previous CLI account…" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"이전 CLI 계정 복원 중…"}}}},
     "Retry" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"다시 시도"}}}},
@@ -384,6 +390,7 @@
     "normal" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"정상"}}}},
     "not account-specific" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"계정별 값 아님"}}}},
     "now" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"지금"}}}},
+    "tomorrow %@" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"내일 %@"}}}},
     "warning" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"경고"}}}}
   },
   "version" : "1.0"

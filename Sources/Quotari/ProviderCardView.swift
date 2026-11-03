@@ -246,8 +246,12 @@ struct ProviderCardView: View {
           .foregroundStyle(.secondary)
           .contentTransition(.numericText())
         Spacer()
-        if let reset = LocalizedUsageFormatter.resetCountdown(to: window.resetsAt) {
-          Text(L10n.string("Resets \(reset)")).font(.footnote).foregroundStyle(.secondary)
+        if let reset = LocalizedUsageFormatter.resetPhrase(to: window.resetsAt, style: store.resetTimeStyle) {
+          Text(L10n.string("Resets \(reset)"))
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.tail)
         }
       }
       if window.usedPercent < 100, let pace {
@@ -281,7 +285,7 @@ struct ProviderCardView: View {
       Theme.statusWord(window.usedPercent)
     }
     var value = L10n.string("\(remaining) left, \(status)")
-    if let reset = LocalizedUsageFormatter.resetCountdown(to: window.resetsAt) {
+    if let reset = LocalizedUsageFormatter.resetPhrase(to: window.resetsAt, style: store.resetTimeStyle) {
       value = L10n.string("\(value), resets \(reset)")
     }
     return value
