@@ -180,20 +180,31 @@ extension ClaudeUsageStrategy {
       diagnostic: diagnostic
     )
     await rememberPending(pending, source: resolved.source)
-    return persistenceResolution(pending, resolved: resolved, acceptedGrant: acceptedGrant)
+    return persistenceResolution(
+      pending,
+      resolved: resolved,
+      acceptedGrant: acceptedGrant,
+      // The CLI slot may stay unwritable (locked keychain, sleep) long after
+      // this process forgets the grant. Hand it to the linked saved copy so
+      // at least one durable store holds the only live pair.
+      unpersistedLiveGrant: acceptedGrant == nil && !resolved.source.isCaptured
+        && pending.rotatedRefreshToken ? pending : nil
+    )
   }
 
   private func persistenceResolution(
     _ pending: ClaudePendingGrant,
     resolved: ResolvedClaudeCredentials,
-    acceptedGrant: ClaudePendingGrant?
+    acceptedGrant: ClaudePendingGrant?,
+    unpersistedLiveGrant: ClaudePendingGrant? = nil
   ) -> ClaudeRefreshResolution {
     ClaudeRefreshResolution(
       resolved: inMemory(resolved, pending.grant),
       // The coordinator shares this accepted-generation proof with joined
       // callers so every verified saved-account link can mirror it.
       acceptedGrant: acceptedGrant,
-      rotatedFromAccessToken: pending.previousAccessToken
+      rotatedFromAccessToken: pending.previousAccessToken,
+      unpersistedLiveGrant: unpersistedLiveGrant
     )
   }
 }

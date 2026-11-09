@@ -1,5 +1,11 @@
 {
   "sourceLanguage" : "en",
+    "Confirm Remove" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"삭제 확인"}}}},
+    "Delete Quotari's saved copy of this login" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"Quotari에 저장된 이 로그인 사본을 삭제합니다"}}}},
+    "Failing since %@" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"%@부터 실패 중"}}}},
+    "Log In Again" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"다시 로그인"}}}},
+    "Sign in with this account again; Quotari updates the saved copy in place" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"이 계정으로 다시 로그인하면 Quotari가 저장된 사본을 그대로 갱신합니다"}}}},
+    "Sign-in expired" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"로그인 만료됨"}}}},
   "strings" : {
     " · pricing unavailable for %@%@" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":" · %@%@ 가격 정보 없음"}}}},
     "%@ (Unavailable)" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"%@ (사용할 수 없음)"}}}},
@@ -314,6 +320,7 @@
     "The login item could not be found. Toggling it again or reinstalling the app should restore it." : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"로그인 항목을 찾을 수 없습니다. 다시 전환하거나 앱을 재설치하면 복구됩니다."}}}},
     "The new login didn’t provide a renewable credential, so Quotari didn’t add it." : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"새 로그인에서 갱신 가능한 인증 정보를 제공하지 않아 Quotari가 계정을 추가하지 않았습니다."}}}},
     "The new renewable credential is being saved to Quotari and linked to the live CLI account." : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"새 갱신 가능 인증 정보를 Quotari에 저장하고 현재 CLI 계정에 연결하는 중입니다."}}}},
+    "The server rejected this login's refresh token, so Quotari can't renew it. Log in again, or remove it if you no longer use it." : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"서버가 이 로그인의 갱신 토큰을 거부해 Quotari가 더 이상 갱신할 수 없습니다. 다시 로그인하거나, 더 이상 쓰지 않는 계정이면 삭제하세요."}}}},
     "This account is still present in a CLI credential slot. Switch to another account or sign out before removing it." : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"이 계정은 아직 CLI 인증 슬롯에서 사용 중입니다. 삭제하기 전에 다른 계정으로 전환하거나 로그아웃하세요."}}}},
     "This removes %@ from Quotari. The provider account remains intact." : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"Quotari에서 %@ 계정만 삭제합니다. 서비스 계정 자체는 유지됩니다."}}}},
     "Thresholds" : {"localizations":{"ko":{"stringUnit":{"state":"translated","value":"기준값"}}}},

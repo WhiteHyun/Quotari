@@ -22,6 +22,7 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
   let refreshCoordinator: ClaudeTokenRefreshCoordinator
   let rateLimitGate: ClaudeUsageRateLimitGate
   let credentialLifecycleLogger: CredentialLifecycleLogger
+  let liveSuccessorSources: [ProviderCredentialSource]
 
   public init(
     transport: any ProviderHTTPTransport = URLSession.shared,
@@ -36,7 +37,8 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
     mirroredCredentialsFileURL: URL? = nil,
     refreshCoordinator: ClaudeTokenRefreshCoordinator = .shared,
     rateLimitGate: ClaudeUsageRateLimitGate = .shared,
-    credentialLifecycleLogger: CredentialLifecycleLogger = .disabled
+    credentialLifecycleLogger: CredentialLifecycleLogger = .disabled,
+    liveSuccessorSources: [ProviderCredentialSource] = ClaudeUsageStrategy.defaultLiveSuccessorSources()
   ) {
     self.transport = transport
     self.usageURL = usageURL
@@ -53,6 +55,7 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
     self.refreshCoordinator = refreshCoordinator
     self.rateLimitGate = rateLimitGate
     self.credentialLifecycleLogger = credentialLifecycleLogger
+    self.liveSuccessorSources = liveSuccessorSources
   }
 
   public func isAvailable(_ context: ProviderFetchContext) async -> Bool {
@@ -67,6 +70,11 @@ public struct ClaudeUsageStrategy: ProviderFetchStrategy {
       try recoverLinkedRegistryGrant(id: capturedRegistryID)
     }
     var resolved = try credentials(for: context)
+    if case let .quotariRegistry(id) = resolved.source,
+       resolved.credentials.isExpired(now: context.now),
+       await adoptLiveSuccessorGrant(registryID: id, stored: resolved.credentials, now: context.now) {
+      resolved = try credentials(for: context)
+    }
     credentialLifecycleLogger.observe(resolved.credentials, source: resolved.source)
     let refresh = await refreshResolutionIfExpired(
       resolved,
@@ -197,6 +205,14 @@ extension ClaudeUsageStrategy {
     guard refreshNeeded || durablePending != nil else {
       return ClaudeRefreshResolution(resolved: resolved)
     }
+    let generation = credentials.refreshToken ?? durablePending?.consumedRefreshToken ?? credentials.accessToken
+    let key = "\(resolved.source.stableID)#\(generation)"
+    if durablePending == nil, await refreshCoordinator.isRejected(key: key) {
+      // Already answered `invalid_grant`: re-submitting it every cycle only
+      // spams the token endpoint. A relogin or an external rotation changes
+      // the generation, and with it the key.
+      return ClaudeRefreshResolution(resolved: resolved, terminalError: .reauthenticationRequired)
+    }
     if durablePending != nil {
       recordLifecycle(
         .pendingGrantFound,
@@ -213,10 +229,6 @@ extension ClaudeUsageStrategy {
       hasPendingGrant: durablePending != nil,
       timestamp: now
     )
-    let generation = credentials.refreshToken
-      ?? durablePending?.consumedRefreshToken
-      ?? credentials.accessToken
-    let key = "\(resolved.source.stableID)#\(generation)"
     let resolution = await refreshCoordinator.resolve(key: key) {
       await resolveRefreshTransaction(
         resolved,
@@ -226,10 +238,24 @@ extension ClaudeUsageStrategy {
         correlationSource: correlationSource
       )
     }
-    if let capturedRegistryID, let acceptedGrant = resolution.acceptedGrant {
-      _ = mirrorAcceptedGrant(acceptedGrant, to: capturedRegistryID)
-    }
+    await settle(resolution, key: key, capturedRegistryID: capturedRegistryID)
     return resolution
+  }
+
+  /// Remembers a rejected generation and hands any issued live grant to the
+  /// linked saved copy (see `ClaudeRefreshResolution.unpersistedLiveGrant`).
+  private func settle(
+    _ resolution: ClaudeRefreshResolution,
+    key: String,
+    capturedRegistryID: String?
+  ) async {
+    if resolution.terminalError?.requiresReauthentication == true {
+      await refreshCoordinator.markRejected(key: key)
+    }
+    if let capturedRegistryID,
+       let grant = resolution.acceptedGrant ?? resolution.unpersistedLiveGrant {
+      _ = mirrorAcceptedGrant(grant, to: capturedRegistryID)
+    }
   }
 
   private func resolveRefreshTransaction(

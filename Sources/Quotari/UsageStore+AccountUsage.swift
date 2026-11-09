@@ -210,7 +210,12 @@ extension UsageStore {
     // guessing an account here would blame the wrong credentials.
     guard isProviderEnabled(provider), let account else { return }
     var usage = accountUsage[provider]?[account.id] ?? ProviderAccountUsage()
+    let failure = CredentialLifecycleEvent.Failure.classify(error)
+    if usage.failure != failure || usage.failedSince == nil {
+      usage.failedSince = currentDate()
+    }
     usage.error = error.localizedDescription
+    usage.failure = failure
     setAccountUsage(usage, for: account)
   }
 
