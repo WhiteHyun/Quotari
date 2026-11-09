@@ -139,6 +139,17 @@ jobs:
           security find-identity -v -p codesigning "$keychain_path" \
             | grep -F 'Developer ID Application: SeungHyun Hong (2ZQR76M3UH)'
 
+      # GitHub release assets (the SwiftLint and Sparkle binary targets)
+      # occasionally answer 5xx; retry resolution instead of failing the run.
+      - name: Resolve packages
+        run: |
+          for attempt in 1 2 3; do
+            swift package resolve && exit 0
+            echo "::warning::swift package resolve failed (attempt $attempt of 3)"
+            sleep $((attempt * 15))
+          done
+          exit 1
+
       - name: Build, notarize, and create draft release
         run: Scripts/release.sh "$RELEASE_VERSION" --draft
 
