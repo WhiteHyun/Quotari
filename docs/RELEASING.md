@@ -45,14 +45,15 @@ The script defaults to an `arm64 x86_64` universal build. Override `ARCHS`,
 through the environment when needed. By default, the script requires the clean
 local commit to exactly match the remote `main` commit before publishing.
 
-### Self-hosted GitHub Actions release
+### GitHub Actions release
 
-The `Release` workflow runs only when manually dispatched from `main` and
-targets the dedicated `[self-hosted, macOS, ARM64, quotari-release]` runner.
-Register that runner under a separate macOS user on the CICD Mac so it does not
-share a Keychain or process namespace with pull-request runners. Create a GitHub
-Environment named `release`, protect it with a required reviewer, and configure
-these environment secrets:
+The `Release` workflow runs only when manually dispatched from `main`, on
+GitHub-hosted runners. The `draft` job builds on the same pinned `xcode-27`
+image as CI; the `publish` job only flips an already verified draft, so it runs
+on `ubuntu-latest`. Every run gets a fresh virtual machine that is discarded
+afterwards, so release credentials never share a machine, user, or Keychain
+with pull-request jobs. Create a GitHub Environment named `release`, protect it
+with a required reviewer, and configure these environment secrets:
 
 - `DEVELOPER_ID_P12_BASE64`: base64-encoded Developer ID Application identity
 - `DEVELOPER_ID_P12_PASSWORD`: password used to export that `.p12`
@@ -68,10 +69,9 @@ these environment secrets:
 Use a Team API key for notarization. Individual App Store Connect API keys do
 not support `notarytool`.
 
-The workflow imports the Developer ID identity into an ephemeral Keychain,
+The `draft` job imports the Developer ID identity into an ephemeral Keychain,
 uses file-based Sparkle and notary credentials, and removes the temporary files
-and Keychain after every run. Do not install release credentials permanently in
-the shared runner user's login Keychain.
+and Keychain after every run, even though the virtual machine is discarded too.
 
 Create the notarized draft first:
 
@@ -89,11 +89,10 @@ gh workflow run release.yml --ref main \
   -f action=publish
 ```
 
-Because multiple repository runners currently share one physical Mac and user
-account, run privileged release jobs under a dedicated macOS user before adding
-production secrets. GitHub Environment approval protects workflow access, but
-it does not provide operating-system isolation from another process running as
-the same user.
+Both jobs wait for the `release` environment's reviewer, so approving the
+`publish` run is the final gate after testing the draft. The `xcode-27` image is
+still a GitHub preview; if it turns unstable, switch both workflows to
+`macos-26`.
 
 ## Manual release reference
 

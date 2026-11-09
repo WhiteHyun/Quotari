@@ -23,6 +23,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: Scripts/check-localizations.sh
+      # GitHub release assets (the SwiftLint and Sparkle binary targets)
+      # occasionally answer 5xx; retry resolution instead of failing the run.
+      - name: Resolve packages
+        run: |
+          for attempt in 1 2 3; do
+            swift package resolve && exit 0
+            echo "::warning::swift package resolve failed (attempt $attempt of 3)"
+            sleep $((attempt * 15))
+          done
+          exit 1
       - run: swift build
       - run: swift test --no-parallel
 
