@@ -141,7 +141,7 @@ struct ClaudeDeadSavedCopyRecoveryTests {
       account: Self.savedAccount
     )
 
-    for _ in 0..<3 {
+    for _ in 0 ..< 3 {
       await #expect(throws: ClaudeTokenRefreshError.self) {
         _ = try await strategy.fetch(context)
       }
