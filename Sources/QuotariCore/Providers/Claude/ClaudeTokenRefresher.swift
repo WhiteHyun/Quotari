@@ -273,17 +273,25 @@ public struct ClaudeRefreshResolution: Sendable {
   public var acceptedGrant: ClaudePendingGrant?
   public var terminalError: ClaudeTokenRefreshError?
   public var rotatedFromAccessToken: String?
+  /// A rotating grant the token endpoint issued for a live CLI source whose
+  /// write-back failed. It is not proof the source holds it (so it never
+  /// drives credential transitions), but the exchange already consumed the
+  /// stored refresh token: the linked saved copy must receive this grant or
+  /// it is left holding a pair the server will reject with `invalid_grant`.
+  public var unpersistedLiveGrant: ClaudePendingGrant?
 
   public init(
     resolved: ResolvedClaudeCredentials,
     acceptedGrant: ClaudePendingGrant? = nil,
     terminalError: ClaudeTokenRefreshError? = nil,
-    rotatedFromAccessToken: String? = nil
+    rotatedFromAccessToken: String? = nil,
+    unpersistedLiveGrant: ClaudePendingGrant? = nil
   ) {
     self.resolved = resolved
     self.acceptedGrant = acceptedGrant
     self.terminalError = terminalError
     self.rotatedFromAccessToken = rotatedFromAccessToken
+    self.unpersistedLiveGrant = unpersistedLiveGrant
   }
 }
 
@@ -299,6 +307,11 @@ public actor ClaudeTokenRefreshCoordinator {
   private var inFlight: [String: Task<ClaudeRefreshResolution, Never>] = [:]
   private var unpersisted: [String: ClaudePendingGrant] = [:]
   private var acceptedBySource: [String: [AcceptedLiveGeneration]] = [:]
+  /// Transaction keys (source + refresh-token generation) the token endpoint
+  /// answered with `invalid_grant`. That token can never be exchanged again,
+  /// so later fetches fail fast instead of re-submitting it every cycle; a
+  /// relogin or an external rotation changes the generation and the key.
+  private var rejectedGenerations: Set<String> = []
 
   public init() {}
 
@@ -355,6 +368,20 @@ public actor ClaudeTokenRefreshCoordinator {
     acceptedBySource[sourceID]?.last {
       $0.accessToken == accessToken && $0.refreshToken == refreshToken
     }?.pending
+  }
+
+  public func isRejected(key: String) -> Bool {
+    rejectedGenerations.contains(key)
+  }
+
+  public func markRejected(key: String) {
+    rejectedGenerations.insert(key)
+  }
+
+  /// Reads a queued grant without claiming it: the source that owns the
+  /// grant still has to retry its own write.
+  public func peekUnpersisted(sourceID: String) -> ClaudePendingGrant? {
+    unpersisted[sourceID]
   }
 
   public func rememberUnpersisted(_ pending: ClaudePendingGrant, sourceID: String) {

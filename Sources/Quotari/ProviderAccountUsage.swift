@@ -10,19 +10,34 @@ struct ProviderAccountUsage: Sendable {
   /// rotation completed.
   var credentialScopeID: String?
   var error: String?
+  /// Why the last fetch failed, so the account card can explain the state
+  /// and offer the matching action instead of only echoing `error`.
+  var failure: CredentialLifecycleEvent.Failure?
+  /// When the current run of `failure` was first observed.
+  var failedSince: Date?
 
   init(
     snapshot: UsageSnapshot? = nil,
     sourceLabel: String? = nil,
     sourceKind: ProviderFetchKind? = nil,
     credentialScopeID: String? = nil,
-    error: String? = nil
+    error: String? = nil,
+    failure: CredentialLifecycleEvent.Failure? = nil,
+    failedSince: Date? = nil
   ) {
     self.snapshot = snapshot
     self.sourceLabel = sourceLabel
     self.sourceKind = sourceKind
     self.credentialScopeID = credentialScopeID
     self.error = error
+    self.failure = failure
+    self.failedSince = failedSince
+  }
+
+  /// The saved login can no longer renew itself: only a new sign-in (or
+  /// removing the account) resolves it.
+  var requiresReauthentication: Bool {
+    failure == .reauthenticationRequired
   }
 }
 

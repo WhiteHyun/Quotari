@@ -12,6 +12,9 @@ struct ProviderAccountPopover: View {
   @State var switchCoordinator = ProviderAccountPopoverSwitchCoordinator()
   @State var confirmation: ProviderAccountPopoverConfirmation?
   @State var cliActivityInspection = CLIActivityInspectionState()
+  /// A saved account whose inline Remove was clicked once; the second click
+  /// deletes it. Removing deletes the only stored copy of that login.
+  @State var pendingRemovalID: String?
 
   init(
     descriptor: ProviderDescriptor,
@@ -92,29 +95,41 @@ struct ProviderAccountPopover: View {
     let isCLIActive = store.activeCLIAccount(for: descriptor.id)?.id == account.id
     let usage = store.accountUsage(for: account)
     let action = ProviderAccountPopoverAction(account: account, isCLIActive: isCLIActive)
-    return Button {
-      perform(action, for: account)
-    } label: {
-      ProviderAccountUsageRow(
-        account: account,
-        label: store.accountLabel(for: account),
-        usage: usage,
-        isSelected: isSelected,
-        isCLIActive: isCLIActive,
-        isLoading: store.refreshingAccountUsageProviders.contains(descriptor.id) && usage == nil,
-        isSwitching: switchCoordinator.switchingAccountID == account.id,
-        accent: accent,
-        resetTimeStyle: store.resetTimeStyle
-      )
+    let isBusy = cliActivityInspection.isRunning
+      || store.isSwitching
+      || !store.addingAccountProviders.isEmpty
+    return VStack(alignment: .leading, spacing: 0) {
+      Button {
+        perform(action, for: account)
+      } label: {
+        ProviderAccountUsageRow(
+          account: account,
+          label: store.accountLabel(for: account),
+          usage: usage,
+          isSelected: isSelected,
+          isCLIActive: isCLIActive,
+          isLoading: store.refreshingAccountUsageProviders.contains(descriptor.id) && usage == nil,
+          isSwitching: switchCoordinator.switchingAccountID == account.id,
+          accent: accent,
+          resetTimeStyle: store.resetTimeStyle
+        )
+      }
+      .buttonStyle(.plain)
+      .disabled(isBusy)
+      .accessibilityHint(action.accessibilityHint)
+      .help(action.accessibilityHint)
+      if let usage, usage.error != nil {
+        failureActions(for: account, usage: usage, disabled: isBusy)
+      }
     }
-    .buttonStyle(.plain)
-    .disabled(
-      cliActivityInspection.isRunning
-        || store.isSwitching
-        || !store.addingAccountProviders.isEmpty
+    .background(
+      isSelected ? accent.opacity(0.08) : Color.primary.opacity(0.025),
+      in: RoundedRectangle(cornerRadius: 8, style: .continuous)
     )
-    .accessibilityHint(action.accessibilityHint)
-    .help(action.accessibilityHint)
+    .overlay {
+      RoundedRectangle(cornerRadius: 8, style: .continuous)
+        .stroke(isSelected ? accent.opacity(0.75) : Color.primary.opacity(0.1))
+    }
     .contextMenu { accountMenu(account) }
   }
 
@@ -243,14 +258,6 @@ private struct ProviderAccountUsageRow: View {
     }
     .padding(10)
     .contentShape(Rectangle())
-    .background(
-      isSelected ? accent.opacity(0.08) : Color.primary.opacity(0.025),
-      in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-    )
-    .overlay {
-      RoundedRectangle(cornerRadius: 8, style: .continuous)
-        .stroke(isSelected ? accent.opacity(0.75) : Color.primary.opacity(0.1))
-    }
   }
 
   private func accountBadge(_ title: String, color: Color) -> some View {
@@ -264,7 +271,9 @@ private struct ProviderAccountUsageRow: View {
 
   @ViewBuilder
   private var usageContent: some View {
-    if let snapshot = usage?.snapshot {
+    if let usage, usage.requiresReauthentication {
+      AccountReauthenticationNotice(failedSince: usage.failedSince)
+    } else if let snapshot = usage?.snapshot {
       VStack(spacing: 9) {
         if let primary = snapshot.primary {
           compactWindow(L10n.string("Session"), primary)

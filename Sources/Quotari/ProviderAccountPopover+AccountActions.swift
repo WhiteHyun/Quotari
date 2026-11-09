@@ -85,6 +85,55 @@ extension ProviderAccountPopover {
       requestSwitchingCLI(to: account)
     }
   }
+
+  private func confirmRemoveButtonTapped(_ account: ProviderAccount) {
+    pendingRemovalID = nil
+    Task { await store.removeCapturedAccount(account) }
+  }
+
+  /// Buttons for a card whose last fetch failed. They sit outside the card's
+  /// select button so a click acts on the failure, not the selection.
+  @ViewBuilder
+  func failureActions(
+    for account: ProviderAccount,
+    usage: ProviderAccountUsage,
+    disabled: Bool
+  ) -> some View {
+    let canRemove = account.credentialSource.isCaptured
+    if usage.requiresReauthentication || canRemove {
+      HStack(spacing: 6) {
+        if usage.requiresReauthentication {
+          Button(L10n.string("Log In Again")) {
+            requestAddingAccount()
+          }
+          .help(L10n.string("Sign in with this account again; Quotari updates the saved copy in place"))
+          .disabled(disabled || !store.canAddAccount(for: descriptor.id))
+        }
+        if canRemove {
+          if pendingRemovalID == account.id {
+            Button(L10n.string("Confirm Remove"), role: .destructive) {
+              confirmRemoveButtonTapped(account)
+            }
+            .tint(.red)
+            Button(L10n.string("Cancel")) {
+              pendingRemovalID = nil
+            }
+          } else {
+            Button(L10n.string("Remove"), role: .destructive) {
+              pendingRemovalID = account.id
+            }
+            .help(L10n.string("Delete Quotari's saved copy of this login"))
+          }
+        }
+        Spacer(minLength: 0)
+      }
+      .controlSize(.small)
+      .disabled(disabled)
+      .padding(.leading, 38)
+      .padding(.trailing, 10)
+      .padding(.bottom, 10)
+    }
+  }
 }
 
 enum ProviderAccountPopoverConfirmation: Identifiable {
