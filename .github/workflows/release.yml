@@ -23,20 +23,26 @@ concurrency:
   group: quotari-release
   cancel-in-progress: false
 
-defaults:
-  run:
-    shell: zsh -l {0}
-
+# Both jobs run on GitHub-hosted runners: every run gets a fresh VM that is
+# discarded afterwards, so release credentials never share a machine, user, or
+# Keychain with pull-request jobs. The `release` environment's required
+# reviewer still gates access to the signing and notarization secrets.
 jobs:
-  release:
-    name: ${{ inputs.action }} v${{ inputs.version }}
-    runs-on: [self-hosted, macOS, ARM64, quotari-release]
+  draft:
+    name: draft v${{ inputs.version }}
+    if: inputs.action == 'draft'
+    # Match CI's pinned toolchain (Xcode 27.1 on macOS 27). The xcode-27 image
+    # is still a GitHub preview; fall back to macos-26 if it turns unstable.
+    runs-on: xcode-27
     timeout-minutes: 90
     environment: release
+    defaults:
+      run:
+        shell: zsh -l {0}
     env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
       GH_TOKEN: ${{ github.token }}
       RELEASE_VERSION: ${{ inputs.version }}
-      RELEASE_ACTION: ${{ inputs.action }}
       CODESIGN_IDENTITY: "Developer ID Application: SeungHyun Hong (2ZQR76M3UH)"
       SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
 
@@ -45,6 +51,11 @@ jobs:
         with:
           clean: true
           fetch-depth: 0
+
+      # Only mise itself; the release installs just the Python it needs.
+      - uses: jdx/mise-action@v5
+        with:
+          install: false
 
       - name: Validate release request
         run: |
@@ -58,7 +69,6 @@ jobs:
           }
 
       - name: Install release tools
-        if: inputs.action == 'draft'
         run: |
           mise install python@3.14
           python_bin="$(mise exec python@3.14 -- which python3)"
@@ -66,7 +76,6 @@ jobs:
           echo "PYTHON_BIN=$python_bin" >> "$GITHUB_ENV"
 
       - name: Configure ephemeral release credentials
-        if: inputs.action == 'draft'
         env:
           DEVELOPER_ID_P12_BASE64: ${{ secrets.DEVELOPER_ID_P12_BASE64 }}
           DEVELOPER_ID_P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
@@ -131,19 +140,7 @@ jobs:
             | grep -F 'Developer ID Application: SeungHyun Hong (2ZQR76M3UH)'
 
       - name: Build, notarize, and create draft release
-        if: inputs.action == 'draft'
         run: Scripts/release.sh "$RELEASE_VERSION" --draft
-
-      - name: Publish verified draft release
-        if: inputs.action == 'publish'
-        run: |
-          tag="v$RELEASE_VERSION"
-          is_draft="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
-          [[ "$is_draft" == "true" ]] || {
-            echo "$tag does not exist as a draft release" >&2
-            exit 1
-          }
-          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
 
       - name: Summarize release
         if: success()
@@ -151,12 +148,12 @@ jobs:
           {
             echo "### Quotari v$RELEASE_VERSION"
             echo
-            echo "Action: $RELEASE_ACTION"
+            echo "Action: draft"
             echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/v$RELEASE_VERSION"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove ephemeral credentials
-        if: always() && inputs.action == 'draft'
+        if: always()
         run: |
           if [[ -n "${RELEASE_CREDENTIAL_ROOT:-}" ]]; then
             original_keychains_path="$RELEASE_CREDENTIAL_ROOT/original-keychains.txt"
@@ -170,3 +167,46 @@ jobs:
             fi
             rm -rf "$RELEASE_CREDENTIAL_ROOT"
           fi
+
+  # Publishing only flips an already verified draft, so it needs no macOS
+  # toolchain or signing secrets.
+  publish:
+    name: publish v${{ inputs.version }}
+    if: inputs.action == 'publish'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_VERSION: ${{ inputs.version }}
+
+    steps:
+      - name: Validate release request
+        run: |
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || {
+            echo "Release workflow must run from main, not $GITHUB_REF" >&2
+            exit 1
+          }
+          [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Version must use X.Y.Z format" >&2
+            exit 1
+          }
+
+      - name: Publish verified draft release
+        run: |
+          tag="v$RELEASE_VERSION"
+          is_draft="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+          [[ "$is_draft" == "true" ]] || {
+            echo "$tag does not exist as a draft release" >&2
+            exit 1
+          }
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+      - name: Summarize release
+        run: |
+          {
+            echo "### Quotari v$RELEASE_VERSION"
+            echo
+            echo "Action: publish"
+            echo "Release: https://github.com/$GITHUB_REPOSITORY/releases/tag/v$RELEASE_VERSION"
+          } >> "$GITHUB_STEP_SUMMARY"
