@@ -185,6 +185,43 @@ struct ClaudeLivePendingRecoveryTests {
     #expect(recorder.requests.first?.value(forHTTPHeaderField: "Authorization") == "Bearer relogin-tok")
   }
 
+  /// The obsolete grant's transaction is keyed by the stored refresh token,
+  /// and re-resolving that same expired pair must not wait on itself.
+  @Test(.timeLimit(.minutes(1)))
+  func anExpiredExternalReloginIsExchangedInsteadOfDeadlocking() async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("claude-live-expired-relogin-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try claudePayload(accessToken: "relogin-tok", refreshToken: "relogin-ref", expiresAt: 1000)
+      .write(to: url)
+    let source = ProviderCredentialSource.claudeCredentialsFile(path: url.path)
+    let store = livePendingStore("ExpiredRelogin")
+    let seed = liveStrategy(
+      resolve: fileResolver(source: source, store: store),
+      refresher: StubRefresher(result: .failure(ClaudeTokenRefreshError.malformedResponse)),
+      store: store
+    )
+    await seed.rememberPending(livePendingGrant(), source: source)
+    let refresher = StubRefresher(result: .success(ClaudeTokenGrant(
+      accessToken: "fresh-tok",
+      refreshToken: "fresh-ref",
+      expiresAt: Date(timeIntervalSince1970: 100_000)
+    )))
+    let relaunched = liveStrategy(
+      resolve: fileResolver(source: source, store: store),
+      refresher: refresher,
+      store: store
+    )
+
+    try await fetchLive(relaunched)
+
+    #expect(refresher.calls == ["relogin-ref"])
+    #expect(try relaunched.loadDurablePending(source: source) == nil)
+    let stored = try ClaudeCredentialsStore.load(source: source, capturedAccounts: store)
+    #expect(stored.accessToken == "fresh-tok")
+    #expect(stored.refreshToken == "fresh-ref")
+  }
+
   @Test func anAlreadyInstalledGrantClearsItsPendingCopyWithoutAnExchange() async throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("claude-live-installed-\(UUID().uuidString).json")
